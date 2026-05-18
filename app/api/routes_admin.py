@@ -441,13 +441,13 @@ ADMIN_HTML = """
       </div>
 
       <p class="nav-label">메뉴</p>
-      <button class="nav-button active" data-tab="dashboard" type="button"><span class="nav-icon">DB</span><span>대시보드</span></button>
-      <button class="nav-button" data-tab="pipeline" type="button"><span class="nav-icon">OP</span><span>소싱 운영</span></button>
-      <button class="nav-button" data-tab="candidates" type="button"><span class="nav-icon">PD</span><span>상품 후보 관리</span></button>
-      <button class="nav-button" data-tab="taxonomy" type="button"><span class="nav-icon">TX</span><span>테마 관리</span></button>
-      <button class="nav-button" data-tab="ranking" type="button"><span class="nav-icon">RK</span><span>랭킹 관리</span></button>
-      <button class="nav-button" data-tab="users" type="button"><span class="nav-icon">US</span><span>사용자 및 과금</span></button>
-      <button class="nav-button" data-tab="logs" type="button"><span class="nav-icon">LG</span><span>로그 및 이벤트</span></button>
+      <button class="nav-button active" data-tab="dashboard" onclick="switchAdminTab('dashboard')" type="button"><span class="nav-icon">DB</span><span>대시보드</span></button>
+      <button class="nav-button" data-tab="pipeline" onclick="switchAdminTab('pipeline')" type="button"><span class="nav-icon">OP</span><span>소싱 운영</span></button>
+      <button class="nav-button" data-tab="candidates" onclick="switchAdminTab('candidates')" type="button"><span class="nav-icon">PD</span><span>상품 후보 관리</span></button>
+      <button class="nav-button" data-tab="taxonomy" onclick="switchAdminTab('taxonomy')" type="button"><span class="nav-icon">TX</span><span>테마 관리</span></button>
+      <button class="nav-button" data-tab="ranking" onclick="switchAdminTab('ranking')" type="button"><span class="nav-icon">RK</span><span>랭킹 관리</span></button>
+      <button class="nav-button" data-tab="users" onclick="switchAdminTab('users')" type="button"><span class="nav-icon">US</span><span>사용자 및 과금</span></button>
+      <button class="nav-button" data-tab="logs" onclick="switchAdminTab('logs')" type="button"><span class="nav-icon">LG</span><span>로그 및 이벤트</span></button>
 
       <div class="sidebar-footer">
         <p class="footer-title">현재 운영 정책</p>
@@ -695,13 +695,20 @@ ADMIN_HTML = """
     const navButtons = document.querySelectorAll(".nav-button");
     const panels = document.querySelectorAll(".tab-panel");
 
+    function switchAdminTab(tabId) {
+      navButtons.forEach((item) => {
+        item.classList.toggle("active", item.dataset.tab === tabId);
+      });
+      panels.forEach((panel) => {
+        panel.classList.toggle("active", panel.id === tabId);
+      });
+    }
+
+    window.switchAdminTab = switchAdminTab;
+
     navButtons.forEach((button) => {
       button.addEventListener("click", () => {
-        const tabId = button.dataset.tab;
-        navButtons.forEach((item) => item.classList.remove("active"));
-        panels.forEach((panel) => panel.classList.remove("active"));
-        button.classList.add("active");
-        document.getElementById(tabId).classList.add("active");
+        switchAdminTab(button.dataset.tab);
       });
     });
 
