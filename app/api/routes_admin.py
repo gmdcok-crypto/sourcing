@@ -869,6 +869,10 @@ ADMIN_HTML = """
         return;
       }
 
+      if (!confirm("이 테마를 추가하시겠습니까?")) {
+        return;
+      }
+
       const payload = {
         theme_code: code,
         theme_name: name
@@ -893,6 +897,10 @@ ADMIN_HTML = """
         return;
       }
 
+      if (!confirm("선택한 테마를 수정하시겠습니까?")) {
+        return;
+      }
+
       await apiFetch(`/api/admin/themes/${editingThemeId}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -907,6 +915,9 @@ ADMIN_HTML = """
 
     themeDeleteBtn.addEventListener("click", async () => {
       if (!editingThemeId) return;
+      if (!confirm("선택한 테마를 삭제하시겠습니까? 연결된 CID의 테마명은 비워집니다.")) {
+        return;
+      }
       await deleteTheme(editingThemeId);
     });
 
@@ -919,6 +930,10 @@ ADMIN_HTML = """
       const themeId = cidThemeInput.value ? Number(cidThemeInput.value) : null;
 
       if (!cid || !name || !path) {
+        return;
+      }
+
+      if (!confirm("이 CID를 추가하시겠습니까?")) {
         return;
       }
 
@@ -950,6 +965,10 @@ ADMIN_HTML = """
         return;
       }
 
+      if (!confirm("선택한 CID를 수정하시겠습니까?")) {
+        return;
+      }
+
       await apiFetch(`/api/admin/categories/${editingCidId}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -966,6 +985,9 @@ ADMIN_HTML = """
 
     cidDeleteBtn.addEventListener("click", async () => {
       if (!editingCidId) return;
+      if (!confirm("선택한 CID를 삭제하시겠습니까? 되돌릴 수 없습니다.")) {
+        return;
+      }
       await deleteCid(editingCidId);
     });
 
