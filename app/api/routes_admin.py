@@ -501,18 +501,6 @@ ADMIN_HTML = """
                   <label for="theme-name">테마명</label>
                   <input class="input" id="theme-name" type="text" placeholder="예: 생활용품" />
                 </div>
-                <div class="field">
-                  <label for="theme-priority">우선순위</label>
-                  <input class="input" id="theme-priority" type="number" min="1" placeholder="1" />
-                </div>
-                <div class="field">
-                  <label for="theme-status">상태</label>
-                  <select class="select" id="theme-status">
-                    <option value="핵심">핵심</option>
-                    <option value="확장">확장</option>
-                    <option value="관찰">관찰</option>
-                  </select>
-                </div>
               </div>
               <div class="form-actions" style="margin-top: 16px;">
                 <button class="action-btn primary" id="theme-save-btn" type="button">테마 추가</button>
@@ -532,8 +520,6 @@ ADMIN_HTML = """
                   <tr>
                     <th>코드</th>
                     <th>테마명</th>
-                    <th>우선순위</th>
-                    <th>상태</th>
                     <th>액션</th>
                   </tr>
                 </thead>
@@ -656,8 +642,6 @@ ADMIN_HTML = """
 
     const themeCodeInput = document.getElementById("theme-code");
     const themeNameInput = document.getElementById("theme-name");
-    const themePriorityInput = document.getElementById("theme-priority");
-    const themeStatusInput = document.getElementById("theme-status");
     const themeSaveBtn = document.getElementById("theme-save-btn");
     const themeResetBtn = document.getElementById("theme-reset-btn");
     const themeTableBody = document.getElementById("theme-table-body");
@@ -705,8 +689,6 @@ ADMIN_HTML = """
       editingThemeId = null;
       themeCodeInput.value = "";
       themeNameInput.value = "";
-      themePriorityInput.value = "";
-      themeStatusInput.value = "핵심";
       themeSaveBtn.textContent = "테마 추가";
     }
 
@@ -724,16 +706,15 @@ ADMIN_HTML = """
 
     function renderThemeOptions() {
       cidThemeInput.innerHTML = themes
-        .sort((a, b) => a.display_order - b.display_order)
         .map((theme) => `<option value="${theme.id}">${theme.theme_name}</option>`)
         .join("");
     }
 
     function renderThemes() {
-      const sortedThemes = [...themes].sort((a, b) => a.display_order - b.display_order);
+      const sortedThemes = [...themes];
 
       if (sortedThemes.length === 0) {
-        themeTableBody.innerHTML = '<tr><td colspan="5" class="empty-state">등록된 테마가 없습니다.</td></tr>';
+        themeTableBody.innerHTML = '<tr><td colspan="3" class="empty-state">등록된 테마가 없습니다.</td></tr>';
         return;
       }
 
@@ -742,8 +723,6 @@ ADMIN_HTML = """
           <tr>
             <td>${theme.theme_code}</td>
             <td>${theme.theme_name}</td>
-            <td>${theme.display_order}</td>
-            <td><span class="pill ${theme.status_label === "핵심" ? "success" : "warning"}">${theme.status_label}</span></td>
             <td>
               <div class="table-actions">
                 <button class="action-btn" type="button" onclick="editTheme(${theme.id})">수정</button>
@@ -823,8 +802,6 @@ ADMIN_HTML = """
       editingThemeId = themeId;
       themeCodeInput.value = theme.theme_code;
       themeNameInput.value = theme.theme_name;
-      themePriorityInput.value = theme.display_order;
-      themeStatusInput.value = theme.status_label;
       themeSaveBtn.textContent = "테마 수정";
     }
 
@@ -868,18 +845,14 @@ ADMIN_HTML = """
     themeSaveBtn.addEventListener("click", async () => {
       const code = themeCodeInput.value.trim();
       const name = themeNameInput.value.trim();
-      const priority = Number(themePriorityInput.value);
-      const status = themeStatusInput.value;
 
-      if (!code || !name || !priority) {
+      if (!code || !name) {
         return;
       }
 
       const payload = {
         theme_code: code,
-        theme_name: name,
-        display_order: priority,
-        status_label: status
+        theme_name: name
       };
 
       if (editingThemeId) {

@@ -12,8 +12,6 @@ router = APIRouter(prefix="/api/admin", tags=["admin-theme"])
 class ThemeCreateRequest(BaseModel):
     theme_code: str = Field(..., min_length=1, max_length=100)
     theme_name: str = Field(..., min_length=1, max_length=255)
-    display_order: int = Field(default=0, ge=0)
-    status_label: str = Field(default="핵심", min_length=1, max_length=50)
 
 
 class ThemeUpdateRequest(ThemeCreateRequest):
@@ -40,10 +38,6 @@ def ensure_tables(connection) -> None:
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 theme_code VARCHAR(100) NOT NULL,
                 theme_name VARCHAR(255) NOT NULL,
-                display_order INT UNSIGNED NOT NULL DEFAULT 0,
-                status_label VARCHAR(50) NOT NULL DEFAULT '핵심',
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (id),
                 UNIQUE KEY uk_themes_theme_code (theme_code)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -80,26 +74,48 @@ def ensure_tables(connection) -> None:
             """
         )
 
-        cursor.execute("SHOW COLUMNS FROM themes LIKE 'status_label'")
-        if not cursor.fetchone():
-            try:
-                cursor.execute(
-                    """
-                    ALTER TABLE themes
-                    ADD COLUMN status_label VARCHAR(50) NOT NULL DEFAULT '핵심'
-                    AFTER display_order
-                    """
-                )
-            except pymysql.err.OperationalError as error:
-                if error.args[0] != 1060:
-                    raise
+        cursor.execute("SHOW COLUMNS FROM themes LIKE 'display_order'")
+        if cursor.fetchone():
             cursor.execute(
                 """
-                UPDATE themes
-                SET status_label = CASE
-                    WHEN is_active = 1 THEN '핵심'
-                    ELSE '보류'
-                END
+                ALTER TABLE themes
+                DROP COLUMN display_order
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM themes LIKE 'status_label'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE themes
+                DROP COLUMN status_label
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM themes LIKE 'created_at'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE themes
+                DROP COLUMN created_at
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM themes LIKE 'updated_at'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE themes
+                DROP COLUMN updated_at
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM themes LIKE 'is_active'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE themes
+                DROP COLUMN is_active
                 """
             )
 
@@ -110,7 +126,6 @@ def ensure_tables(connection) -> None:
                     """
                     ALTER TABLE naver_categories
                     ADD COLUMN status_label VARCHAR(50) NOT NULL DEFAULT '활성'
-                    AFTER full_path
                     """
                 )
             except pymysql.err.OperationalError as error:
@@ -140,14 +155,12 @@ async def list_themes() -> Dict[str, List[Dict[str, Any]]]:
                     t.id,
                     t.theme_code,
                     t.theme_name,
-                    t.display_order,
-                    t.status_label,
                     COUNT(tcm.id) AS cid_count
                 FROM themes t
                 LEFT JOIN theme_category_maps tcm
                     ON t.id = tcm.theme_id
-                GROUP BY t.id, t.theme_code, t.theme_name, t.display_order, t.status_label
-                ORDER BY t.display_order ASC, t.id ASC
+                GROUP BY t.id, t.theme_code, t.theme_name
+                ORDER BY t.id ASC
                 """
             )
             rows = cursor.fetchall()
@@ -164,14 +177,12 @@ async def create_theme(payload: ThemeCreateRequest) -> Dict[str, Any]:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO themes (theme_code, theme_name, display_order, status_label)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO themes (theme_code, theme_name)
+                VALUES (%s, %s)
                 """,
                 (
                     payload.theme_code,
                     payload.theme_name,
-                    payload.display_order,
-                    payload.status_label,
                 ),
             )
         connection.commit()
@@ -190,19 +201,12 @@ async def update_theme(theme_id: int, payload: ThemeUpdateRequest) -> Dict[str, 
                 """
                 UPDATE themes
                 SET theme_code = %s,
-                    theme_name = %s,
-                    display_order = %s,
-                    status_label = %s,
-                    is_active = %s,
-                    updated_at = CURRENT_TIMESTAMP
+                    theme_name = %s
                 WHERE id = %s
                 """,
                 (
                     payload.theme_code,
                     payload.theme_name,
-                    payload.display_order,
-                    payload.status_label,
-                    0 if payload.status_label == "보류" else 1,
                     theme_id,
                 ),
             )
