@@ -270,11 +270,13 @@ ADMIN_HTML = """
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 18px;
+      align-items: start;
     }
 
     .stack {
       display: grid;
       gap: 18px;
+      align-content: start;
     }
 
     .taxonomy-stack {
