@@ -515,22 +515,22 @@ ADMIN_HTML = """
                 <div><h2>키워드 소싱 진행 현황</h2></div>
               </div>
               <div class="bar-row">
-                <span class="bar-label" id="keyword-progress-label">대기중</span>
-                <div class="bar-track"><div class="bar-fill" id="keyword-progress-fill" style="width:0%"></div></div>
-                <span class="bar-value" id="keyword-progress-value">0%</span>
+                <span class="bar-label" id="keyword-progress-label">__KEYWORD_PROGRESS_LABEL__</span>
+                <div class="bar-track"><div class="bar-fill" id="keyword-progress-fill" style="width:__KEYWORD_PROGRESS_PERCENT__%"></div></div>
+                <span class="bar-value" id="keyword-progress-value">__KEYWORD_PROGRESS_PERCENT__%</span>
               </div>
               <div class="progress-grid">
-                <div class="progress-card"><p class="progress-card-label">상태</p><p class="progress-card-value" id="keyword-status-text">대기</p></div>
-                <div class="progress-card"><p class="progress-card-label">처리 CID</p><p class="progress-card-value" id="keyword-processed-count">0 / 0</p></div>
-                <div class="progress-card"><p class="progress-card-label">수집 행 수</p><p class="progress-card-value" id="keyword-row-count">0</p></div>
-                <div class="progress-card"><p class="progress-card-label">성공 / 실패</p><p class="progress-card-value" id="keyword-success-failure">0 / 0</p></div>
+                <div class="progress-card"><p class="progress-card-label">상태</p><p class="progress-card-value" id="keyword-status-text">__KEYWORD_STATUS_TEXT__</p></div>
+                <div class="progress-card"><p class="progress-card-label">처리 CID</p><p class="progress-card-value" id="keyword-processed-count">__KEYWORD_PROCESSED_COUNT__</p></div>
+                <div class="progress-card"><p class="progress-card-label">수집 행 수</p><p class="progress-card-value" id="keyword-row-count">__KEYWORD_ROW_COUNT__</p></div>
+                <div class="progress-card"><p class="progress-card-label">성공 / 실패</p><p class="progress-card-value" id="keyword-success-failure">__KEYWORD_SUCCESS_FAILURE__</p></div>
               </div>
               <div class="progress-meta">
-                <div id="keyword-current-theme">현재 테마: -</div>
-                <div id="keyword-current-cid">현재 CID: -</div>
-                <div id="keyword-current-query">현재 Query: -</div>
+                <div id="keyword-current-theme">현재 테마: __KEYWORD_CURRENT_THEME__</div>
+                <div id="keyword-current-cid">현재 CID: __KEYWORD_CURRENT_CID__</div>
+                <div id="keyword-current-query">현재 Query: __KEYWORD_CURRENT_QUERY__</div>
               </div>
-              <div class="log-box" id="keyword-log-box">실행 대기중입니다.</div>
+              <div class="log-box" id="keyword-log-box">__KEYWORD_LOG_TEXT__</div>
             </div>
           </div>
         </article>
@@ -1195,6 +1195,7 @@ def render_admin_html(active_tab: str) -> str:
     selected_tab = active_tab if active_tab in VALID_ADMIN_TABS else "dashboard"
     html = ADMIN_HTML
     taxonomy_data = load_admin_taxonomy_data()
+    keyword_status = load_keyword_status_data()
 
     for tab in VALID_ADMIN_TABS:
         nav_token = f"__NAV_{tab.upper()}_ACTIVE__"
@@ -1214,6 +1215,22 @@ def render_admin_html(active_tab: str) -> str:
         "__INITIAL_CATEGORIES_JSON__",
         json.dumps(taxonomy_data["categories"], ensure_ascii=False),
     )
+    html = html.replace("__KEYWORD_PROGRESS_LABEL__", escape(str(keyword_status["message"])))
+    html = html.replace("__KEYWORD_PROGRESS_PERCENT__", str(keyword_status["progress_percent"]))
+    html = html.replace("__KEYWORD_STATUS_TEXT__", escape(str(keyword_status["status"])))
+    html = html.replace(
+        "__KEYWORD_PROCESSED_COUNT__",
+        escape(f'{keyword_status["processed_categories"]} / {keyword_status["category_count"]}'),
+    )
+    html = html.replace("__KEYWORD_ROW_COUNT__", escape(str(keyword_status["row_count"])))
+    html = html.replace(
+        "__KEYWORD_SUCCESS_FAILURE__",
+        escape(f'{keyword_status["success_count"]} / {keyword_status["failure_count"]}'),
+    )
+    html = html.replace("__KEYWORD_CURRENT_THEME__", escape(str(keyword_status["current_theme_name"] or "-")))
+    html = html.replace("__KEYWORD_CURRENT_CID__", escape(str(keyword_status["current_cid"] or "-")))
+    html = html.replace("__KEYWORD_CURRENT_QUERY__", escape(str(keyword_status["current_query"] or "-")))
+    html = html.replace("__KEYWORD_LOG_TEXT__", escape(keyword_status["log_text"]))
 
     return html
 
@@ -1261,6 +1278,28 @@ def load_admin_taxonomy_data() -> Dict[str, List[Dict[str, Any]]]:
         return {"themes": themes, "categories": categories}
     finally:
         connection.close()
+
+
+def load_keyword_status_data() -> Dict[str, Any]:
+    from app.services.keyword_sourcing import KeywordSourcingService
+
+    state = KeywordSourcingService.get_status()
+    logs = state.get("logs") or ["실행 대기중입니다."]
+
+    return {
+        "message": state.get("message") or "대기중",
+        "progress_percent": int(state.get("progress_percent") or 0),
+        "status": state.get("status") or "idle",
+        "processed_categories": int(state.get("processed_categories") or 0),
+        "category_count": int(state.get("category_count") or 0),
+        "row_count": int(state.get("row_count") or 0),
+        "success_count": int(state.get("success_count") or 0),
+        "failure_count": int(state.get("failure_count") or 0),
+        "current_theme_name": state.get("current_theme_name"),
+        "current_cid": state.get("current_cid"),
+        "current_query": state.get("current_query"),
+        "log_text": "\n".join(logs),
+    }
 
 
 def build_theme_options_html(themes: List[Dict[str, Any]]) -> str:
