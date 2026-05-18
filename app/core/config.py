@@ -17,6 +17,15 @@ class Settings(BaseSettings):
         default=None,
         alias="NAVER_CLIENT_SECRET",
     )
+    naver_ad_api_key: Optional[str] = Field(default=None, alias="NAVER_AD_API_KEY")
+    naver_ad_secret_key: Optional[str] = Field(
+        default=None,
+        alias="NAVER_AD_SECRET_KEY",
+    )
+    naver_ad_customer_id: Optional[str] = Field(
+        default=None,
+        alias="NAVER_AD_CUSTOMER_ID",
+    )
 
     r2_account_id: Optional[str] = Field(default=None, alias="R2_ACCOUNT_ID")
     r2_access_key_id: Optional[str] = Field(default=None, alias="R2_ACCESS_KEY_ID")

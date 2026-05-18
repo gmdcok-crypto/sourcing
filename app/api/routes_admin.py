@@ -290,6 +290,27 @@ ADMIN_HTML = """
       color: #dce4ff;
       white-space: pre-wrap;
     }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .summary-card {
+      padding: 16px 18px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .summary-label { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+    .summary-value { margin: 0; font-size: 24px; font-weight: 800; }
+    .keyword-table-wrap {
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+    }
 
     table { width: 100%; border-collapse: collapse; }
     th {
@@ -532,6 +553,46 @@ ADMIN_HTML = """
               </div>
               <div class="log-box" id="keyword-log-box">__KEYWORD_LOG_TEXT__</div>
             </div>
+            <div class="summary-grid">
+              <div class="summary-card">
+                <p class="summary-label">Top150 수집</p>
+                <p class="summary-value" id="keyword-top150-count">__KEYWORD_TOP150_COUNT__</p>
+              </div>
+              <div class="summary-card">
+                <p class="summary-label">Top100 확정</p>
+                <p class="summary-value" id="keyword-top100-count">__KEYWORD_TOP100_COUNT__</p>
+              </div>
+              <div class="summary-card">
+                <p class="summary-label">광고 지표 결합</p>
+                <p class="summary-value" id="keyword-searchad-count">__KEYWORD_SEARCHAD_COUNT__</p>
+                </div>
+                <div class="summary-card">
+                <p class="summary-label">R2 저장</p>
+                <p class="summary-value" id="keyword-r2-status">__KEYWORD_R2_STATUS__</p>
+              </div>
+                <div class="summary-card">
+                <p class="summary-label">고효율 / 중간 / 대형</p>
+                <p class="summary-value" id="keyword-group-counts">__KEYWORD_GROUP_COUNTS__</p>
+                </div>
+            </div>
+            <div class="keyword-table-wrap">
+              <div class="section-title">
+                <div><h2>키워드 파이프라인 결과</h2></div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>순위</th>
+                    <th>키워드</th>
+                    <th>그룹</th>
+                    <th>검색량</th>
+                    <th>CTR</th>
+                    <th>경쟁도</th>
+                  </tr>
+                </thead>
+                <tbody id="keyword-summary-body">__KEYWORD_SUMMARY_ROWS__</tbody>
+              </table>
+            </div>
           </div>
         </article>
       </section>
@@ -756,6 +817,12 @@ ADMIN_HTML = """
     const keywordCurrentCid = document.getElementById("keyword-current-cid");
     const keywordCurrentQuery = document.getElementById("keyword-current-query");
     const keywordLogBox = document.getElementById("keyword-log-box");
+    const keywordTop150Count = document.getElementById("keyword-top150-count");
+    const keywordTop100Count = document.getElementById("keyword-top100-count");
+    const keywordSearchadCount = document.getElementById("keyword-searchad-count");
+    const keywordR2Status = document.getElementById("keyword-r2-status");
+    const keywordGroupCounts = document.getElementById("keyword-group-counts");
+    const keywordSummaryBody = document.getElementById("keyword-summary-body");
     let keywordSourcingRunId = null;
     let keywordStatusPoller = null;
     let keywordStatusStream = null;
@@ -915,6 +982,55 @@ ADMIN_HTML = """
       keywordCurrentQuery.textContent = `현재 Query: ${state.current_query || "-"}`;
       keywordLogBox.textContent = (state.logs || ["실행 대기중입니다."]).join("\n");
       keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
+      keywordTop150Count.textContent = String(state.top150_count || 0);
+      keywordTop100Count.textContent = String(state.top100_count || 0);
+      keywordSearchadCount.textContent = String(state.searchad_count || 0);
+      keywordR2Status.textContent = state.r2_parquet_key ? "완료" : "대기";
+      const groupCounts = state.group_counts || {};
+      keywordGroupCounts.textContent = `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`;
+      renderKeywordSummaryRows(state.classified_keywords || [], state.noise_keywords || []);
+    }
+
+    function renderKeywordSummaryRows(classifiedKeywords, noiseKeywords) {
+      const rows = [];
+      classifiedKeywords.slice(0, 100).forEach((row, index) => {
+        rows.push({
+          rank: row.rank || index + 1,
+          keyword: row.keyword,
+          group: row.group_name || "-",
+          searches: row.total_searches || 0,
+          ctr: row.avg_ctr == null ? "-" : `${(row.avg_ctr * 100).toFixed(2)}%`,
+          competition: row.competition_index == null ? "-" : row.competition_index
+        });
+      });
+      noiseKeywords.slice(0, 20).forEach((keyword, index) => {
+        rows.push({
+          rank: `N-${index + 1}`,
+          keyword,
+          group: "노이즈",
+          searches: "-",
+          ctr: "-",
+          competition: "-"
+        });
+      });
+
+      if (rows.length === 0) {
+        keywordSummaryBody.innerHTML = '<tr><td colspan="6" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
+        return;
+      }
+
+      keywordSummaryBody.innerHTML = rows
+        .map((row) => `
+          <tr>
+            <td>${row.rank}</td>
+            <td>${row.keyword}</td>
+            <td>${row.group}</td>
+            <td>${row.searches}</td>
+            <td>${row.ctr}</td>
+            <td>${row.competition}</td>
+          </tr>
+        `)
+        .join("");
     }
 
     async function refreshKeywordSourcingStatus() {
@@ -1282,6 +1398,19 @@ def render_admin_html(active_tab: str) -> str:
     html = html.replace("__KEYWORD_CURRENT_CID__", escape(str(keyword_status["current_cid"] or "-")))
     html = html.replace("__KEYWORD_CURRENT_QUERY__", escape(str(keyword_status["current_query"] or "-")))
     html = html.replace("__KEYWORD_LOG_TEXT__", escape(keyword_status["log_text"]))
+    html = html.replace("__KEYWORD_TOP150_COUNT__", escape(str(keyword_status["top150_count"])))
+    html = html.replace("__KEYWORD_TOP100_COUNT__", escape(str(keyword_status["top100_count"])))
+    html = html.replace("__KEYWORD_SEARCHAD_COUNT__", escape(str(keyword_status["searchad_count"])))
+    html = html.replace("__KEYWORD_R2_STATUS__", "완료" if keyword_status["r2_parquet_key"] else "대기")
+    html = html.replace(
+        "__KEYWORD_GROUP_COUNTS__",
+        escape(
+            f'{keyword_status["group_counts"].get("고효율", 0)} / '
+            f'{keyword_status["group_counts"].get("중간성장", 0)} / '
+            f'{keyword_status["group_counts"].get("대형", 0)}'
+        ),
+    )
+    html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status))
     html = html.replace(
         "__AUTO_REFRESH_META__",
         '<meta http-equiv="refresh" content="3">' if selected_tab == "pipeline" and keyword_status["status"] == "running" else "",
@@ -1358,6 +1487,11 @@ def load_keyword_status_data() -> Dict[str, Any]:
         "r2_parquet_key": state.get("r2_parquet_key"),
         "valid_keywords": state.get("valid_keywords") or [],
         "noise_keywords": state.get("noise_keywords") or [],
+        "top150_count": int(state.get("top150_count") or 0),
+        "top100_count": int(state.get("top100_count") or 0),
+        "searchad_count": int(state.get("searchad_count") or 0),
+        "group_counts": state.get("group_counts") or {},
+        "classified_keywords": state.get("classified_keywords") or [],
     }
 
 
@@ -1398,3 +1532,46 @@ def build_category_rows_html(categories: List[Dict[str, Any]]) -> str:
         )
         for category in categories
     )
+
+
+def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
+    classified_keywords = keyword_status.get("classified_keywords") or []
+    noise_keywords = keyword_status.get("noise_keywords") or []
+
+    rows: List[str] = []
+    for index, keyword_row in enumerate(classified_keywords[:100], start=1):
+        avg_ctr = keyword_row.get("avg_ctr")
+        avg_ctr_text = "-" if avg_ctr is None else f"{avg_ctr * 100:.2f}%"
+        competition = keyword_row.get("competition_index")
+        competition_text = "-" if competition is None else str(competition)
+        rows.append(
+            (
+                "<tr>"
+                f"<td>{escape(str(keyword_row.get('rank') or index))}</td>"
+                f"<td>{escape(str(keyword_row.get('keyword') or ''))}</td>"
+                f"<td>{escape(str(keyword_row.get('group_name') or '-'))}</td>"
+                f"<td>{escape(str(keyword_row.get('total_searches') or 0))}</td>"
+                f"<td>{escape(avg_ctr_text)}</td>"
+                f"<td>{escape(competition_text)}</td>"
+                "</tr>"
+            )
+        )
+
+    for index, keyword in enumerate(noise_keywords[:20], start=1):
+        rows.append(
+            (
+                "<tr>"
+                f"<td>N-{index}</td>"
+                f"<td>{escape(str(keyword))}</td>"
+                "<td>노이즈</td>"
+                "<td>-</td>"
+                "<td>-</td>"
+                "<td>-</td>"
+                "</tr>"
+            )
+        )
+
+    if not rows:
+        return '<tr><td colspan="6" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
+
+    return "".join(rows)

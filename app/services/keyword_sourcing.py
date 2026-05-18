@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from statistics import median
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from app.services.db import get_mysql_connection
+from app.services.naver_datalab import NaverShoppingInsightService
 from app.services.naver_api import NaverShoppingService
 from app.services.keyword_noise import filter_noise
+from app.services.naver_searchad import NaverSearchAdService
 from app.services.r2_storage import R2StorageService
 
 
@@ -33,6 +36,8 @@ class KeywordSourcingService:
     def __init__(self, settings) -> None:
         self.settings = settings
         self.naver_service = NaverShoppingService(settings)
+        self.datalab_service = NaverShoppingInsightService()
+        self.searchad_service = NaverSearchAdService(settings)
         self.r2_service = R2StorageService(settings)
 
     @classmethod
@@ -60,6 +65,12 @@ class KeywordSourcingService:
                 "r2_parquet_key": None,
                 "valid_keywords": [],
                 "noise_keywords": [],
+                "top_keywords": [],
+                "classified_keywords": [],
+                "top150_count": 0,
+                "top100_count": 0,
+                "searchad_count": 0,
+                "group_counts": {},
             }
         return cls._runs[target_run_id]
 
@@ -87,12 +98,18 @@ class KeywordSourcingService:
             "logs": ["키워드 소싱을 시작했습니다."],
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
-                "r2_json_key": None,
-                "r2_parquet_key": None,
+            "r2_json_key": None,
+            "r2_parquet_key": None,
             "dataframe_columns": [],
             "preview_rows": [],
             "valid_keywords": [],
             "noise_keywords": [],
+            "top_keywords": [],
+            "classified_keywords": [],
+            "top150_count": 0,
+            "top100_count": 0,
+            "searchad_count": 0,
+            "group_counts": {},
         }
         cls._runs[run_id] = state
         cls._latest_run_id = run_id
@@ -103,6 +120,7 @@ class KeywordSourcingService:
     async def _run_collection(self, *, run_id: str, display_per_cid: int) -> None:
         state = self._runs[run_id]
         rows: List[Dict[str, Any]] = []
+        keyword_pool: Dict[str, Dict[str, Any]] = {}
 
         try:
             categories = self._load_theme_categories()
@@ -135,13 +153,52 @@ class KeywordSourcingService:
                     continue
 
                 try:
-                    result = await self.naver_service.search_products(
+                    seed_result = await self.naver_service.search_products(
                         query=query,
-                        display=display_per_cid,
+                        display=max(display_per_cid, 100),
                         start=1,
                         sort="sim",
                     )
-                    items = result.get("items", [])
+                    seed_keywords = self._extract_seed_keywords_from_items(seed_result.get("items", []))
+                    top_keyword_result = await self.datalab_service.fetch_category_top_keywords(
+                        cid=str(category["cid"]),
+                        seed_keywords=seed_keywords,
+                        limit=150,
+                    )
+                    top_keywords = top_keyword_result.keywords
+                    state["top150_count"] += len(top_keywords)
+                    self._append_log(
+                        state,
+                        f"[{index}/{len(categories)}] 쇼핑인사이트 top150 수집 {len(top_keywords)}건 ({top_keyword_result.source})",
+                    )
+
+                    raw_keyword_list = [row["keyword"] for row in top_keywords]
+                    valid_keywords, noise_keywords = filter_noise(raw_keyword_list)
+                    valid_top100 = valid_keywords[:100]
+                    state["top100_count"] += len(valid_top100)
+
+                    for row in top_keywords:
+                        keyword = row["keyword"]
+                        existing = keyword_pool.get(keyword)
+                        row_payload = {
+                            "keyword": keyword,
+                            "rank": row.get("rank"),
+                            "ratio": row.get("ratio"),
+                            "theme_id": category["theme_id"],
+                            "theme_code": category["theme_code"],
+                            "theme_name": category["theme_name"],
+                            "category_id": category["category_id"],
+                            "cid": category["cid"],
+                            "category_name": category["category_name"],
+                            "full_path": category["full_path"],
+                            "is_noise": keyword in noise_keywords,
+                            "is_valid": keyword in valid_top100,
+                            "source": "naver_shopping_insight",
+                        }
+                        if not existing or (row_payload["rank"] or 999999) < (existing.get("rank") or 999999):
+                            keyword_pool[keyword] = row_payload
+
+                    items = (seed_result.get("items") or [])[:display_per_cid]
                     collected_at = datetime.now(timezone.utc).isoformat()
 
                     for item in items:
@@ -173,7 +230,7 @@ class KeywordSourcingService:
                     state["success_count"] += 1
                     self._append_log(
                         state,
-                        f"[{index}/{len(categories)}] {category['category_name']} 완료 ({len(items)}건)",
+                        f"[{index}/{len(categories)}] {category['category_name']} 완료 (상품 {len(items)}건 / 유효키워드 {len(valid_top100)}건)",
                     )
                 except Exception as error:  # noqa: BLE001
                     state["failure_count"] += 1
@@ -187,13 +244,23 @@ class KeywordSourcingService:
                 state["progress_percent"] = self._progress_percent(index, len(categories))
 
             dataframe = pd.DataFrame(rows)
-            keyword_candidates = self._extract_keyword_candidates(dataframe)
-            valid_keywords, noise_keywords = filter_noise(keyword_candidates)
+            top_keywords = self._build_top_keyword_rows(keyword_pool)
+            valid_keywords = [row["keyword"] for row in top_keywords if row.get("is_valid")]
+            noise_keywords = [row["keyword"] for row in top_keywords if row.get("is_noise")]
+            metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords[:100])
+            classified_keywords = self._classify_keywords(top_keywords=top_keywords, metrics_map=metrics_map)
+            group_counts = self._count_groups(classified_keywords)
+
+            state["searchad_count"] = len(metrics_map)
+            state["group_counts"] = group_counts
+
             r2_json_key, r2_parquet_key = self._save_dataframe_snapshot(
                 run_id=run_id,
                 dataframe=dataframe,
                 valid_keywords=valid_keywords,
                 noise_keywords=noise_keywords,
+                top_keywords=top_keywords,
+                classified_keywords=classified_keywords,
             )
 
             state["status"] = "completed"
@@ -209,6 +276,8 @@ class KeywordSourcingService:
             state["r2_parquet_key"] = r2_parquet_key
             state["valid_keywords"] = valid_keywords[:100]
             state["noise_keywords"] = noise_keywords[:100]
+            state["top_keywords"] = top_keywords[:150]
+            state["classified_keywords"] = classified_keywords[:100]
             self._append_log(state, f"실행 완료: 총 {len(rows)}행 수집")
         except Exception as error:  # noqa: BLE001
             state["status"] = "failed"
@@ -255,6 +324,8 @@ class KeywordSourcingService:
         dataframe: pd.DataFrame,
         valid_keywords: List[str],
         noise_keywords: List[str],
+        top_keywords: List[Dict[str, Any]],
+        classified_keywords: List[Dict[str, Any]],
     ) -> tuple[str | None, str | None]:
         payload = {
             "run_id": run_id,
@@ -263,6 +334,8 @@ class KeywordSourcingService:
             "rows": dataframe.to_dict(orient="records"),
             "valid_keywords": valid_keywords,
             "noise_keywords": noise_keywords,
+            "top_keywords": top_keywords,
+            "classified_keywords": classified_keywords,
         }
         json_key = f"search-results/raw/{run_id}.json"
         parquet_key = f"search-results/dataframe/{run_id}.parquet"
@@ -273,6 +346,41 @@ class KeywordSourcingService:
             dataframe=dataframe,
         )
         return saved_json_key, saved_parquet_key
+
+    def _extract_seed_keywords_from_items(self, items: List[Dict[str, Any]]) -> List[str]:
+        keywords: List[str] = []
+        seen = set()
+        for item in items:
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            for token in self._split_title_to_tokens(title):
+                if token in seen:
+                    continue
+                seen.add(token)
+                keywords.append(token)
+        return keywords
+
+    @staticmethod
+    def _split_title_to_tokens(title: str) -> List[str]:
+        normalized = (
+            title.replace("/", " ")
+            .replace("|", " ")
+            .replace(",", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+            .replace("[", " ")
+            .replace("]", " ")
+        )
+        tokens = []
+        for raw in normalized.split():
+            token = raw.strip()
+            if len(token) < 2:
+                continue
+            if token.isdigit():
+                continue
+            tokens.append(token)
+        return tokens
 
     @staticmethod
     def _extract_keyword_candidates(dataframe: pd.DataFrame) -> List[str]:
@@ -290,6 +398,97 @@ class KeywordSourcingService:
             seen.add(keyword)
             keywords.append(keyword)
         return keywords
+
+    @staticmethod
+    def _build_top_keyword_rows(keyword_pool: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        rows = list(keyword_pool.values())
+        rows.sort(key=lambda item: ((item.get("rank") or 999999), item.get("keyword") or ""))
+        return rows
+
+    def _classify_keywords(
+        self,
+        *,
+        top_keywords: List[Dict[str, Any]],
+        metrics_map: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        enriched_rows: List[Dict[str, Any]] = []
+        volumes = []
+
+        for row in top_keywords:
+            if not row.get("is_valid"):
+                continue
+
+            keyword = row["keyword"]
+            metrics = metrics_map.get(keyword, {})
+            total_searches = (metrics.get("monthly_pc_searches") or 0) + (
+                metrics.get("monthly_mobile_searches") or 0
+            )
+            total_clicks = (metrics.get("monthly_pc_clicks") or 0.0) + (
+                metrics.get("monthly_mobile_clicks") or 0.0
+            )
+            avg_ctr = self._safe_average(
+                [metrics.get("monthly_pc_ctr"), metrics.get("monthly_mobile_ctr")]
+            )
+            competition = metrics.get("competition_index")
+
+            enriched = {
+                **row,
+                **metrics,
+                "total_searches": total_searches,
+                "total_clicks": total_clicks,
+                "avg_ctr": avg_ctr,
+                "group_name": "미분류",
+            }
+            enriched_rows.append(enriched)
+            if total_searches:
+                volumes.append(total_searches)
+
+        volume_median = median(volumes) if volumes else 0
+        volume_high = max(volumes) * 0.7 if volumes else 0
+
+        for row in enriched_rows:
+            volume = row.get("total_searches") or 0
+            ctr = row.get("avg_ctr") or 0.0
+            competition = row.get("competition_index")
+            rank = row.get("rank") or 999999
+
+            if volume >= volume_high:
+                group_name = "대형"
+            elif volume >= volume_median and ctr >= 0.03:
+                group_name = "중간성장"
+            elif rank <= 50 and ctr >= 0.02 and (competition is None or competition <= 1.0):
+                group_name = "고효율"
+            elif volume >= volume_median:
+                group_name = "중간성장"
+            else:
+                group_name = "고효율"
+
+            row["group_name"] = group_name
+
+        enriched_rows.sort(
+            key=lambda item: (
+                {"고효율": 0, "중간성장": 1, "대형": 2, "미분류": 3}.get(item["group_name"], 9),
+                -(item.get("total_searches") or 0),
+                item.get("rank") or 999999,
+            )
+        )
+        return enriched_rows
+
+    @staticmethod
+    def _count_groups(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+        counts: Dict[str, int] = {"고효율": 0, "중간성장": 0, "대형": 0}
+        for row in rows:
+            group_name = str(row.get("group_name") or "")
+            if group_name in counts:
+                counts[group_name] += 1
+        return counts
+
+    @staticmethod
+    def _safe_average(values: List[float | None]) -> float | None:
+        filtered = [value for value in values if value is not None]
+        if not filtered:
+            return None
+        return sum(filtered) / len(filtered)
 
     @staticmethod
     def _to_int(value: Any) -> int | None:
