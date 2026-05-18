@@ -476,6 +476,27 @@ ADMIN_HTML = """
             <article class="card panel">
               <div class="section-title">
                 <div>
+                  <h2>테마 테이블</h2>
+                  <p>현재 운영 중인 테마 목록</p>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>코드</th>
+                    <th>테마명</th>
+                    <th>우선순위</th>
+                    <th>상태</th>
+                    <th>액션</th>
+                  </tr>
+                </thead>
+                <tbody id="theme-table-body"></tbody>
+              </table>
+            </article>
+
+            <article class="card panel">
+              <div class="section-title">
+                <div>
                   <h2>테마 관리</h2>
                   <p>테마 추가, 수정, 삭제를 바로 처리합니다.</p>
                 </div>
@@ -507,27 +528,6 @@ ADMIN_HTML = """
                 <button class="action-btn" id="theme-reset-btn" type="button">입력 초기화</button>
               </div>
               <p class="helper-text" style="margin-top: 12px;">수정 버튼을 누르면 입력 폼에 값이 채워지고 저장 버튼이 수정 모드로 바뀝니다.</p>
-            </article>
-
-            <article class="card panel">
-              <div class="section-title">
-                <div>
-                  <h2>테마 테이블</h2>
-                  <p>현재 운영 중인 테마 목록</p>
-                </div>
-              </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>코드</th>
-                    <th>테마명</th>
-                    <th>우선순위</th>
-                    <th>상태</th>
-                    <th>액션</th>
-                  </tr>
-                </thead>
-                <tbody id="theme-table-body"></tbody>
-              </table>
             </article>
           </div>
 
