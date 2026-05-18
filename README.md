@@ -6,6 +6,7 @@ Cloudflare R2 storage, and Bright Data support for later Coupang sales-data craw
 ## Features
 
 - `GET /health`: deployment and integration status check
+- `GET /admin`: dark-mode admin console concept screen
 - `GET /api/keywords/search`: query Naver Shopping API by keyword
 - Optional raw-response archiving to Cloudflare R2
 - Bright Data configuration scaffold for later-stage Coupang crawling workflows

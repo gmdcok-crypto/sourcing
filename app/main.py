@@ -2,6 +2,7 @@ from typing import Any, Dict
 
 from fastapi import FastAPI
 
+from app.api.routes_admin import router as admin_router
 from app.api.routes_keywords import router as keyword_router
 from app.core.config import get_settings
 from app.services.brightdata import BrightDataService
@@ -13,6 +14,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.include_router(admin_router)
 app.include_router(keyword_router, prefix=settings.api_prefix)
 
 
