@@ -695,6 +695,16 @@ ADMIN_HTML = """
     const navButtons = document.querySelectorAll(".nav-button");
     const panels = document.querySelectorAll(".tab-panel");
 
+    navButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const tabId = button.dataset.tab;
+        navButtons.forEach((item) => item.classList.remove("active"));
+        panels.forEach((panel) => panel.classList.remove("active"));
+        button.classList.add("active");
+        document.getElementById(tabId).classList.add("active");
+      });
+    });
+
     let editingThemeId = null;
     let editingCidId = null;
     let themes = [];
@@ -1111,38 +1121,33 @@ ADMIN_HTML = """
 
     cidResetBtn.addEventListener("click", resetCidForm);
 
-    runKeywordSourcingBtn.addEventListener("click", async () => {
-      if (!confirm("전체 테마 기준으로 CID당 30건씩 키워드 소싱을 실행하시겠습니까?")) {
-        return;
-      }
+    if (runKeywordSourcingBtn) {
+      runKeywordSourcingBtn.addEventListener("click", async () => {
+        if (!confirm("전체 테마 기준으로 CID당 30건씩 키워드 소싱을 실행하시겠습니까?")) {
+          return;
+        }
 
-      try {
-        const result = await apiFetch("/api/admin/keyword-sourcing/test", {
-          method: "POST"
-        });
-        keywordSourcingRunId = result.run_id || keywordSourcingRunId;
-        await refreshKeywordSourcingStatus();
-      } catch (error) {
-        alert(`키워드 소싱 실패: ${error.message}`);
-      }
-    });
+        try {
+          const result = await apiFetch("/api/admin/keyword-sourcing/test", {
+            method: "POST"
+          });
+          keywordSourcingRunId = result.run_id || keywordSourcingRunId;
+          await refreshKeywordSourcingStatus();
+        } catch (error) {
+          alert(`키워드 소싱 실패: ${error.message}`);
+        }
+      });
+    }
 
     loadTaxonomy().catch((error) => {
       themeTableBody.innerHTML = `<tr><td colspan="2" class="empty-state">${error.message}</td></tr>`;
       cidTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">${error.message}</td></tr>`;
     });
     refreshKeywordSourcingStatus().catch((error) => {
-      keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
-    });
-
-    navButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        const tabId = button.dataset.tab;
-        navButtons.forEach((item) => item.classList.remove("active"));
-        panels.forEach((panel) => panel.classList.remove("active"));
-        button.classList.add("active");
-        document.getElementById(tabId).classList.add("active");
-      });
+      if (keywordLogBox) {
+        keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
+      }
+      console.error(error);
     });
   </script>
 </body>
