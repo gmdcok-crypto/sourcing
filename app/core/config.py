@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_debug: bool = False
     api_prefix: str = "/api"
+    mysql_url: Optional[str] = Field(default=None, alias="MYSQL_URL")
 
     naver_client_id: Optional[str] = Field(default=None, alias="NAVER_CLIENT_ID")
     naver_client_secret: Optional[str] = Field(

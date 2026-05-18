@@ -266,9 +266,100 @@ ADMIN_HTML = """
     }
     tr:last-child td { border-bottom: 0; }
 
+    .admin-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+    }
+
+    .field.span-2 {
+      grid-column: span 2;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .input,
+    .select {
+      width: 100%;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      padding: 12px 14px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .input:focus,
+    .select:focus {
+      border-color: rgba(124, 156, 255, 0.5);
+      box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.12);
+    }
+
+    .form-actions,
+    .table-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .action-btn {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .action-btn.primary {
+      background: rgba(124, 156, 255, 0.16);
+      border-color: rgba(124, 156, 255, 0.36);
+    }
+
+    .action-btn.danger {
+      background: rgba(255, 107, 107, 0.12);
+      border-color: rgba(255, 107, 107, 0.24);
+    }
+
+    .helper-text {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .empty-state {
+      padding: 20px 0 4px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
     @media (max-width: 1360px) {
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .grid-2, .mini-grid { grid-template-columns: 1fr; }
+      .grid-2, .mini-grid, .admin-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
@@ -278,6 +369,8 @@ ADMIN_HTML = """
       .content { padding: 18px; }
       .metrics { grid-template-columns: 1fr; }
       .bar-row { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+      .field.span-2 { grid-column: span 1; }
     }
   </style>
 </head>
@@ -378,18 +471,128 @@ ADMIN_HTML = """
       </section>
 
       <section id="taxonomy" class="tab-panel">
-        <article class="card panel">
-          <div class="section-title"><div><h2>테마 관리</h2><p>테마별 CID 구성과 수집 범위를 관리하는 탭</p></div></div>
-          <table>
-            <thead><tr><th>테마</th><th>활성 CID 수</th><th>우선순위</th><th>상태</th></tr></thead>
-            <tbody>
-              <tr><td>생활용품</td><td>10</td><td>1</td><td><span class="pill success">핵심</span></td></tr>
-              <tr><td>책상 꾸미기</td><td>12</td><td>2</td><td><span class="pill success">핵심</span></td></tr>
-              <tr><td>주방 편의도구</td><td>8</td><td>3</td><td><span class="pill warning">확장</span></td></tr>
-              <tr><td>여행용 소형용품</td><td>6</td><td>4</td><td><span class="pill warning">관찰</span></td></tr>
-            </tbody>
-          </table>
-        </article>
+        <div class="admin-grid">
+          <div class="stack">
+            <article class="card panel">
+              <div class="section-title">
+                <div>
+                  <h2>테마 관리</h2>
+                  <p>테마 추가, 수정, 삭제를 바로 처리합니다.</p>
+                </div>
+              </div>
+              <div class="form-grid" id="theme-form">
+                <div class="field">
+                  <label for="theme-code">테마 코드</label>
+                  <input class="input" id="theme-code" type="text" placeholder="예: living" />
+                </div>
+                <div class="field">
+                  <label for="theme-name">테마명</label>
+                  <input class="input" id="theme-name" type="text" placeholder="예: 생활용품" />
+                </div>
+                <div class="field">
+                  <label for="theme-priority">우선순위</label>
+                  <input class="input" id="theme-priority" type="number" min="1" placeholder="1" />
+                </div>
+                <div class="field">
+                  <label for="theme-status">상태</label>
+                  <select class="select" id="theme-status">
+                    <option value="핵심">핵심</option>
+                    <option value="확장">확장</option>
+                    <option value="관찰">관찰</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-actions" style="margin-top: 16px;">
+                <button class="action-btn primary" id="theme-save-btn" type="button">테마 추가</button>
+                <button class="action-btn" id="theme-reset-btn" type="button">입력 초기화</button>
+              </div>
+              <p class="helper-text" style="margin-top: 12px;">수정 버튼을 누르면 입력 폼에 값이 채워지고 저장 버튼이 수정 모드로 바뀝니다.</p>
+            </article>
+
+            <article class="card panel">
+              <div class="section-title">
+                <div>
+                  <h2>테마 테이블</h2>
+                  <p>현재 운영 중인 테마 목록</p>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>코드</th>
+                    <th>테마명</th>
+                    <th>우선순위</th>
+                    <th>상태</th>
+                    <th>액션</th>
+                  </tr>
+                </thead>
+                <tbody id="theme-table-body"></tbody>
+              </table>
+            </article>
+          </div>
+
+          <div class="stack">
+            <article class="card panel">
+              <div class="section-title">
+                <div>
+                  <h2>CID 관리</h2>
+                  <p>CID, 카테고리명, 경로, 연결 테마를 관리합니다.</p>
+                </div>
+              </div>
+              <div class="form-grid" id="cid-form">
+                <div class="field">
+                  <label for="cid-value">CID</label>
+                  <input class="input" id="cid-value" type="text" placeholder="예: 50000000" />
+                </div>
+                <div class="field">
+                  <label for="cid-name">카테고리명</label>
+                  <input class="input" id="cid-name" type="text" placeholder="예: 수납정리용품" />
+                </div>
+                <div class="field span-2">
+                  <label for="cid-path">카테고리 경로</label>
+                  <input class="input" id="cid-path" type="text" placeholder="예: 생활/건강 > 생활용품 > 수납/정리용품" />
+                </div>
+                <div class="field">
+                  <label for="cid-theme">연결 테마</label>
+                  <select class="select" id="cid-theme"></select>
+                </div>
+                <div class="field">
+                  <label for="cid-status">상태</label>
+                  <select class="select" id="cid-status">
+                    <option value="활성">활성</option>
+                    <option value="보류">보류</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-actions" style="margin-top: 16px;">
+                <button class="action-btn primary" id="cid-save-btn" type="button">CID 추가</button>
+                <button class="action-btn" id="cid-reset-btn" type="button">입력 초기화</button>
+              </div>
+              <p class="helper-text" style="margin-top: 12px;">테마를 삭제하면 연결된 CID는 유지되지만 테마명은 비워집니다.</p>
+            </article>
+
+            <article class="card panel">
+              <div class="section-title">
+                <div>
+                  <h2>CID 테이블</h2>
+                  <p>테마에 연결된 CID 목록</p>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>CID</th>
+                    <th>카테고리명</th>
+                    <th>테마</th>
+                    <th>상태</th>
+                    <th>액션</th>
+                  </tr>
+                </thead>
+                <tbody id="cid-table-body"></tbody>
+              </table>
+            </article>
+          </div>
+        </div>
       </section>
 
       <section id="ranking" class="tab-panel">
@@ -434,6 +637,304 @@ ADMIN_HTML = """
   <script>
     const navButtons = document.querySelectorAll(".nav-button");
     const panels = document.querySelectorAll(".tab-panel");
+
+    let editingThemeId = null;
+    let editingCidId = null;
+    let themes = [];
+    let cidItems = [];
+
+    const themeCodeInput = document.getElementById("theme-code");
+    const themeNameInput = document.getElementById("theme-name");
+    const themePriorityInput = document.getElementById("theme-priority");
+    const themeStatusInput = document.getElementById("theme-status");
+    const themeSaveBtn = document.getElementById("theme-save-btn");
+    const themeResetBtn = document.getElementById("theme-reset-btn");
+    const themeTableBody = document.getElementById("theme-table-body");
+
+    const cidValueInput = document.getElementById("cid-value");
+    const cidNameInput = document.getElementById("cid-name");
+    const cidPathInput = document.getElementById("cid-path");
+    const cidThemeInput = document.getElementById("cid-theme");
+    const cidStatusInput = document.getElementById("cid-status");
+    const cidSaveBtn = document.getElementById("cid-save-btn");
+    const cidResetBtn = document.getElementById("cid-reset-btn");
+    const cidTableBody = document.getElementById("cid-table-body");
+
+    async function apiFetch(url, options = {}) {
+      const response = await fetch(url, {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        ...options
+      });
+
+      if (!response.ok) {
+        let detail = "요청 처리에 실패했습니다.";
+        try {
+          const errorData = await response.json();
+          detail = errorData.detail || detail;
+        } catch (error) {
+          detail = response.statusText || detail;
+        }
+        throw new Error(detail);
+      }
+
+      if (response.status === 204) {
+        return null;
+      }
+
+      return response.json();
+    }
+
+    function getThemeById(themeId) {
+      return themes.find((theme) => theme.id === themeId) || null;
+    }
+
+    function resetThemeForm() {
+      editingThemeId = null;
+      themeCodeInput.value = "";
+      themeNameInput.value = "";
+      themePriorityInput.value = "";
+      themeStatusInput.value = "핵심";
+      themeSaveBtn.textContent = "테마 추가";
+    }
+
+    function resetCidForm() {
+      editingCidId = null;
+      cidValueInput.value = "";
+      cidNameInput.value = "";
+      cidPathInput.value = "";
+      cidStatusInput.value = "활성";
+      if (themes.length > 0) {
+        cidThemeInput.value = String(themes[0].id);
+      }
+      cidSaveBtn.textContent = "CID 추가";
+    }
+
+    function renderThemeOptions() {
+      cidThemeInput.innerHTML = themes
+        .sort((a, b) => a.display_order - b.display_order)
+        .map((theme) => `<option value="${theme.id}">${theme.theme_name}</option>`)
+        .join("");
+    }
+
+    function renderThemes() {
+      const sortedThemes = [...themes].sort((a, b) => a.display_order - b.display_order);
+
+      if (sortedThemes.length === 0) {
+        themeTableBody.innerHTML = '<tr><td colspan="5" class="empty-state">등록된 테마가 없습니다.</td></tr>';
+        return;
+      }
+
+      themeTableBody.innerHTML = sortedThemes
+        .map((theme) => `
+          <tr>
+            <td>${theme.theme_code}</td>
+            <td>${theme.theme_name}</td>
+            <td>${theme.display_order}</td>
+            <td><span class="pill ${theme.status_label === "핵심" ? "success" : "warning"}">${theme.status_label}</span></td>
+            <td>
+              <div class="table-actions">
+                <button class="action-btn" type="button" onclick="editTheme(${theme.id})">수정</button>
+                <button class="action-btn danger" type="button" onclick="deleteTheme(${theme.id})">삭제</button>
+              </div>
+            </td>
+          </tr>
+        `)
+        .join("");
+    }
+
+    function renderCids() {
+      if (cidItems.length === 0) {
+        cidTableBody.innerHTML = '<tr><td colspan="5" class="empty-state">등록된 CID가 없습니다.</td></tr>';
+        return;
+      }
+
+      cidTableBody.innerHTML = cidItems
+        .map((item) => {
+          const theme = getThemeById(item.themeId);
+          return `
+            <tr>
+              <td>${item.cid}</td>
+              <td>
+                <div>${item.name}</div>
+                <div class="helper-text">${item.path}</div>
+              </td>
+              <td>${theme ? theme.theme_name : "-"}</td>
+              <td><span class="pill ${item.status === "활성" ? "success" : "warning"}">${item.status}</span></td>
+              <td>
+                <div class="table-actions">
+                  <button class="action-btn" type="button" onclick="editCid(${item.id})">수정</button>
+                  <button class="action-btn danger" type="button" onclick="deleteCid(${item.id})">삭제</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+
+    function renderTaxonomy() {
+      renderThemeOptions();
+      renderThemes();
+      renderCids();
+      if (!editingCidId && themes.length > 0 && !cidThemeInput.value) {
+        cidThemeInput.value = String(themes[0].id);
+      }
+    }
+
+    async function loadTaxonomy() {
+      const [themeData, categoryData] = await Promise.all([
+        apiFetch("/api/admin/themes"),
+        apiFetch("/api/admin/categories")
+      ]);
+
+      themes = (themeData.items || []).map((item) => ({
+        ...item,
+        themeId: item.id
+      }));
+      cidItems = (categoryData.items || []).map((item) => ({
+        id: item.id,
+        cid: item.cid,
+        name: item.category_name,
+        path: item.full_path,
+        themeId: item.theme_id,
+        status: item.status_label
+      }));
+
+      renderTaxonomy();
+    }
+
+    function editTheme(themeId) {
+      const theme = getThemeById(themeId);
+      if (!theme) return;
+
+      editingThemeId = themeId;
+      themeCodeInput.value = theme.theme_code;
+      themeNameInput.value = theme.theme_name;
+      themePriorityInput.value = theme.display_order;
+      themeStatusInput.value = theme.status_label;
+      themeSaveBtn.textContent = "테마 수정";
+    }
+
+    async function deleteTheme(themeId) {
+      await apiFetch(`/api/admin/themes/${themeId}`, {
+        method: "DELETE"
+      });
+
+      if (editingThemeId === themeId) {
+        resetThemeForm();
+      }
+
+      await loadTaxonomy();
+    }
+
+    function editCid(cidId) {
+      const item = cidItems.find((cid) => cid.id === cidId);
+      if (!item) return;
+
+      editingCidId = cidId;
+      cidValueInput.value = item.cid;
+      cidNameInput.value = item.name;
+      cidPathInput.value = item.path;
+      cidThemeInput.value = item.themeId ? String(item.themeId) : "";
+      cidStatusInput.value = item.status;
+      cidSaveBtn.textContent = "CID 수정";
+    }
+
+    async function deleteCid(cidId) {
+      await apiFetch(`/api/admin/categories/${cidId}`, {
+        method: "DELETE"
+      });
+
+      if (editingCidId === cidId) {
+        resetCidForm();
+      }
+
+      await loadTaxonomy();
+    }
+
+    themeSaveBtn.addEventListener("click", async () => {
+      const code = themeCodeInput.value.trim();
+      const name = themeNameInput.value.trim();
+      const priority = Number(themePriorityInput.value);
+      const status = themeStatusInput.value;
+
+      if (!code || !name || !priority) {
+        return;
+      }
+
+      const payload = {
+        theme_code: code,
+        theme_name: name,
+        display_order: priority,
+        status_label: status
+      };
+
+      if (editingThemeId) {
+        await apiFetch(`/api/admin/themes/${editingThemeId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await apiFetch("/api/admin/themes", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      }
+
+      resetThemeForm();
+      await loadTaxonomy();
+    });
+
+    themeResetBtn.addEventListener("click", resetThemeForm);
+
+    cidSaveBtn.addEventListener("click", async () => {
+      const cid = cidValueInput.value.trim();
+      const name = cidNameInput.value.trim();
+      const path = cidPathInput.value.trim();
+      const themeId = cidThemeInput.value ? Number(cidThemeInput.value) : null;
+      const status = cidStatusInput.value;
+
+      if (!cid || !name || !path) {
+        return;
+      }
+
+      const payload = {
+        cid,
+        category_name: name,
+        full_path: path,
+        theme_id: themeId,
+        status_label: status
+      };
+
+      if (editingCidId) {
+        await apiFetch(`/api/admin/categories/${editingCidId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await apiFetch("/api/admin/categories", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      }
+
+      resetCidForm();
+      await loadTaxonomy();
+    });
+
+    cidResetBtn.addEventListener("click", resetCidForm);
+
+    window.editTheme = editTheme;
+    window.deleteTheme = deleteTheme;
+    window.editCid = editCid;
+    window.deleteCid = deleteCid;
+
+    loadTaxonomy().catch((error) => {
+      themeTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">${error.message}</td></tr>`;
+      cidTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">${error.message}</td></tr>`;
+    });
 
     navButtons.forEach((button) => {
       button.addEventListener("click", () => {
