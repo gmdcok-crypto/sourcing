@@ -259,7 +259,7 @@ ADMIN_HTML = """
       border-bottom: 1px solid var(--line);
     }
     td {
-      padding: 16px 0;
+      padding: 10px 0;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       vertical-align: middle;
       font-size: 13px;
@@ -496,7 +496,6 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div>
                   <h2>테마 관리</h2>
-                  <p>테마 추가, 수정, 삭제를 빠르게 처리합니다.</p>
                 </div>
               </div>
               <div class="form-grid" id="theme-form">
@@ -521,7 +520,6 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div>
                   <h2>테마 테이블</h2>
-                  <p>현재 운영 중인 테마 목록</p>
                 </div>
               </div>
               <table>
@@ -541,7 +539,6 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div>
                   <h2>CID 관리</h2>
-                  <p>CID, 카테고리명, 경로, 연결 테마를 관리합니다.</p>
                 </div>
               </div>
               <div class="form-grid" id="cid-form">
@@ -568,14 +565,12 @@ ADMIN_HTML = """
                 <button class="action-btn danger" id="cid-delete-btn" type="button" disabled>삭제</button>
                 <button class="action-btn" id="cid-reset-btn" type="button">입력 초기화</button>
               </div>
-              <p class="helper-text" style="margin-top: 12px;">테마를 삭제하면 연결된 CID는 유지되지만 테마명은 비워집니다.</p>
             </article>
 
             <article class="card panel">
               <div class="section-title">
                 <div>
                   <h2>CID 테이블</h2>
-                  <p>테마에 연결된 CID 목록</p>
                 </div>
               </div>
               <table>
