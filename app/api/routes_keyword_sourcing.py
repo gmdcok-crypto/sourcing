@@ -28,6 +28,7 @@ async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> Dict[str,
 @router.get("/keyword-sourcing/stream")
 async def stream_keyword_sourcing_status(run_id: Optional[str] = None) -> StreamingResponse:
     async def event_generator():
+        yield "retry: 2000\n\n"
         while True:
             state = KeywordSourcingService.get_status(run_id=run_id)
             yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
@@ -35,7 +36,17 @@ async def stream_keyword_sourcing_status(run_id: Optional[str] = None) -> Stream
                 break
             await asyncio.sleep(2)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/keyword-sourcing/start")

@@ -918,7 +918,12 @@ ADMIN_HTML = """
     }
 
     async function refreshKeywordSourcingStatus() {
-      const query = keywordSourcingRunId ? `?run_id=${encodeURIComponent(keywordSourcingRunId)}` : "";
+      const params = new URLSearchParams();
+      if (keywordSourcingRunId) {
+        params.set("run_id", keywordSourcingRunId);
+      }
+      params.set("_ts", String(Date.now()));
+      const query = `?${params.toString()}`;
       const state = await apiFetch(`/api/admin/keyword-sourcing/status${query}`);
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
@@ -952,8 +957,12 @@ ADMIN_HTML = """
         return;
       }
 
-      const query = keywordSourcingRunId ? `?run_id=${encodeURIComponent(keywordSourcingRunId)}` : "";
-      keywordStatusStream = new EventSource(`/api/admin/keyword-sourcing/stream${query}`);
+      const params = new URLSearchParams();
+      if (keywordSourcingRunId) {
+        params.set("run_id", keywordSourcingRunId);
+      }
+      params.set("_ts", String(Date.now()));
+      keywordStatusStream = new EventSource(`/api/admin/keyword-sourcing/stream?${params.toString()}`);
 
       keywordStatusStream.onmessage = (event) => {
         const state = JSON.parse(event.data);
@@ -980,6 +989,9 @@ ADMIN_HTML = """
           keywordStatusStream.close();
           keywordStatusStream = null;
         }
+        setTimeout(() => {
+          ensureKeywordStatusStream();
+        }, 2000);
       };
     }
 
@@ -1344,6 +1356,8 @@ def load_keyword_status_data() -> Dict[str, Any]:
         "log_text": "\n".join(logs),
         "r2_json_key": state.get("r2_json_key"),
         "r2_parquet_key": state.get("r2_parquet_key"),
+        "valid_keywords": state.get("valid_keywords") or [],
+        "noise_keywords": state.get("noise_keywords") or [],
     }
 
 

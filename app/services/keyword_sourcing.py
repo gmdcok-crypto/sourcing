@@ -9,6 +9,7 @@ import pandas as pd
 
 from app.services.db import get_mysql_connection
 from app.services.naver_api import NaverShoppingService
+from app.services.keyword_noise import filter_noise
 from app.services.r2_storage import R2StorageService
 
 
@@ -57,6 +58,8 @@ class KeywordSourcingService:
                 "finished_at": None,
                 "r2_json_key": None,
                 "r2_parquet_key": None,
+                "valid_keywords": [],
+                "noise_keywords": [],
             }
         return cls._runs[target_run_id]
 
@@ -88,6 +91,8 @@ class KeywordSourcingService:
                 "r2_parquet_key": None,
             "dataframe_columns": [],
             "preview_rows": [],
+            "valid_keywords": [],
+            "noise_keywords": [],
         }
         cls._runs[run_id] = state
         cls._latest_run_id = run_id
@@ -182,9 +187,13 @@ class KeywordSourcingService:
                 state["progress_percent"] = self._progress_percent(index, len(categories))
 
             dataframe = pd.DataFrame(rows)
+            keyword_candidates = self._extract_keyword_candidates(dataframe)
+            valid_keywords, noise_keywords = filter_noise(keyword_candidates)
             r2_json_key, r2_parquet_key = self._save_dataframe_snapshot(
                 run_id=run_id,
                 dataframe=dataframe,
+                valid_keywords=valid_keywords,
+                noise_keywords=noise_keywords,
             )
 
             state["status"] = "completed"
@@ -198,6 +207,8 @@ class KeywordSourcingService:
             )
             state["r2_json_key"] = r2_json_key
             state["r2_parquet_key"] = r2_parquet_key
+            state["valid_keywords"] = valid_keywords[:100]
+            state["noise_keywords"] = noise_keywords[:100]
             self._append_log(state, f"실행 완료: 총 {len(rows)}행 수집")
         except Exception as error:  # noqa: BLE001
             state["status"] = "failed"
@@ -242,12 +253,16 @@ class KeywordSourcingService:
         *,
         run_id: str,
         dataframe: pd.DataFrame,
+        valid_keywords: List[str],
+        noise_keywords: List[str],
     ) -> tuple[str | None, str | None]:
         payload = {
             "run_id": run_id,
             "row_count": len(dataframe),
             "columns": dataframe.columns.tolist(),
             "rows": dataframe.to_dict(orient="records"),
+            "valid_keywords": valid_keywords,
+            "noise_keywords": noise_keywords,
         }
         json_key = f"search-results/raw/{run_id}.json"
         parquet_key = f"search-results/dataframe/{run_id}.parquet"
@@ -258,6 +273,23 @@ class KeywordSourcingService:
             dataframe=dataframe,
         )
         return saved_json_key, saved_parquet_key
+
+    @staticmethod
+    def _extract_keyword_candidates(dataframe: pd.DataFrame) -> List[str]:
+        if dataframe.empty or "product_name" not in dataframe.columns:
+            return []
+
+        seen = set()
+        keywords: List[str] = []
+        for value in dataframe["product_name"].dropna().tolist():
+            keyword = str(value).strip()
+            if not keyword:
+                continue
+            if keyword in seen:
+                continue
+            seen.add(keyword)
+            keywords.append(keyword)
+        return keywords
 
     @staticmethod
     def _to_int(value: Any) -> int | None:
