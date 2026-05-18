@@ -758,6 +758,7 @@ ADMIN_HTML = """
     const keywordLogBox = document.getElementById("keyword-log-box");
     let keywordSourcingRunId = null;
     let keywordStatusPoller = null;
+    let keywordStatusStream = null;
 
     async function apiFetch(url, options = {}) {
       const response = await fetch(url, {
@@ -944,6 +945,42 @@ ADMIN_HTML = """
           keywordStatusPoller = null;
         }
       }
+    }
+
+    function ensureKeywordStatusStream() {
+      if (keywordStatusStream) {
+        return;
+      }
+
+      const query = keywordSourcingRunId ? `?run_id=${encodeURIComponent(keywordSourcingRunId)}` : "";
+      keywordStatusStream = new EventSource(`/api/admin/keyword-sourcing/stream${query}`);
+
+      keywordStatusStream.onmessage = (event) => {
+        const state = JSON.parse(event.data);
+        if (state.run_id) {
+          keywordSourcingRunId = state.run_id;
+        }
+        renderKeywordSourcingStatus(state);
+
+        if (state.status === "running") {
+          runKeywordSourcingBtn.disabled = true;
+          runKeywordSourcingBtn.textContent = "수집 중...";
+        } else {
+          runKeywordSourcingBtn.disabled = false;
+          runKeywordSourcingBtn.textContent = "키워드 소싱";
+          if (keywordStatusStream) {
+            keywordStatusStream.close();
+            keywordStatusStream = null;
+          }
+        }
+      };
+
+      keywordStatusStream.onerror = () => {
+        if (keywordStatusStream) {
+          keywordStatusStream.close();
+          keywordStatusStream = null;
+        }
+      };
     }
 
     function editTheme(themeId) {
@@ -1152,6 +1189,7 @@ ADMIN_HTML = """
           });
           keywordSourcingRunId = result.run_id || keywordSourcingRunId;
           await refreshKeywordSourcingStatus();
+          ensureKeywordStatusStream();
         } catch (error) {
           alert(`키워드 소싱 실패: ${error.message}`);
           keywordSourcingForm.submit();
@@ -1169,6 +1207,7 @@ ADMIN_HTML = """
       }
       console.error(error);
     });
+    ensureKeywordStatusStream();
   </script>
 </body>
 </html>
@@ -1231,6 +1270,10 @@ def render_admin_html(active_tab: str) -> str:
     html = html.replace("__KEYWORD_CURRENT_CID__", escape(str(keyword_status["current_cid"] or "-")))
     html = html.replace("__KEYWORD_CURRENT_QUERY__", escape(str(keyword_status["current_query"] or "-")))
     html = html.replace("__KEYWORD_LOG_TEXT__", escape(keyword_status["log_text"]))
+    html = html.replace(
+        "__AUTO_REFRESH_META__",
+        '<meta http-equiv="refresh" content="3">' if selected_tab == "pipeline" and keyword_status["status"] == "running" else "",
+    )
 
     return html
 

@@ -1,7 +1,10 @@
+import asyncio
+import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import RedirectResponse
+from starlette.responses import StreamingResponse
 
 from app.core.config import Settings, get_settings
 from app.services.keyword_sourcing import KeywordSourcingService
@@ -20,6 +23,19 @@ async def run_keyword_sourcing_test(
 @router.get("/keyword-sourcing/status")
 async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> Dict[str, Any]:
     return KeywordSourcingService.get_status(run_id=run_id)
+
+
+@router.get("/keyword-sourcing/stream")
+async def stream_keyword_sourcing_status(run_id: Optional[str] = None) -> StreamingResponse:
+    async def event_generator():
+        while True:
+            state = KeywordSourcingService.get_status(run_id=run_id)
+            yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
+            if state.get("status") in {"completed", "failed", "idle"}:
+                break
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/keyword-sourcing/start")
