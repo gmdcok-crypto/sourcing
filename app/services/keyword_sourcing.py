@@ -32,11 +32,12 @@ class KeywordSourcingService:
     _runs: Dict[str, Dict[str, Any]] = {}
     _latest_run_id: Optional[str] = None
     _active_run_id: Optional[str] = None
+    _active_task: Optional[asyncio.Task] = None
 
     def __init__(self, settings) -> None:
         self.settings = settings
         self.naver_service = NaverShoppingService(settings)
-        self.datalab_service = NaverShoppingInsightService()
+        self.datalab_service = NaverShoppingInsightService(settings)
         self.searchad_service = NaverSearchAdService(settings)
         self.r2_service = R2StorageService(settings)
 
@@ -78,7 +79,10 @@ class KeywordSourcingService:
     def start_background_run(cls, settings, *, display_per_cid: int = 30) -> Dict[str, Any]:
         current = cls.get_status()
         if current.get("status") == "running":
-            return current
+            active_task = cls._active_task
+            if active_task is not None and not active_task.done():
+                return current
+            cls._mark_active_run_stale()
 
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         state = {
@@ -114,7 +118,10 @@ class KeywordSourcingService:
         cls._runs[run_id] = state
         cls._latest_run_id = run_id
         cls._active_run_id = run_id
-        asyncio.create_task(cls(settings)._run_collection(run_id=run_id, display_per_cid=display_per_cid))
+        service = cls(settings)
+        cls._active_task = asyncio.create_task(
+            service._run_collection(run_id=run_id, display_per_cid=display_per_cid)
+        )
         return state
 
     async def _run_collection(self, *, run_id: str, display_per_cid: int) -> None:
@@ -287,6 +294,23 @@ class KeywordSourcingService:
         finally:
             if self._active_run_id == run_id:
                 self._active_run_id = None
+            current_task = asyncio.current_task()
+            if current_task is not None and self._active_task is current_task:
+                self._active_task = None
+
+    @classmethod
+    def _mark_active_run_stale(cls) -> None:
+        stale_run_id = cls._active_run_id or cls._latest_run_id
+        if stale_run_id and stale_run_id in cls._runs:
+            state = cls._runs[stale_run_id]
+            state["status"] = "failed"
+            state["message"] = "이전 실행이 비정상 종료되어 새 실행으로 교체합니다."
+            state["finished_at"] = datetime.now(timezone.utc).isoformat()
+            state["logs"] = (
+                (state.get("logs") or []) + ["백그라운드 작업이 종료되어 stale run으로 정리했습니다."]
+            )[-20:]
+        cls._active_run_id = None
+        cls._active_task = None
 
     def collect_all_themes(self, *, display_per_cid: int = 30) -> KeywordSourcingResult:
         raise NotImplementedError("Use start_background_run() for admin-triggered collection.")
