@@ -283,6 +283,11 @@ ADMIN_HTML = """
       gap: 14px;
     }
 
+    .compact-panel .form-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
     .field {
       display: grid;
       gap: 8px;
@@ -360,6 +365,7 @@ ADMIN_HTML = """
     @media (max-width: 1360px) {
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid-2, .mini-grid, .admin-grid { grid-template-columns: 1fr; }
+      .compact-panel .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
@@ -473,32 +479,11 @@ ADMIN_HTML = """
       <section id="taxonomy" class="tab-panel">
         <div class="admin-grid">
           <div class="stack">
-            <article class="card panel">
-              <div class="section-title">
-                <div>
-                  <h2>테마 테이블</h2>
-                  <p>현재 운영 중인 테마 목록</p>
-                </div>
-              </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>코드</th>
-                    <th>테마명</th>
-                    <th>우선순위</th>
-                    <th>상태</th>
-                    <th>액션</th>
-                  </tr>
-                </thead>
-                <tbody id="theme-table-body"></tbody>
-              </table>
-            </article>
-
-            <article class="card panel">
+            <article class="card panel compact-panel">
               <div class="section-title">
                 <div>
                   <h2>테마 관리</h2>
-                  <p>테마 추가, 수정, 삭제를 바로 처리합니다.</p>
+                  <p>테마 추가, 수정, 삭제를 빠르게 처리합니다.</p>
                 </div>
               </div>
               <div class="form-grid" id="theme-form">
@@ -527,7 +512,27 @@ ADMIN_HTML = """
                 <button class="action-btn primary" id="theme-save-btn" type="button">테마 추가</button>
                 <button class="action-btn" id="theme-reset-btn" type="button">입력 초기화</button>
               </div>
-              <p class="helper-text" style="margin-top: 12px;">수정 버튼을 누르면 입력 폼에 값이 채워지고 저장 버튼이 수정 모드로 바뀝니다.</p>
+            </article>
+
+            <article class="card panel">
+              <div class="section-title">
+                <div>
+                  <h2>테마 테이블</h2>
+                  <p>현재 운영 중인 테마 목록</p>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>코드</th>
+                    <th>테마명</th>
+                    <th>우선순위</th>
+                    <th>상태</th>
+                    <th>액션</th>
+                  </tr>
+                </thead>
+                <tbody id="theme-table-body"></tbody>
+              </table>
             </article>
           </div>
 
