@@ -4,3 +4,4 @@ httpx
 pydantic-settings
 boto3
 PyMySQL
+pandas

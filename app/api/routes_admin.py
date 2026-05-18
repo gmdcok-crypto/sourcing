@@ -226,6 +226,7 @@ ADMIN_HTML = """
     .pill.danger { color: #ffd0d0; background: rgba(255, 107, 107, 0.12); border: 1px solid rgba(255, 107, 107, 0.22); }
 
     .bars { display: grid; gap: 14px; margin-top: 18px; }
+    .pipeline-stack { display: grid; gap: 18px; }
     .bar-row {
       display: grid;
       grid-template-columns: 150px 1fr 60px;
@@ -247,6 +248,41 @@ ADMIN_HTML = """
       background: linear-gradient(90deg, var(--primary), #48d3ff);
     }
     .bar-value { color: var(--muted); font-size: 12px; text-align: right; }
+    .progress-panel {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .progress-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .progress-card {
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.025);
+    }
+    .progress-card-label { margin: 0 0 6px; color: var(--muted); font-size: 11px; }
+    .progress-card-value { margin: 0; font-size: 18px; font-weight: 700; }
+    .progress-meta { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+    .log-box {
+      max-height: 220px;
+      overflow: auto;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(7, 11, 22, 0.72);
+      font-size: 12px;
+      line-height: 1.6;
+      color: #dce4ff;
+      white-space: pre-wrap;
+    }
 
     table { width: 100%; border-collapse: collapse; }
     th {
@@ -453,13 +489,40 @@ ADMIN_HTML = """
 
       <section id="pipeline" class="tab-panel">
         <article class="card panel">
-          <div class="section-title"><div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div></div>
-          <div class="bars">
-            <div class="bar-row"><span class="bar-label">생활용품</span><div class="bar-track"><div class="bar-fill" style="width:92%"></div></div><span class="bar-value">3,820</span></div>
-            <div class="bar-row"><span class="bar-label">책상 꾸미기</span><div class="bar-track"><div class="bar-fill" style="width:78%"></div></div><span class="bar-value">2,940</span></div>
-            <div class="bar-row"><span class="bar-label">주방 편의도구</span><div class="bar-track"><div class="bar-fill" style="width:85%"></div></div><span class="bar-value">3,210</span></div>
-            <div class="bar-row"><span class="bar-label">반려동물 소품</span><div class="bar-track"><div class="bar-fill" style="width:61%"></div></div><span class="bar-value">2,114</span></div>
-            <div class="bar-row"><span class="bar-label">차량 감성용품</span><div class="bar-track"><div class="bar-fill" style="width:56%"></div></div><span class="bar-value">1,902</span></div>
+          <div class="section-title">
+            <div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div>
+            <button class="action-btn primary" id="run-keyword-sourcing-btn" type="button">키워드 소싱</button>
+          </div>
+          <div class="pipeline-stack">
+            <div class="bars">
+              <div class="bar-row"><span class="bar-label">생활용품</span><div class="bar-track"><div class="bar-fill" style="width:92%"></div></div><span class="bar-value">3,820</span></div>
+              <div class="bar-row"><span class="bar-label">책상 꾸미기</span><div class="bar-track"><div class="bar-fill" style="width:78%"></div></div><span class="bar-value">2,940</span></div>
+              <div class="bar-row"><span class="bar-label">주방 편의도구</span><div class="bar-track"><div class="bar-fill" style="width:85%"></div></div><span class="bar-value">3,210</span></div>
+              <div class="bar-row"><span class="bar-label">반려동물 소품</span><div class="bar-track"><div class="bar-fill" style="width:61%"></div></div><span class="bar-value">2,114</span></div>
+              <div class="bar-row"><span class="bar-label">차량 감성용품</span><div class="bar-track"><div class="bar-fill" style="width:56%"></div></div><span class="bar-value">1,902</span></div>
+            </div>
+            <div class="progress-panel">
+              <div class="section-title">
+                <div><h2>키워드 소싱 진행 현황</h2></div>
+              </div>
+              <div class="bar-row">
+                <span class="bar-label" id="keyword-progress-label">대기중</span>
+                <div class="bar-track"><div class="bar-fill" id="keyword-progress-fill" style="width:0%"></div></div>
+                <span class="bar-value" id="keyword-progress-value">0%</span>
+              </div>
+              <div class="progress-grid">
+                <div class="progress-card"><p class="progress-card-label">상태</p><p class="progress-card-value" id="keyword-status-text">대기</p></div>
+                <div class="progress-card"><p class="progress-card-label">처리 CID</p><p class="progress-card-value" id="keyword-processed-count">0 / 0</p></div>
+                <div class="progress-card"><p class="progress-card-label">수집 행 수</p><p class="progress-card-value" id="keyword-row-count">0</p></div>
+                <div class="progress-card"><p class="progress-card-label">성공 / 실패</p><p class="progress-card-value" id="keyword-success-failure">0 / 0</p></div>
+              </div>
+              <div class="progress-meta">
+                <div id="keyword-current-theme">현재 테마: -</div>
+                <div id="keyword-current-cid">현재 CID: -</div>
+                <div id="keyword-current-query">현재 Query: -</div>
+              </div>
+              <div class="log-box" id="keyword-log-box">실행 대기중입니다.</div>
+            </div>
           </div>
         </article>
       </section>
@@ -654,6 +717,20 @@ ADMIN_HTML = """
     const cidDeleteBtn = document.getElementById("cid-delete-btn");
     const cidResetBtn = document.getElementById("cid-reset-btn");
     const cidTableBody = document.getElementById("cid-table-body");
+    const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
+    const keywordProgressLabel = document.getElementById("keyword-progress-label");
+    const keywordProgressFill = document.getElementById("keyword-progress-fill");
+    const keywordProgressValue = document.getElementById("keyword-progress-value");
+    const keywordStatusText = document.getElementById("keyword-status-text");
+    const keywordProcessedCount = document.getElementById("keyword-processed-count");
+    const keywordRowCount = document.getElementById("keyword-row-count");
+    const keywordSuccessFailure = document.getElementById("keyword-success-failure");
+    const keywordCurrentTheme = document.getElementById("keyword-current-theme");
+    const keywordCurrentCid = document.getElementById("keyword-current-cid");
+    const keywordCurrentQuery = document.getElementById("keyword-current-query");
+    const keywordLogBox = document.getElementById("keyword-log-box");
+    let keywordSourcingRunId = null;
+    let keywordStatusPoller = null;
 
     async function apiFetch(url, options = {}) {
       const response = await fetch(url, {
@@ -794,6 +871,52 @@ ADMIN_HTML = """
       }));
 
       renderTaxonomy();
+    }
+
+    function renderKeywordSourcingStatus(state) {
+      const progress = Number(state.progress_percent || 0);
+      keywordProgressLabel.textContent = state.message || "대기중";
+      keywordProgressFill.style.width = `${progress}%`;
+      keywordProgressValue.textContent = `${progress}%`;
+      keywordStatusText.textContent = state.status || "idle";
+      keywordProcessedCount.textContent = `${state.processed_categories || 0} / ${state.category_count || 0}`;
+      keywordRowCount.textContent = String(state.row_count || 0);
+      keywordSuccessFailure.textContent = `${state.success_count || 0} / ${state.failure_count || 0}`;
+      keywordCurrentTheme.textContent = `현재 테마: ${state.current_theme_name || "-"}`;
+      keywordCurrentCid.textContent = `현재 CID: ${state.current_cid || "-"}`;
+      keywordCurrentQuery.textContent = `현재 Query: ${state.current_query || "-"}`;
+      keywordLogBox.textContent = (state.logs || ["실행 대기중입니다."]).join("\n");
+      keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
+    }
+
+    async function refreshKeywordSourcingStatus() {
+      const query = keywordSourcingRunId ? `?run_id=${encodeURIComponent(keywordSourcingRunId)}` : "";
+      const state = await apiFetch(`/api/admin/keyword-sourcing/status${query}`);
+      if (state.run_id) {
+        keywordSourcingRunId = state.run_id;
+      }
+      renderKeywordSourcingStatus(state);
+
+      if (state.status === "running") {
+        runKeywordSourcingBtn.disabled = true;
+        runKeywordSourcingBtn.textContent = "수집 중...";
+        if (!keywordStatusPoller) {
+          keywordStatusPoller = setInterval(async () => {
+            try {
+              await refreshKeywordSourcingStatus();
+            } catch (error) {
+              console.error(error);
+            }
+          }, 2000);
+        }
+      } else {
+        runKeywordSourcingBtn.disabled = false;
+        runKeywordSourcingBtn.textContent = "키워드 소싱";
+        if (keywordStatusPoller) {
+          clearInterval(keywordStatusPoller);
+          keywordStatusPoller = null;
+        }
+      }
     }
 
     function editTheme(themeId) {
@@ -988,9 +1111,28 @@ ADMIN_HTML = """
 
     cidResetBtn.addEventListener("click", resetCidForm);
 
+    runKeywordSourcingBtn.addEventListener("click", async () => {
+      if (!confirm("전체 테마 기준으로 CID당 30건씩 키워드 소싱을 실행하시겠습니까?")) {
+        return;
+      }
+
+      try {
+        const result = await apiFetch("/api/admin/keyword-sourcing/test", {
+          method: "POST"
+        });
+        keywordSourcingRunId = result.run_id || keywordSourcingRunId;
+        await refreshKeywordSourcingStatus();
+      } catch (error) {
+        alert(`키워드 소싱 실패: ${error.message}`);
+      }
+    });
+
     loadTaxonomy().catch((error) => {
       themeTableBody.innerHTML = `<tr><td colspan="2" class="empty-state">${error.message}</td></tr>`;
       cidTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">${error.message}</td></tr>`;
+    });
+    refreshKeywordSourcingStatus().catch((error) => {
+      keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
     });
 
     navButtons.forEach((button) => {
