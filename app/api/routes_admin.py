@@ -277,6 +277,10 @@ ADMIN_HTML = """
       gap: 18px;
     }
 
+    .taxonomy-stack {
+      gap: 10px;
+    }
+
     .form-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -478,7 +482,7 @@ ADMIN_HTML = """
 
       <section id="taxonomy" class="tab-panel">
         <div class="admin-grid">
-          <div class="stack">
+          <div class="stack taxonomy-stack">
             <article class="card panel compact-panel">
               <div class="section-title">
                 <div>
