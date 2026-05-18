@@ -259,7 +259,7 @@ ADMIN_HTML = """
       border-bottom: 1px solid var(--line);
     }
     td {
-      padding: 10px 0;
+      padding: 6px 0;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       vertical-align: middle;
       font-size: 13px;
