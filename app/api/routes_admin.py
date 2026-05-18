@@ -265,6 +265,9 @@ ADMIN_HTML = """
       font-size: 13px;
     }
     tr:last-child td { border-bottom: 0; }
+    .selectable-row { cursor: pointer; transition: background 0.18s ease; }
+    .selectable-row:hover td { background: rgba(255, 255, 255, 0.03); }
+    .selectable-row.selected td { background: rgba(124, 156, 255, 0.14); }
 
     .admin-grid {
       display: grid;
@@ -352,6 +355,10 @@ ADMIN_HTML = """
     .action-btn.danger {
       background: rgba(255, 107, 107, 0.12);
       border-color: rgba(255, 107, 107, 0.24);
+    }
+    .action-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
     }
 
     .helper-text {
@@ -503,7 +510,9 @@ ADMIN_HTML = """
                 </div>
               </div>
               <div class="form-actions" style="margin-top: 16px;">
-                <button class="action-btn primary" id="theme-save-btn" type="button">테마 추가</button>
+                <button class="action-btn primary" id="theme-add-btn" type="button">추가</button>
+                <button class="action-btn" id="theme-update-btn" type="button" disabled>수정</button>
+                <button class="action-btn danger" id="theme-delete-btn" type="button" disabled>삭제</button>
                 <button class="action-btn" id="theme-reset-btn" type="button">입력 초기화</button>
               </div>
             </article>
@@ -520,7 +529,6 @@ ADMIN_HTML = """
                   <tr>
                     <th>코드</th>
                     <th>테마명</th>
-                    <th>액션</th>
                   </tr>
                 </thead>
                 <tbody id="theme-table-body"></tbody>
@@ -555,7 +563,9 @@ ADMIN_HTML = """
                 </div>
               </div>
               <div class="form-actions" style="margin-top: 16px;">
-                <button class="action-btn primary" id="cid-save-btn" type="button">CID 추가</button>
+                <button class="action-btn primary" id="cid-add-btn" type="button">추가</button>
+                <button class="action-btn" id="cid-update-btn" type="button" disabled>수정</button>
+                <button class="action-btn danger" id="cid-delete-btn" type="button" disabled>삭제</button>
                 <button class="action-btn" id="cid-reset-btn" type="button">입력 초기화</button>
               </div>
               <p class="helper-text" style="margin-top: 12px;">테마를 삭제하면 연결된 CID는 유지되지만 테마명은 비워집니다.</p>
@@ -575,7 +585,6 @@ ADMIN_HTML = """
                     <th>CID</th>
                     <th>경로</th>
                     <th>테마</th>
-                    <th>액션</th>
                   </tr>
                 </thead>
                 <tbody id="cid-table-body"></tbody>
@@ -635,7 +644,9 @@ ADMIN_HTML = """
 
     const themeCodeInput = document.getElementById("theme-code");
     const themeNameInput = document.getElementById("theme-name");
-    const themeSaveBtn = document.getElementById("theme-save-btn");
+    const themeAddBtn = document.getElementById("theme-add-btn");
+    const themeUpdateBtn = document.getElementById("theme-update-btn");
+    const themeDeleteBtn = document.getElementById("theme-delete-btn");
     const themeResetBtn = document.getElementById("theme-reset-btn");
     const themeTableBody = document.getElementById("theme-table-body");
 
@@ -643,7 +654,9 @@ ADMIN_HTML = """
     const cidNameInput = document.getElementById("cid-name");
     const cidPathInput = document.getElementById("cid-path");
     const cidThemeInput = document.getElementById("cid-theme");
-    const cidSaveBtn = document.getElementById("cid-save-btn");
+    const cidAddBtn = document.getElementById("cid-add-btn");
+    const cidUpdateBtn = document.getElementById("cid-update-btn");
+    const cidDeleteBtn = document.getElementById("cid-delete-btn");
     const cidResetBtn = document.getElementById("cid-reset-btn");
     const cidTableBody = document.getElementById("cid-table-body");
 
@@ -677,11 +690,28 @@ ADMIN_HTML = """
       return themes.find((theme) => theme.id === themeId) || null;
     }
 
+    function getCidById(cidId) {
+      return cidItems.find((cid) => cid.id === cidId) || null;
+    }
+
+    function syncThemeActionButtons() {
+      const hasSelection = editingThemeId !== null;
+      themeUpdateBtn.disabled = !hasSelection;
+      themeDeleteBtn.disabled = !hasSelection;
+    }
+
+    function syncCidActionButtons() {
+      const hasSelection = editingCidId !== null;
+      cidUpdateBtn.disabled = !hasSelection;
+      cidDeleteBtn.disabled = !hasSelection;
+    }
+
     function resetThemeForm() {
       editingThemeId = null;
       themeCodeInput.value = "";
       themeNameInput.value = "";
-      themeSaveBtn.textContent = "테마 추가";
+      syncThemeActionButtons();
+      renderThemes();
     }
 
     function resetCidForm() {
@@ -692,7 +722,8 @@ ADMIN_HTML = """
       if (themes.length > 0) {
         cidThemeInput.value = String(themes[0].id);
       }
-      cidSaveBtn.textContent = "CID 추가";
+      syncCidActionButtons();
+      renderCids();
     }
 
     function renderThemeOptions() {
@@ -705,21 +736,15 @@ ADMIN_HTML = """
       const sortedThemes = [...themes];
 
       if (sortedThemes.length === 0) {
-        themeTableBody.innerHTML = '<tr><td colspan="3" class="empty-state">등록된 테마가 없습니다.</td></tr>';
+        themeTableBody.innerHTML = '<tr><td colspan="2" class="empty-state">등록된 테마가 없습니다.</td></tr>';
         return;
       }
 
       themeTableBody.innerHTML = sortedThemes
         .map((theme) => `
-          <tr>
+          <tr class="selectable-row ${editingThemeId === theme.id ? "selected" : ""}" data-theme-id="${theme.id}">
             <td>${theme.theme_code}</td>
             <td>${theme.theme_name}</td>
-            <td>
-              <div class="table-actions">
-                <button class="action-btn" type="button" onclick="editTheme(${theme.id})">수정</button>
-                <button class="action-btn danger" type="button" onclick="deleteTheme(${theme.id})">삭제</button>
-              </div>
-            </td>
           </tr>
         `)
         .join("");
@@ -735,17 +760,11 @@ ADMIN_HTML = """
         .map((item) => {
           const theme = getThemeById(item.themeId);
           return `
-            <tr>
+            <tr class="selectable-row ${editingCidId === item.id ? "selected" : ""}" data-cid-id="${item.id}">
               <td>${item.name}</td>
               <td>${item.cid}</td>
               <td>${item.path}</td>
               <td>${theme ? theme.theme_name : "-"}</td>
-              <td>
-                <div class="table-actions">
-                  <button class="action-btn" type="button" onclick="editCid(${item.id})">수정</button>
-                  <button class="action-btn danger" type="button" onclick="deleteCid(${item.id})">삭제</button>
-                </div>
-              </td>
             </tr>
           `;
         })
@@ -789,7 +808,8 @@ ADMIN_HTML = """
       editingThemeId = themeId;
       themeCodeInput.value = theme.theme_code;
       themeNameInput.value = theme.theme_name;
-      themeSaveBtn.textContent = "테마 수정";
+      syncThemeActionButtons();
+      renderThemes();
     }
 
     async function deleteTheme(themeId) {
@@ -805,7 +825,7 @@ ADMIN_HTML = """
     }
 
     function editCid(cidId) {
-      const item = cidItems.find((cid) => cid.id === cidId);
+      const item = getCidById(cidId);
       if (!item) return;
 
       editingCidId = cidId;
@@ -813,7 +833,8 @@ ADMIN_HTML = """
       cidNameInput.value = item.name;
       cidPathInput.value = item.path;
       cidThemeInput.value = item.themeId ? String(item.themeId) : "";
-      cidSaveBtn.textContent = "CID 수정";
+      syncCidActionButtons();
+      renderCids();
     }
 
     async function deleteCid(cidId) {
@@ -828,7 +849,19 @@ ADMIN_HTML = """
       await loadTaxonomy();
     }
 
-    themeSaveBtn.addEventListener("click", async () => {
+    themeTableBody.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-theme-id]");
+      if (!row) return;
+      editTheme(Number(row.dataset.themeId));
+    });
+
+    cidTableBody.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-cid-id]");
+      if (!row) return;
+      editCid(Number(row.dataset.cidId));
+    });
+
+    themeAddBtn.addEventListener("click", async () => {
       const code = themeCodeInput.value.trim();
       const name = themeNameInput.value.trim();
 
@@ -841,25 +874,45 @@ ADMIN_HTML = """
         theme_name: name
       };
 
-      if (editingThemeId) {
-        await apiFetch(`/api/admin/themes/${editingThemeId}`, {
-          method: "PUT",
-          body: JSON.stringify(payload)
-        });
-      } else {
-        await apiFetch("/api/admin/themes", {
-          method: "POST",
-          body: JSON.stringify(payload)
-        });
-      }
+      await apiFetch("/api/admin/themes", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
 
       resetThemeForm();
       await loadTaxonomy();
     });
 
+    themeUpdateBtn.addEventListener("click", async () => {
+      if (!editingThemeId) return;
+
+      const code = themeCodeInput.value.trim();
+      const name = themeNameInput.value.trim();
+
+      if (!code || !name) {
+        return;
+      }
+
+      await apiFetch(`/api/admin/themes/${editingThemeId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          theme_code: code,
+          theme_name: name
+        })
+      });
+
+      resetThemeForm();
+      await loadTaxonomy();
+    });
+
+    themeDeleteBtn.addEventListener("click", async () => {
+      if (!editingThemeId) return;
+      await deleteTheme(editingThemeId);
+    });
+
     themeResetBtn.addEventListener("click", resetThemeForm);
 
-    cidSaveBtn.addEventListener("click", async () => {
+    cidAddBtn.addEventListener("click", async () => {
       const cid = cidValueInput.value.trim();
       const name = cidNameInput.value.trim();
       const path = cidPathInput.value.trim();
@@ -876,31 +929,50 @@ ADMIN_HTML = """
         theme_id: themeId
       };
 
-      if (editingCidId) {
-        await apiFetch(`/api/admin/categories/${editingCidId}`, {
-          method: "PUT",
-          body: JSON.stringify(payload)
-        });
-      } else {
-        await apiFetch("/api/admin/categories", {
-          method: "POST",
-          body: JSON.stringify(payload)
-        });
-      }
+      await apiFetch("/api/admin/categories", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
 
       resetCidForm();
       await loadTaxonomy();
     });
 
+    cidUpdateBtn.addEventListener("click", async () => {
+      if (!editingCidId) return;
+
+      const cid = cidValueInput.value.trim();
+      const name = cidNameInput.value.trim();
+      const path = cidPathInput.value.trim();
+      const themeId = cidThemeInput.value ? Number(cidThemeInput.value) : null;
+
+      if (!cid || !name || !path) {
+        return;
+      }
+
+      await apiFetch(`/api/admin/categories/${editingCidId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          cid,
+          category_name: name,
+          full_path: path,
+          theme_id: themeId
+        })
+      });
+
+      resetCidForm();
+      await loadTaxonomy();
+    });
+
+    cidDeleteBtn.addEventListener("click", async () => {
+      if (!editingCidId) return;
+      await deleteCid(editingCidId);
+    });
+
     cidResetBtn.addEventListener("click", resetCidForm);
 
-    window.editTheme = editTheme;
-    window.deleteTheme = deleteTheme;
-    window.editCid = editCid;
-    window.deleteCid = deleteCid;
-
     loadTaxonomy().catch((error) => {
-      themeTableBody.innerHTML = `<tr><td colspan="3" class="empty-state">${error.message}</td></tr>`;
+      themeTableBody.innerHTML = `<tr><td colspan="2" class="empty-state">${error.message}</td></tr>`;
       cidTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">${error.message}</td></tr>`;
     });
 
