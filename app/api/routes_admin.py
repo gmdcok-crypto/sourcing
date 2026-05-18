@@ -441,13 +441,13 @@ ADMIN_HTML = """
       </div>
 
       <p class="nav-label">메뉴</p>
-      <button class="nav-button active" data-tab="dashboard" onclick="switchAdminTab('dashboard')" type="button"><span class="nav-icon">DB</span><span>대시보드</span></button>
-      <button class="nav-button" data-tab="pipeline" onclick="switchAdminTab('pipeline')" type="button"><span class="nav-icon">OP</span><span>소싱 운영</span></button>
-      <button class="nav-button" data-tab="candidates" onclick="switchAdminTab('candidates')" type="button"><span class="nav-icon">PD</span><span>상품 후보 관리</span></button>
-      <button class="nav-button" data-tab="taxonomy" onclick="switchAdminTab('taxonomy')" type="button"><span class="nav-icon">TX</span><span>테마 관리</span></button>
-      <button class="nav-button" data-tab="ranking" onclick="switchAdminTab('ranking')" type="button"><span class="nav-icon">RK</span><span>랭킹 관리</span></button>
-      <button class="nav-button" data-tab="users" onclick="switchAdminTab('users')" type="button"><span class="nav-icon">US</span><span>사용자 및 과금</span></button>
-      <button class="nav-button" data-tab="logs" onclick="switchAdminTab('logs')" type="button"><span class="nav-icon">LG</span><span>로그 및 이벤트</span></button>
+      <a class="nav-button __NAV_DASHBOARD_ACTIVE__" data-tab="dashboard" href="/admin?tab=dashboard"><span class="nav-icon">DB</span><span>대시보드</span></a>
+      <a class="nav-button __NAV_PIPELINE_ACTIVE__" data-tab="pipeline" href="/admin?tab=pipeline"><span class="nav-icon">OP</span><span>소싱 운영</span></a>
+      <a class="nav-button __NAV_CANDIDATES_ACTIVE__" data-tab="candidates" href="/admin?tab=candidates"><span class="nav-icon">PD</span><span>상품 후보 관리</span></a>
+      <a class="nav-button __NAV_TAXONOMY_ACTIVE__" data-tab="taxonomy" href="/admin?tab=taxonomy"><span class="nav-icon">TX</span><span>테마 관리</span></a>
+      <a class="nav-button __NAV_RANKING_ACTIVE__" data-tab="ranking" href="/admin?tab=ranking"><span class="nav-icon">RK</span><span>랭킹 관리</span></a>
+      <a class="nav-button __NAV_USERS_ACTIVE__" data-tab="users" href="/admin?tab=users"><span class="nav-icon">US</span><span>사용자 및 과금</span></a>
+      <a class="nav-button __NAV_LOGS_ACTIVE__" data-tab="logs" href="/admin?tab=logs"><span class="nav-icon">LG</span><span>로그 및 이벤트</span></a>
 
       <div class="sidebar-footer">
         <p class="footer-title">현재 운영 정책</p>
@@ -460,7 +460,7 @@ ADMIN_HTML = """
     </aside>
 
     <main class="content">
-      <section id="dashboard" class="tab-panel active">
+      <section id="dashboard" class="tab-panel __TAB_DASHBOARD_ACTIVE__">
         <div class="metrics">
           <article class="card metric-card"><div class="metric-label">키워드 풀</div><p class="metric-value">18,420</p><div class="metric-meta">지난 회차 대비 +12.8% / 활성 테마 23개</div></article>
           <article class="card metric-card"><div class="metric-label">신규 후보</div><p class="metric-value">486</p><div class="metric-meta">검수 대기 73건 / 숨김 11건</div></article>
@@ -487,7 +487,7 @@ ADMIN_HTML = """
         </div>
       </section>
 
-      <section id="pipeline" class="tab-panel">
+      <section id="pipeline" class="tab-panel __TAB_PIPELINE_ACTIVE__">
         <article class="card panel">
           <div class="section-title">
             <div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div>
@@ -527,7 +527,7 @@ ADMIN_HTML = """
         </article>
       </section>
 
-      <section id="candidates" class="tab-panel">
+      <section id="candidates" class="tab-panel __TAB_CANDIDATES_ACTIVE__">
         <div class="grid-2">
           <article class="card panel">
             <div class="section-title"><div><h2>상품 후보 관리</h2><p>운영 승인 대기 중인 핵심 후보 상품</p></div></div>
@@ -552,7 +552,7 @@ ADMIN_HTML = """
         </div>
       </section>
 
-      <section id="taxonomy" class="tab-panel">
+      <section id="taxonomy" class="tab-panel __TAB_TAXONOMY_ACTIVE__">
         <div class="admin-grid">
           <div class="stack taxonomy-stack">
             <article class="card panel compact-panel">
@@ -652,7 +652,7 @@ ADMIN_HTML = """
         </div>
       </section>
 
-      <section id="ranking" class="tab-panel">
+      <section id="ranking" class="tab-panel __TAB_RANKING_ACTIVE__">
         <article class="card panel">
           <div class="section-title"><div><h2>랭킹 관리</h2><p>추천 엔진 가중치와 노출 기준 조정</p></div></div>
           <div class="bars">
@@ -664,7 +664,7 @@ ADMIN_HTML = """
         </article>
       </section>
 
-      <section id="users" class="tab-panel">
+      <section id="users" class="tab-panel __TAB_USERS_ACTIVE__">
         <article class="card panel">
           <div class="section-title"><div><h2>사용자 및 과금</h2><p>구독 상태와 기기 제한 현황 관리</p></div></div>
           <div class="mini-grid">
@@ -675,7 +675,7 @@ ADMIN_HTML = """
         </article>
       </section>
 
-      <section id="logs" class="tab-panel">
+      <section id="logs" class="tab-panel __TAB_LOGS_ACTIVE__">
         <article class="card panel">
           <div class="section-title"><div><h2>로그 및 이벤트</h2><p>소싱, 인증, 과금 흐름의 운영 이력</p></div></div>
           <table>
@@ -1163,5 +1163,30 @@ ADMIN_HTML = """
 
 
 @router.get("/admin", response_class=HTMLResponse)
-async def admin_console() -> HTMLResponse:
-    return HTMLResponse(content=ADMIN_HTML)
+async def admin_console(tab: str = "dashboard") -> HTMLResponse:
+    return HTMLResponse(content=render_admin_html(tab))
+
+
+VALID_ADMIN_TABS = {
+    "dashboard",
+    "pipeline",
+    "candidates",
+    "taxonomy",
+    "ranking",
+    "users",
+    "logs",
+}
+
+
+def render_admin_html(active_tab: str) -> str:
+    selected_tab = active_tab if active_tab in VALID_ADMIN_TABS else "dashboard"
+    html = ADMIN_HTML
+
+    for tab in VALID_ADMIN_TABS:
+        nav_token = f"__NAV_{tab.upper()}_ACTIVE__"
+        panel_token = f"__TAB_{tab.upper()}_ACTIVE__"
+        is_active = tab == selected_tab
+        html = html.replace(nav_token, "active" if is_active else "")
+        html = html.replace(panel_token, "active" if is_active else "")
+
+    return html
