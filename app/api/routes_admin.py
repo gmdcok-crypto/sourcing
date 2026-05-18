@@ -134,9 +134,6 @@ ADMIN_HTML = """
     .footer-copy { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 
     .content { padding: 26px; }
-    .page-header { margin-bottom: 22px; }
-    .page-header h1 { margin: 0 0 8px; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
-    .page-header p { margin: 0; color: var(--muted); font-size: 14px; }
 
     .card {
       background: linear-gradient(180deg, rgba(18, 26, 49, 0.95), rgba(14, 21, 39, 0.94));
@@ -315,11 +312,6 @@ ADMIN_HTML = """
     </aside>
 
     <main class="content">
-      <div class="page-header">
-        <h1>관리자 콘솔</h1>
-        <p id="tab-description">대시보드 탭에서는 핵심 수치와 운영 상태만 집중해서 볼 수 있습니다.</p>
-      </div>
-
       <section id="dashboard" class="tab-panel active">
         <div class="metrics">
           <article class="card metric-card"><div class="metric-label">키워드 풀</div><p class="metric-value">18,420</p><div class="metric-meta">지난 회차 대비 +12.8% / 활성 테마 23개</div></article>
@@ -440,19 +432,8 @@ ADMIN_HTML = """
     </main>
   </div>
   <script>
-    const descriptions = {
-      dashboard: "대시보드 탭에서는 핵심 수치와 운영 상태만 집중해서 볼 수 있습니다.",
-      pipeline: "소싱 운영 탭에서는 테마별 수집량과 배치 흐름을 확인합니다.",
-      candidates: "상품 후보 관리 탭에서는 검수 대상과 승인 상태를 분리해서 확인합니다.",
-      taxonomy: "테마 관리 탭에서는 테마별 CID 구성과 우선순위를 관리합니다.",
-      ranking: "랭킹 관리 탭에서는 추천 엔진 가중치와 노출 기준을 조정합니다.",
-      users: "사용자 및 과금 탭에서는 구독 상태와 기기 제한 현황을 확인합니다.",
-      logs: "로그 및 이벤트 탭에서는 운영 중 발생한 주요 이력을 검토합니다."
-    };
-
     const navButtons = document.querySelectorAll(".nav-button");
     const panels = document.querySelectorAll(".tab-panel");
-    const descriptionEl = document.getElementById("tab-description");
 
     navButtons.forEach((button) => {
       button.addEventListener("click", () => {
@@ -461,7 +442,6 @@ ADMIN_HTML = """
         panels.forEach((panel) => panel.classList.remove("active"));
         button.classList.add("active");
         document.getElementById(tabId).classList.add("active");
-        descriptionEl.textContent = descriptions[tabId];
       });
     });
   </script>
