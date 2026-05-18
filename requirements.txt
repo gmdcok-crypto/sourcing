@@ -3,4 +3,3 @@ uvicorn[standard]
 httpx
 pydantic-settings
 boto3
-PyMySQL

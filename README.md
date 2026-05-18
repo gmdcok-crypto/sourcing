@@ -32,9 +32,3 @@ Cloudflare R2 storage, and Bright Data support for later Coupang sales-data craw
 ## Railway
 
 This repo includes a `Procfile` for Railway deployment.
-
-## Database Sync
-
-Sync the current theme, CID master, and theme-category mappings from `CATEGORY_MAP.md` into MariaDB:
-
-`python -m app.scripts.sync_naver_categories`
