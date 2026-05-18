@@ -1,5 +1,12 @@
+import json
+from html import escape
+from typing import Any, Dict, List
+
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
+
+from app.api.routes_admin_theme_api import ensure_tables
+from app.services.db import get_mysql_connection
 
 router = APIRouter(tags=["admin"])
 
@@ -592,7 +599,7 @@ ADMIN_HTML = """
                     <th>테마명</th>
                   </tr>
                 </thead>
-                <tbody id="theme-table-body"></tbody>
+                <tbody id="theme-table-body">__THEME_TABLE_ROWS__</tbody>
               </table>
             </article>
           </div>
@@ -619,7 +626,7 @@ ADMIN_HTML = """
                 </div>
                 <div class="field">
                   <label for="cid-theme">연결 테마</label>
-                  <select class="select" id="cid-theme"></select>
+                  <select class="select" id="cid-theme">__CID_THEME_OPTIONS__</select>
                 </div>
               </div>
               <div class="form-actions" style="margin-top: 16px;">
@@ -645,7 +652,7 @@ ADMIN_HTML = """
                     <th>테마</th>
                   </tr>
                 </thead>
-                <tbody id="cid-table-body"></tbody>
+                <tbody id="cid-table-body">__CID_TABLE_ROWS__</tbody>
               </table>
             </article>
           </div>
@@ -714,8 +721,8 @@ ADMIN_HTML = """
 
     let editingThemeId = null;
     let editingCidId = null;
-    let themes = [];
-    let cidItems = [];
+    let themes = __INITIAL_THEMES_JSON__;
+    let cidItems = __INITIAL_CATEGORIES_JSON__;
 
     const themeCodeInput = document.getElementById("theme-code");
     const themeNameInput = document.getElementById("theme-name");
@@ -1181,6 +1188,7 @@ VALID_ADMIN_TABS = {
 def render_admin_html(active_tab: str) -> str:
     selected_tab = active_tab if active_tab in VALID_ADMIN_TABS else "dashboard"
     html = ADMIN_HTML
+    taxonomy_data = load_admin_taxonomy_data()
 
     for tab in VALID_ADMIN_TABS:
         nav_token = f"__NAV_{tab.upper()}_ACTIVE__"
@@ -1189,4 +1197,100 @@ def render_admin_html(active_tab: str) -> str:
         html = html.replace(nav_token, "active" if is_active else "")
         html = html.replace(panel_token, "active" if is_active else "")
 
+    html = html.replace("__THEME_TABLE_ROWS__", build_theme_rows_html(taxonomy_data["themes"]))
+    html = html.replace("__CID_THEME_OPTIONS__", build_theme_options_html(taxonomy_data["themes"]))
+    html = html.replace("__CID_TABLE_ROWS__", build_category_rows_html(taxonomy_data["categories"]))
+    html = html.replace(
+        "__INITIAL_THEMES_JSON__",
+        json.dumps(taxonomy_data["themes"], ensure_ascii=False),
+    )
+    html = html.replace(
+        "__INITIAL_CATEGORIES_JSON__",
+        json.dumps(taxonomy_data["categories"], ensure_ascii=False),
+    )
+
     return html
+
+
+def load_admin_taxonomy_data() -> Dict[str, List[Dict[str, Any]]]:
+    connection = get_mysql_connection()
+    try:
+        ensure_tables(connection)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    t.id,
+                    t.theme_code,
+                    t.theme_name,
+                    COUNT(tcm.id) AS cid_count
+                FROM themes t
+                LEFT JOIN theme_category_maps tcm
+                    ON t.id = tcm.theme_id
+                GROUP BY t.id, t.theme_code, t.theme_name
+                ORDER BY t.id ASC
+                """
+            )
+            themes = cursor.fetchall()
+
+            cursor.execute(
+                """
+                SELECT
+                    nc.id,
+                    nc.cid,
+                    nc.category_name,
+                    nc.full_path,
+                    t.id AS theme_id,
+                    t.theme_name
+                FROM naver_categories nc
+                LEFT JOIN theme_category_maps tcm
+                    ON nc.id = tcm.category_id
+                LEFT JOIN themes t
+                    ON tcm.theme_id = t.id
+                ORDER BY nc.id ASC
+                """
+            )
+            categories = cursor.fetchall()
+
+        return {"themes": themes, "categories": categories}
+    finally:
+        connection.close()
+
+
+def build_theme_options_html(themes: List[Dict[str, Any]]) -> str:
+    return "".join(
+        f'<option value="{theme["id"]}">{escape(str(theme["theme_name"]))}</option>'
+        for theme in themes
+    )
+
+
+def build_theme_rows_html(themes: List[Dict[str, Any]]) -> str:
+    if not themes:
+        return '<tr><td colspan="2" class="empty-state">등록된 테마가 없습니다.</td></tr>'
+
+    return "".join(
+        (
+            f'<tr class="selectable-row" data-theme-id="{theme["id"]}">'
+            f"<td>{escape(str(theme['theme_code']))}</td>"
+            f"<td>{escape(str(theme['theme_name']))}</td>"
+            "</tr>"
+        )
+        for theme in themes
+    )
+
+
+def build_category_rows_html(categories: List[Dict[str, Any]]) -> str:
+    if not categories:
+        return '<tr><td colspan="4" class="empty-state">등록된 CID가 없습니다.</td></tr>'
+
+    return "".join(
+        (
+            f'<tr class="selectable-row" data-cid-id="{category["id"]}">'
+            f"<td>{escape(str(category['category_name']))}</td>"
+            f"<td>{escape(str(category['cid']))}</td>"
+            f"<td>{escape(str(category['full_path']))}</td>"
+            f"<td>{escape(str(category.get('theme_name') or '-'))}</td>"
+            "</tr>"
+        )
+        for category in categories
+    )
