@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 
+import pymysql
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -78,6 +79,52 @@ def ensure_tables(connection) -> None:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
+
+        cursor.execute("SHOW COLUMNS FROM themes LIKE 'status_label'")
+        if not cursor.fetchone():
+            try:
+                cursor.execute(
+                    """
+                    ALTER TABLE themes
+                    ADD COLUMN status_label VARCHAR(50) NOT NULL DEFAULT '핵심'
+                    AFTER display_order
+                    """
+                )
+            except pymysql.err.OperationalError as error:
+                if error.args[0] != 1060:
+                    raise
+            cursor.execute(
+                """
+                UPDATE themes
+                SET status_label = CASE
+                    WHEN is_active = 1 THEN '핵심'
+                    ELSE '보류'
+                END
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM naver_categories LIKE 'status_label'")
+        if not cursor.fetchone():
+            try:
+                cursor.execute(
+                    """
+                    ALTER TABLE naver_categories
+                    ADD COLUMN status_label VARCHAR(50) NOT NULL DEFAULT '활성'
+                    AFTER full_path
+                    """
+                )
+            except pymysql.err.OperationalError as error:
+                if error.args[0] != 1060:
+                    raise
+            cursor.execute(
+                """
+                UPDATE naver_categories
+                SET status_label = CASE
+                    WHEN is_active = 1 THEN '활성'
+                    ELSE '보류'
+                END
+                """
+            )
     connection.commit()
 
 
@@ -146,6 +193,7 @@ async def update_theme(theme_id: int, payload: ThemeUpdateRequest) -> Dict[str, 
                     theme_name = %s,
                     display_order = %s,
                     status_label = %s,
+                    is_active = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                 """,
@@ -154,6 +202,7 @@ async def update_theme(theme_id: int, payload: ThemeUpdateRequest) -> Dict[str, 
                     payload.theme_name,
                     payload.display_order,
                     payload.status_label,
+                    0 if payload.status_label == "보류" else 1,
                     theme_id,
                 ),
             )
@@ -217,16 +266,28 @@ async def create_category(payload: CategoryCreateRequest) -> Dict[str, Any]:
     try:
         ensure_tables(connection)
         with connection.cursor() as cursor:
+            depth = len([part.strip() for part in payload.full_path.split(">") if part.strip()])
             cursor.execute(
                 """
-                INSERT INTO naver_categories (cid, category_name, full_path, status_label)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO naver_categories (
+                    cid,
+                    category_name,
+                    full_path,
+                    status_label,
+                    depth,
+                    parent_cid,
+                    is_active
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     payload.cid,
                     payload.category_name,
                     payload.full_path,
                     payload.status_label,
+                    depth,
+                    None,
+                    0 if payload.status_label == "보류" else 1,
                 ),
             )
             category_id = cursor.lastrowid
@@ -251,6 +312,7 @@ async def update_category(category_id: int, payload: CategoryUpdateRequest) -> D
     try:
         ensure_tables(connection)
         with connection.cursor() as cursor:
+            depth = len([part.strip() for part in payload.full_path.split(">") if part.strip()])
             cursor.execute(
                 """
                 UPDATE naver_categories
@@ -258,6 +320,8 @@ async def update_category(category_id: int, payload: CategoryUpdateRequest) -> D
                     category_name = %s,
                     full_path = %s,
                     status_label = %s,
+                    depth = %s,
+                    is_active = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                 """,
@@ -266,6 +330,8 @@ async def update_category(category_id: int, payload: CategoryUpdateRequest) -> D
                     payload.category_name,
                     payload.full_path,
                     payload.status_label,
+                    depth,
+                    0 if payload.status_label == "보류" else 1,
                     category_id,
                 ),
             )
