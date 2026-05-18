@@ -20,7 +20,8 @@ class KeywordSourcingResult:
     row_count: int
     dataframe_columns: List[str]
     preview_rows: List[Dict[str, Any]]
-    r2_key: str | None
+    r2_json_key: str | None
+    r2_parquet_key: str | None
 
 
 class KeywordSourcingService:
@@ -54,7 +55,8 @@ class KeywordSourcingService:
                 "logs": [],
                 "started_at": None,
                 "finished_at": None,
-                "r2_key": None,
+                "r2_json_key": None,
+                "r2_parquet_key": None,
             }
         return cls._runs[target_run_id]
 
@@ -82,7 +84,8 @@ class KeywordSourcingService:
             "logs": ["키워드 소싱을 시작했습니다."],
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
-            "r2_key": None,
+                "r2_json_key": None,
+                "r2_parquet_key": None,
             "dataframe_columns": [],
             "preview_rows": [],
         }
@@ -179,7 +182,10 @@ class KeywordSourcingService:
                 state["progress_percent"] = self._progress_percent(index, len(categories))
 
             dataframe = pd.DataFrame(rows)
-            r2_key = self._save_dataframe_snapshot(run_id=run_id, dataframe=dataframe)
+            r2_json_key, r2_parquet_key = self._save_dataframe_snapshot(
+                run_id=run_id,
+                dataframe=dataframe,
+            )
 
             state["status"] = "completed"
             state["message"] = "키워드 소싱이 완료되었습니다."
@@ -190,7 +196,8 @@ class KeywordSourcingService:
             state["preview_rows"] = (
                 dataframe.head(20).to_dict(orient="records") if not dataframe.empty else []
             )
-            state["r2_key"] = r2_key
+            state["r2_json_key"] = r2_json_key
+            state["r2_parquet_key"] = r2_parquet_key
             self._append_log(state, f"실행 완료: 총 {len(rows)}행 수집")
         except Exception as error:  # noqa: BLE001
             state["status"] = "failed"
@@ -230,14 +237,27 @@ class KeywordSourcingService:
         finally:
             connection.close()
 
-    def _save_dataframe_snapshot(self, *, run_id: str, dataframe: pd.DataFrame) -> str | None:
+    def _save_dataframe_snapshot(
+        self,
+        *,
+        run_id: str,
+        dataframe: pd.DataFrame,
+    ) -> tuple[str | None, str | None]:
         payload = {
             "run_id": run_id,
             "row_count": len(dataframe),
             "columns": dataframe.columns.tolist(),
             "rows": dataframe.to_dict(orient="records"),
         }
-        return self.r2_service.save_search_result(query=f"theme-run-{run_id}", payload=payload)
+        json_key = f"search-results/raw/{run_id}.json"
+        parquet_key = f"search-results/dataframe/{run_id}.parquet"
+
+        saved_json_key = self.r2_service.save_json_bytes(key=json_key, payload=payload)
+        saved_parquet_key = self.r2_service.save_dataframe_parquet(
+            key=parquet_key,
+            dataframe=dataframe,
+        )
+        return saved_json_key, saved_parquet_key
 
     @staticmethod
     def _to_int(value: Any) -> int | None:

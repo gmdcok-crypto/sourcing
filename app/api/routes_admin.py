@@ -1299,6 +1299,8 @@ def load_keyword_status_data() -> Dict[str, Any]:
         "current_cid": state.get("current_cid"),
         "current_query": state.get("current_query"),
         "log_text": "\n".join(logs),
+        "r2_json_key": state.get("r2_json_key"),
+        "r2_parquet_key": state.get("r2_parquet_key"),
     }
 
 
