@@ -553,13 +553,6 @@ ADMIN_HTML = """
                   <label for="cid-theme">연결 테마</label>
                   <select class="select" id="cid-theme"></select>
                 </div>
-                <div class="field">
-                  <label for="cid-status">상태</label>
-                  <select class="select" id="cid-status">
-                    <option value="활성">활성</option>
-                    <option value="보류">보류</option>
-                  </select>
-                </div>
               </div>
               <div class="form-actions" style="margin-top: 16px;">
                 <button class="action-btn primary" id="cid-save-btn" type="button">CID 추가</button>
@@ -578,10 +571,10 @@ ADMIN_HTML = """
               <table>
                 <thead>
                   <tr>
-                    <th>CID</th>
                     <th>카테고리명</th>
+                    <th>CID</th>
+                    <th>경로</th>
                     <th>테마</th>
-                    <th>상태</th>
                     <th>액션</th>
                   </tr>
                 </thead>
@@ -650,7 +643,6 @@ ADMIN_HTML = """
     const cidNameInput = document.getElementById("cid-name");
     const cidPathInput = document.getElementById("cid-path");
     const cidThemeInput = document.getElementById("cid-theme");
-    const cidStatusInput = document.getElementById("cid-status");
     const cidSaveBtn = document.getElementById("cid-save-btn");
     const cidResetBtn = document.getElementById("cid-reset-btn");
     const cidTableBody = document.getElementById("cid-table-body");
@@ -697,7 +689,6 @@ ADMIN_HTML = """
       cidValueInput.value = "";
       cidNameInput.value = "";
       cidPathInput.value = "";
-      cidStatusInput.value = "활성";
       if (themes.length > 0) {
         cidThemeInput.value = String(themes[0].id);
       }
@@ -736,7 +727,7 @@ ADMIN_HTML = """
 
     function renderCids() {
       if (cidItems.length === 0) {
-        cidTableBody.innerHTML = '<tr><td colspan="5" class="empty-state">등록된 CID가 없습니다.</td></tr>';
+        cidTableBody.innerHTML = '<tr><td colspan="4" class="empty-state">등록된 CID가 없습니다.</td></tr>';
         return;
       }
 
@@ -745,13 +736,10 @@ ADMIN_HTML = """
           const theme = getThemeById(item.themeId);
           return `
             <tr>
+              <td>${item.name}</td>
               <td>${item.cid}</td>
-              <td>
-                <div>${item.name}</div>
-                <div class="helper-text">${item.path}</div>
-              </td>
+              <td>${item.path}</td>
               <td>${theme ? theme.theme_name : "-"}</td>
-              <td><span class="pill ${item.status === "활성" ? "success" : "warning"}">${item.status}</span></td>
               <td>
                 <div class="table-actions">
                   <button class="action-btn" type="button" onclick="editCid(${item.id})">수정</button>
@@ -788,8 +776,7 @@ ADMIN_HTML = """
         cid: item.cid,
         name: item.category_name,
         path: item.full_path,
-        themeId: item.theme_id,
-        status: item.status_label
+        themeId: item.theme_id
       }));
 
       renderTaxonomy();
@@ -826,7 +813,6 @@ ADMIN_HTML = """
       cidNameInput.value = item.name;
       cidPathInput.value = item.path;
       cidThemeInput.value = item.themeId ? String(item.themeId) : "";
-      cidStatusInput.value = item.status;
       cidSaveBtn.textContent = "CID 수정";
     }
 
@@ -878,7 +864,6 @@ ADMIN_HTML = """
       const name = cidNameInput.value.trim();
       const path = cidPathInput.value.trim();
       const themeId = cidThemeInput.value ? Number(cidThemeInput.value) : null;
-      const status = cidStatusInput.value;
 
       if (!cid || !name || !path) {
         return;
@@ -888,8 +873,7 @@ ADMIN_HTML = """
         cid,
         category_name: name,
         full_path: path,
-        theme_id: themeId,
-        status_label: status
+        theme_id: themeId
       };
 
       if (editingCidId) {
@@ -916,8 +900,8 @@ ADMIN_HTML = """
     window.deleteCid = deleteCid;
 
     loadTaxonomy().catch((error) => {
-      themeTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">${error.message}</td></tr>`;
-      cidTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">${error.message}</td></tr>`;
+      themeTableBody.innerHTML = `<tr><td colspan="3" class="empty-state">${error.message}</td></tr>`;
+      cidTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">${error.message}</td></tr>`;
     });
 
     navButtons.forEach((button) => {

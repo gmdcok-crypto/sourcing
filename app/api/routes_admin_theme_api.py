@@ -23,7 +23,6 @@ class CategoryCreateRequest(BaseModel):
     category_name: str = Field(..., min_length=1, max_length=255)
     full_path: str = Field(..., min_length=1, max_length=1000)
     theme_id: Optional[int] = None
-    status_label: str = Field(default="활성", min_length=1, max_length=50)
 
 
 class CategoryUpdateRequest(CategoryCreateRequest):
@@ -50,9 +49,6 @@ def ensure_tables(connection) -> None:
                 cid VARCHAR(20) NOT NULL,
                 category_name VARCHAR(255) NOT NULL,
                 full_path VARCHAR(1000) NOT NULL,
-                status_label VARCHAR(50) NOT NULL DEFAULT '활성',
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (id),
                 UNIQUE KEY uk_naver_categories_cid (cid)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -120,24 +116,56 @@ def ensure_tables(connection) -> None:
             )
 
         cursor.execute("SHOW COLUMNS FROM naver_categories LIKE 'status_label'")
-        if not cursor.fetchone():
-            try:
-                cursor.execute(
-                    """
-                    ALTER TABLE naver_categories
-                    ADD COLUMN status_label VARCHAR(50) NOT NULL DEFAULT '활성'
-                    """
-                )
-            except pymysql.err.OperationalError as error:
-                if error.args[0] != 1060:
-                    raise
+        if cursor.fetchone():
             cursor.execute(
                 """
-                UPDATE naver_categories
-                SET status_label = CASE
-                    WHEN is_active = 1 THEN '활성'
-                    ELSE '보류'
-                END
+                ALTER TABLE naver_categories
+                DROP COLUMN status_label
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM naver_categories LIKE 'parent_cid'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE naver_categories
+                DROP COLUMN parent_cid
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM naver_categories LIKE 'created_at'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE naver_categories
+                DROP COLUMN created_at
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM naver_categories LIKE 'updated_at'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE naver_categories
+                DROP COLUMN updated_at
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM naver_categories LIKE 'depth'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE naver_categories
+                DROP COLUMN depth
+                """
+            )
+
+        cursor.execute("SHOW COLUMNS FROM naver_categories LIKE 'is_active'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                ALTER TABLE naver_categories
+                DROP COLUMN is_active
                 """
             )
     connection.commit()
@@ -247,7 +275,6 @@ async def list_categories() -> Dict[str, List[Dict[str, Any]]]:
                     nc.cid,
                     nc.category_name,
                     nc.full_path,
-                    nc.status_label,
                     t.id AS theme_id,
                     t.theme_name
                 FROM naver_categories nc
@@ -270,28 +297,19 @@ async def create_category(payload: CategoryCreateRequest) -> Dict[str, Any]:
     try:
         ensure_tables(connection)
         with connection.cursor() as cursor:
-            depth = len([part.strip() for part in payload.full_path.split(">") if part.strip()])
             cursor.execute(
                 """
                 INSERT INTO naver_categories (
                     cid,
                     category_name,
-                    full_path,
-                    status_label,
-                    depth,
-                    parent_cid,
-                    is_active
+                    full_path
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s)
                 """,
                 (
                     payload.cid,
                     payload.category_name,
                     payload.full_path,
-                    payload.status_label,
-                    depth,
-                    None,
-                    0 if payload.status_label == "보류" else 1,
                 ),
             )
             category_id = cursor.lastrowid
@@ -316,26 +334,18 @@ async def update_category(category_id: int, payload: CategoryUpdateRequest) -> D
     try:
         ensure_tables(connection)
         with connection.cursor() as cursor:
-            depth = len([part.strip() for part in payload.full_path.split(">") if part.strip()])
             cursor.execute(
                 """
                 UPDATE naver_categories
                 SET cid = %s,
                     category_name = %s,
-                    full_path = %s,
-                    status_label = %s,
-                    depth = %s,
-                    is_active = %s,
-                    updated_at = CURRENT_TIMESTAMP
+                    full_path = %s
                 WHERE id = %s
                 """,
                 (
                     payload.cid,
                     payload.category_name,
                     payload.full_path,
-                    payload.status_label,
-                    depth,
-                    0 if payload.status_label == "보류" else 1,
                     category_id,
                 ),
             )
