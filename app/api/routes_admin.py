@@ -498,7 +498,9 @@ ADMIN_HTML = """
         <article class="card panel">
           <div class="section-title">
             <div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div>
-            <button class="action-btn primary" id="run-keyword-sourcing-btn" type="button">키워드 소싱</button>
+            <form action="/api/admin/keyword-sourcing/start" method="post" id="keyword-sourcing-form">
+              <button class="action-btn primary" id="run-keyword-sourcing-btn" type="submit">키워드 소싱</button>
+            </form>
           </div>
           <div class="pipeline-stack">
             <div class="bars">
@@ -741,6 +743,7 @@ ADMIN_HTML = """
     const cidDeleteBtn = document.getElementById("cid-delete-btn");
     const cidResetBtn = document.getElementById("cid-reset-btn");
     const cidTableBody = document.getElementById("cid-table-body");
+    const keywordSourcingForm = document.getElementById("keyword-sourcing-form");
     const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
     const keywordProgressLabel = document.getElementById("keyword-progress-label");
     const keywordProgressFill = document.getElementById("keyword-progress-fill");
@@ -1135,13 +1138,15 @@ ADMIN_HTML = """
 
     cidResetBtn.addEventListener("click", resetCidForm);
 
-    if (runKeywordSourcingBtn) {
-      runKeywordSourcingBtn.addEventListener("click", async () => {
+    if (keywordSourcingForm) {
+      keywordSourcingForm.addEventListener("submit", async (event) => {
         if (!confirm("전체 테마 기준으로 CID당 30건씩 키워드 소싱을 실행하시겠습니까?")) {
+          event.preventDefault();
           return;
         }
 
         try {
+          event.preventDefault();
           const result = await apiFetch("/api/admin/keyword-sourcing/test", {
             method: "POST"
           });
@@ -1149,6 +1154,7 @@ ADMIN_HTML = """
           await refreshKeywordSourcingStatus();
         } catch (error) {
           alert(`키워드 소싱 실패: ${error.message}`);
+          keywordSourcingForm.submit();
         }
       });
     }
