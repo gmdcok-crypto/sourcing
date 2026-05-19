@@ -332,9 +332,22 @@ ADMIN_HTML = """
       gap: 10px;
       flex-wrap: wrap;
     }
-    .toolbar-inline .input {
+    .history-toolbar {
+      display: flex;
+      align-items: end;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .history-toolbar .field {
+      gap: 6px;
+    }
+    .history-toolbar .input {
       width: auto;
       min-width: 180px;
+      color-scheme: dark;
     }
 
     table { width: 100%; border-collapse: collapse; }
@@ -545,8 +558,13 @@ ADMIN_HTML = """
           <div class="section-title">
             <div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div>
             <div class="toolbar-inline">
-              <input class="input" id="keyword-history-date" type="date" />
-              <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
+              <div class="history-toolbar">
+                <div class="field">
+                  <label for="keyword-history-date">저장 결과 조회 날짜</label>
+                  <input class="input" id="keyword-history-date" type="date" />
+                </div>
+                <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
+              </div>
               <form action="/api/admin/keyword-sourcing/start" method="post" id="keyword-sourcing-form">
                 <button class="action-btn primary" id="run-keyword-sourcing-btn" type="submit">키워드 소싱</button>
               </form>
@@ -863,6 +881,10 @@ ADMIN_HTML = """
     let keywordStatusPoller = null;
     let keywordStatusStream = null;
     let keywordStreamRetryTimer = null;
+
+    if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
+      keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
+    }
 
     async function apiFetch(url, options = {}) {
       const response = await fetch(url, {
