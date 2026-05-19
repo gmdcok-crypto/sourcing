@@ -348,17 +348,13 @@ ADMIN_HTML = """
       display: flex;
       align-items: center;
       gap: 8px;
-    }
-    .history-picker-wrap {
       position: relative;
-      width: 40px;
-      height: 40px;
-      flex: 0 0 40px;
     }
     .history-toolbar .input {
       width: auto;
       min-width: 180px;
       color-scheme: dark;
+      cursor: default;
     }
     .history-picker-btn {
       width: 40px;
@@ -371,22 +367,77 @@ ADMIN_HTML = """
       line-height: 1;
       color: #f5f7ff;
     }
-    .history-picker-native {
+    .history-calendar-popup {
       position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      opacity: 0;
-      cursor: pointer;
-      z-index: 2;
+      top: calc(100% + 10px);
+      right: 0;
+      width: 280px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: #10151f;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+      z-index: 30;
+      display: none;
     }
-    .history-toolbar input[type="date"]::-webkit-calendar-picker-indicator {
-      opacity: 0;
-      width: 0;
-      min-width: 0;
-      margin: 0;
+    .history-calendar-popup.open {
+      display: block;
+    }
+    .calendar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .calendar-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .calendar-nav-btn {
+      width: 34px;
+      height: 34px;
       padding: 0;
-      pointer-events: none;
+      font-size: 16px;
+    }
+    .calendar-weekdays,
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .calendar-weekday {
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+      padding-bottom: 4px;
+    }
+    .calendar-day {
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      transition: transform 0.14s ease, background-color 0.14s ease, border-color 0.14s ease;
+    }
+    .calendar-day:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.16);
+      transform: translateY(-1px);
+    }
+    .calendar-day.outside {
+      color: rgba(230, 236, 255, 0.38);
+      background: rgba(255, 255, 255, 0.015);
+    }
+    .calendar-day.selected {
+      background: rgba(124, 156, 255, 0.24);
+      border-color: rgba(124, 156, 255, 0.5);
+      color: #ffffff;
+    }
+    .calendar-day.today {
+      border-color: rgba(124, 156, 255, 0.28);
     }
 
     table { width: 100%; border-collapse: collapse; }
@@ -623,10 +674,24 @@ ADMIN_HTML = """
                 <div class="field">
                   <label for="keyword-history-date">저장 결과 조회 날짜</label>
                   <div class="history-date-wrap">
-                    <input class="input" id="keyword-history-date" type="date" />
-                    <div class="history-picker-wrap">
-                      <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택" tabindex="-1">📅</button>
-                      <input class="history-picker-native" id="keyword-history-picker-native" type="date" aria-label="날짜 선택" />
+                    <input class="input" id="keyword-history-date" type="text" inputmode="none" readonly />
+                    <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택">📅</button>
+                    <div class="history-calendar-popup" id="keyword-history-calendar-popup">
+                      <div class="calendar-header">
+                        <button class="action-btn calendar-nav-btn" id="keyword-history-prev-month" type="button" aria-label="이전 달">&lt;</button>
+                        <div class="calendar-title" id="keyword-history-calendar-title">2026년 5월</div>
+                        <button class="action-btn calendar-nav-btn" id="keyword-history-next-month" type="button" aria-label="다음 달">&gt;</button>
+                      </div>
+                      <div class="calendar-weekdays">
+                        <div class="calendar-weekday">일</div>
+                        <div class="calendar-weekday">월</div>
+                        <div class="calendar-weekday">화</div>
+                        <div class="calendar-weekday">수</div>
+                        <div class="calendar-weekday">목</div>
+                        <div class="calendar-weekday">금</div>
+                        <div class="calendar-weekday">토</div>
+                      </div>
+                      <div class="calendar-grid" id="keyword-history-calendar-grid"></div>
                     </div>
                   </div>
                 </div>
@@ -926,7 +991,11 @@ ADMIN_HTML = """
     const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
     const keywordHistoryDateInput = document.getElementById("keyword-history-date");
     const keywordHistoryPickerBtn = document.getElementById("keyword-history-picker-btn");
-    const keywordHistoryPickerNative = document.getElementById("keyword-history-picker-native");
+    const keywordHistoryCalendarPopup = document.getElementById("keyword-history-calendar-popup");
+    const keywordHistoryCalendarTitle = document.getElementById("keyword-history-calendar-title");
+    const keywordHistoryCalendarGrid = document.getElementById("keyword-history-calendar-grid");
+    const keywordHistoryPrevMonthBtn = document.getElementById("keyword-history-prev-month");
+    const keywordHistoryNextMonthBtn = document.getElementById("keyword-history-next-month");
     const keywordHistoryLoadBtn = document.getElementById("keyword-history-load-btn");
     const keywordProgressLabel = document.getElementById("keyword-progress-label");
     const keywordProgressFill = document.getElementById("keyword-progress-fill");
@@ -950,12 +1019,97 @@ ADMIN_HTML = """
     let keywordStatusStream = null;
     let keywordStreamRetryTimer = null;
     let keywordHistoryMode = false;
+    let keywordCalendarViewDate = new Date();
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
     }
-    if (keywordHistoryPickerNative && keywordHistoryDateInput) {
-      keywordHistoryPickerNative.value = keywordHistoryDateInput.value;
+
+    function parseDateInput(value) {
+      if (!value) {
+        return null;
+      }
+      const parts = value.split("-").map((item) => Number(item));
+      if (parts.length !== 3 || parts.some((item) => Number.isNaN(item))) {
+        return null;
+      }
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+
+    function formatDateInput(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function isSameDate(left, right) {
+      return left.getFullYear() === right.getFullYear()
+        && left.getMonth() === right.getMonth()
+        && left.getDate() === right.getDate();
+    }
+
+    function syncCalendarViewToSelectedDate() {
+      const selectedDate = parseDateInput(keywordHistoryDateInput.value);
+      keywordCalendarViewDate = selectedDate || new Date();
+    }
+
+    function renderHistoryCalendar() {
+      if (!keywordHistoryCalendarTitle || !keywordHistoryCalendarGrid) {
+        return;
+      }
+
+      const year = keywordCalendarViewDate.getFullYear();
+      const month = keywordCalendarViewDate.getMonth();
+      keywordHistoryCalendarTitle.textContent = `${year}년 ${month + 1}월`;
+
+      const firstDay = new Date(year, month, 1);
+      const startDate = new Date(firstDay);
+      startDate.setDate(firstDay.getDate() - firstDay.getDay());
+      const selectedDate = parseDateInput(keywordHistoryDateInput.value);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const cells = [];
+      for (let offset = 0; offset < 42; offset += 1) {
+        const cellDate = new Date(startDate);
+        cellDate.setDate(startDate.getDate() + offset);
+        const classes = ["calendar-day"];
+        if (cellDate.getMonth() !== month) {
+          classes.push("outside");
+        }
+        if (selectedDate && isSameDate(cellDate, selectedDate)) {
+          classes.push("selected");
+        }
+        if (isSameDate(cellDate, today)) {
+          classes.push("today");
+        }
+        cells.push(`
+          <button
+            class="${classes.join(" ")}"
+            type="button"
+            data-date="${formatDateInput(cellDate)}"
+          >${cellDate.getDate()}</button>
+        `);
+      }
+
+      keywordHistoryCalendarGrid.innerHTML = cells.join("");
+    }
+
+    function openHistoryCalendar() {
+      if (!keywordHistoryCalendarPopup) {
+        return;
+      }
+      syncCalendarViewToSelectedDate();
+      renderHistoryCalendar();
+      keywordHistoryCalendarPopup.classList.add("open");
+    }
+
+    function closeHistoryCalendar() {
+      if (!keywordHistoryCalendarPopup) {
+        return;
+      }
+      keywordHistoryCalendarPopup.classList.remove("open");
     }
 
     async function apiFetch(url, options = {}) {
@@ -1537,30 +1691,68 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryPickerNative && keywordHistoryDateInput) {
-      keywordHistoryPickerNative.addEventListener("input", () => {
-        if (keywordHistoryPickerNative.value) {
-          keywordHistoryDateInput.value = keywordHistoryPickerNative.value;
-        }
-      });
-
-      keywordHistoryPickerNative.addEventListener("change", () => {
-        if (keywordHistoryPickerNative.value) {
-          keywordHistoryDateInput.value = keywordHistoryPickerNative.value;
-        }
-      });
-    }
-
-    if (keywordHistoryPickerBtn && keywordHistoryPickerNative) {
-      keywordHistoryPickerBtn.addEventListener("click", () => {
-        if (typeof keywordHistoryPickerNative.showPicker === "function") {
-          keywordHistoryPickerNative.showPicker();
+    if (keywordHistoryPickerBtn) {
+      keywordHistoryPickerBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (keywordHistoryCalendarPopup && keywordHistoryCalendarPopup.classList.contains("open")) {
+          closeHistoryCalendar();
           return;
         }
-        keywordHistoryPickerNative.focus();
-        keywordHistoryPickerNative.click();
+        openHistoryCalendar();
       });
     }
+
+    if (keywordHistoryDateInput) {
+      keywordHistoryDateInput.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openHistoryCalendar();
+      });
+    }
+
+    if (keywordHistoryPrevMonthBtn) {
+      keywordHistoryPrevMonthBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        keywordCalendarViewDate = new Date(
+          keywordCalendarViewDate.getFullYear(),
+          keywordCalendarViewDate.getMonth() - 1,
+          1,
+        );
+        renderHistoryCalendar();
+      });
+    }
+
+    if (keywordHistoryNextMonthBtn) {
+      keywordHistoryNextMonthBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        keywordCalendarViewDate = new Date(
+          keywordCalendarViewDate.getFullYear(),
+          keywordCalendarViewDate.getMonth() + 1,
+          1,
+        );
+        renderHistoryCalendar();
+      });
+    }
+
+    if (keywordHistoryCalendarGrid) {
+      keywordHistoryCalendarGrid.addEventListener("click", (event) => {
+        const dayButton = event.target.closest("[data-date]");
+        if (!dayButton) {
+          return;
+        }
+        keywordHistoryDateInput.value = dayButton.dataset.date || keywordHistoryDateInput.value;
+        closeHistoryCalendar();
+      });
+    }
+
+    document.addEventListener("click", (event) => {
+      if (!keywordHistoryCalendarPopup || !keywordHistoryCalendarPopup.classList.contains("open")) {
+        return;
+      }
+      if (event.target.closest(".history-date-wrap")) {
+        return;
+      }
+      closeHistoryCalendar();
+    });
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && !keywordHistoryMode) {
