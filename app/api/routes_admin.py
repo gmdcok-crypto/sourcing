@@ -366,12 +366,12 @@ ADMIN_HTML = """
       color: #f5f7ff;
     }
     .history-toolbar input[type="date"]::-webkit-calendar-picker-indicator {
-      opacity: 0.01;
-      cursor: pointer;
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
+      opacity: 0;
+      width: 0;
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      pointer-events: none;
     }
 
     table { width: 100%; border-collapse: collapse; }
