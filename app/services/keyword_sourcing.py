@@ -11,7 +11,9 @@ import pandas as pd
 from app.services.db import get_mysql_connection
 from app.services.naver_datalab import NaverShoppingInsightService
 from app.services.keyword_noise import filter_noise
+from app.services.naver_api import NaverShoppingService
 from app.services.naver_searchad import NaverSearchAdService
+from app.services.naver_search_trend import NaverSearchTrendService
 from app.services.r2_storage import R2StorageService
 
 
@@ -37,6 +39,8 @@ class KeywordSourcingService:
         self.settings = settings
         self.datalab_service = NaverShoppingInsightService(settings)
         self.searchad_service = NaverSearchAdService(settings)
+        self.shopping_service = NaverShoppingService(settings)
+        self.search_trend_service = NaverSearchTrendService(settings)
         self.r2_service = R2StorageService(settings)
 
     @classmethod
@@ -284,8 +288,15 @@ class KeywordSourcingService:
             dataframe = pd.DataFrame(rows)
             valid_keywords = [row["keyword"] for row in top_keywords if row.get("is_valid")]
             noise_keywords = [row["keyword"] for row in top_keywords if row.get("is_noise")]
-            metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords[:100])
-            classified_keywords = self._classify_keywords(top_keywords=top_keywords, metrics_map=metrics_map)
+            metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords)
+            product_info_map = await self.shopping_service.fetch_product_infos(valid_keywords)
+            monthly_trend_map = await self.search_trend_service.fetch_monthly_trends(valid_keywords)
+            classified_keywords = self._classify_keywords(
+                top_keywords=top_keywords,
+                metrics_map=metrics_map,
+                product_info_map=product_info_map,
+                monthly_trend_map=monthly_trend_map,
+            )
             group_counts = self._count_groups(classified_keywords)
 
             state["searchad_count"] = len(metrics_map)
@@ -314,7 +325,7 @@ class KeywordSourcingService:
             state["valid_keywords"] = valid_keywords[:100]
             state["noise_keywords"] = noise_keywords[:100]
             state["top_keywords"] = top_keywords[:150]
-            state["classified_keywords"] = classified_keywords[:100]
+            state["classified_keywords"] = classified_keywords
             self._append_log(state, f"실행 완료: 총 {len(top_keywords)}개 키워드 수집")
         except Exception as error:  # noqa: BLE001
             state["status"] = "failed"
@@ -412,9 +423,10 @@ class KeywordSourcingService:
         *,
         top_keywords: List[Dict[str, Any]],
         metrics_map: Dict[str, Dict[str, Any]],
+        product_info_map: Dict[str, Dict[str, Any]],
+        monthly_trend_map: Dict[str, List[Dict[str, Any]]],
     ) -> List[Dict[str, Any]]:
         enriched_rows: List[Dict[str, Any]] = []
-        volumes = []
 
         for row in top_keywords:
             if not row.get("is_valid"):
@@ -422,59 +434,158 @@ class KeywordSourcingService:
 
             keyword = row["keyword"]
             metrics = metrics_map.get(keyword, {})
-            total_searches = (metrics.get("monthly_pc_searches") or 0) + (
-                metrics.get("monthly_mobile_searches") or 0
+            product_info = product_info_map.get(keyword) or {}
+            monthly_mobile_searches = metrics.get("monthly_mobile_searches")
+            monthly_mobile_ctr = metrics.get("monthly_mobile_ctr")
+            competition_level = metrics.get("competition_level")
+            product_count = int(product_info.get("product_count") or 0)
+            shopping_category_path = str(product_info.get("category_path") or "")
+            monthly_trends = monthly_trend_map.get(keyword) or []
+            season_months = self._estimate_season_months(monthly_trends)
+            group_name = self._classify_group(
+                monthly_mobile_searches=monthly_mobile_searches,
+                monthly_mobile_ctr=monthly_mobile_ctr,
+                competition_level=competition_level,
+                product_count=product_count,
             )
-            total_clicks = (metrics.get("monthly_pc_clicks") or 0.0) + (
-                metrics.get("monthly_mobile_clicks") or 0.0
-            )
-            avg_ctr = self._safe_average(
-                [metrics.get("monthly_pc_ctr"), metrics.get("monthly_mobile_ctr")]
-            )
-            competition = metrics.get("competition_index")
 
             enriched = {
                 **row,
                 **metrics,
-                "total_searches": total_searches,
-                "total_clicks": total_clicks,
-                "avg_ctr": avg_ctr,
-                "group_name": "미분류",
+                "total_searches": monthly_mobile_searches,
+                "avg_ctr": monthly_mobile_ctr,
+                "product_count": product_count,
+                "shopping_category_path": shopping_category_path,
+                "season_months": season_months,
+                "ad_efficiency": self._to_ad_efficiency_label(metrics.get("pl_avg_depth")),
+                "group_name": group_name,
             }
             enriched_rows.append(enriched)
-            if total_searches:
-                volumes.append(total_searches)
-
-        volume_median = median(volumes) if volumes else 0
-        volume_high = max(volumes) * 0.7 if volumes else 0
-
-        for row in enriched_rows:
-            volume = row.get("total_searches") or 0
-            ctr = row.get("avg_ctr") or 0.0
-            competition = row.get("competition_index")
-            rank = row.get("rank") or 999999
-
-            if volume >= volume_high:
-                group_name = "대형"
-            elif volume >= volume_median and ctr >= 0.03:
-                group_name = "중간성장"
-            elif rank <= 50 and ctr >= 0.02 and (competition is None or competition <= 1.0):
-                group_name = "고효율"
-            elif volume >= volume_median:
-                group_name = "중간성장"
-            else:
-                group_name = "고효율"
-
-            row["group_name"] = group_name
 
         enriched_rows.sort(
             key=lambda item: (
-                {"고효율": 0, "중간성장": 1, "대형": 2, "미분류": 3}.get(item["group_name"], 9),
-                -(item.get("total_searches") or 0),
+                {"고효율": 0, "중간성장": 1, "대형": 2, "미분류": 3}.get(item.get("group_name"), 9),
+                -(item.get("monthly_mobile_searches") or 0),
                 item.get("rank") or 999999,
             )
         )
         return enriched_rows
+
+    @staticmethod
+    def _classify_group(
+        *,
+        monthly_mobile_searches: Any,
+        monthly_mobile_ctr: Any,
+        competition_level: Any,
+        product_count: Any,
+    ) -> str:
+        try:
+            searches = int(monthly_mobile_searches or 0)
+        except (TypeError, ValueError):
+            searches = 0
+
+        try:
+            ctr = float(monthly_mobile_ctr or 0)
+        except (TypeError, ValueError):
+            ctr = 0.0
+
+        try:
+            products = int(product_count or 0)
+        except (TypeError, ValueError):
+            products = 0
+
+        competition = str(competition_level or "")
+
+        if (
+            searches >= 13000
+            and ctr >= 1
+            and competition in {"낮음", "중간", "높음"}
+            and products >= 15000
+        ):
+            return "대형"
+
+        if (
+            300 <= searches <= 5000
+            and ctr >= 3
+            and competition in {"중간", "낮음"}
+            and 0 <= products <= 5000
+        ):
+            return "고효율"
+
+        if (
+            4000 <= searches <= 13000
+            and ctr >= 2
+            and competition in {"낮음", "중간", "높음"}
+            and 5000 <= products <= 15000
+        ):
+            return "중간성장"
+
+        return "미분류"
+
+    @staticmethod
+    def _estimate_season_months(monthly_trends: List[Dict[str, Any]]) -> str:
+        if not monthly_trends:
+            return "-"
+
+        parsed = []
+        for item in monthly_trends:
+            period = str(item.get("period") or "")
+            ratio = item.get("ratio")
+            try:
+                month = int(period[5:7])
+                score = float(ratio)
+            except (TypeError, ValueError):
+                continue
+            parsed.append((month, score))
+
+        if not parsed:
+            return "-"
+
+        peak_score = max(score for _, score in parsed)
+        threshold = peak_score * 0.7
+        season_months = [month for month, score in parsed if score >= threshold]
+        if not season_months:
+            return "-"
+
+        season_months = sorted(set(season_months))
+        if len(season_months) == 1:
+            return f"{season_months[0]}월"
+
+        extended = season_months + [month + 12 for month in season_months]
+        best_run = season_months
+        current_run = [extended[0]]
+
+        for value in extended[1:]:
+            if value == current_run[-1] + 1:
+                current_run.append(value)
+            else:
+                if len(current_run) > len(best_run):
+                    best_run = current_run[:]
+                current_run = [value]
+
+        if len(current_run) > len(best_run):
+            best_run = current_run[:]
+
+        start_month = ((best_run[0] - 1) % 12) + 1
+        end_month = ((best_run[-1] - 1) % 12) + 1
+        if start_month == end_month:
+            return f"{start_month}월"
+        return f"{start_month}월~{end_month}월"
+
+    @staticmethod
+    def _to_ad_efficiency_label(value: Any) -> str:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return "-"
+
+        if score >= 10:
+            return "낮음"
+        if score >= 9:
+            return "비교적 낮음"
+        if score >= 8:
+            return "중간"
+        return "좋음"
 
     @staticmethod
     def _count_groups(rows: List[Dict[str, Any]]) -> Dict[str, int]:

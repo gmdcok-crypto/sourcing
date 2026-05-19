@@ -1418,24 +1418,16 @@ ADMIN_HTML = """
       const rows = [];
       classifiedKeywords.forEach((row, index) => {
         const keyword = row.keyword || row.query || row.seed_keyword || "-";
-        const totalSearches = row.total_searches ?? (
-          (row.monthly_pc_searches || 0) + (row.monthly_mobile_searches || 0)
-        );
-        const avgCtr = row.avg_ctr ?? (() => {
-          const values = [row.monthly_pc_ctr, row.monthly_mobile_ctr].filter((value) => value != null);
-          if (values.length === 0) return null;
-          return values.reduce((sum, value) => sum + value, 0) / values.length;
-        })();
         rows.push({
-          themeDetail: row.full_path || row.category_name || row.theme_name || "-",
+          themeDetail: row.shopping_category_path || row.full_path || row.category_name || row.theme_name || "-",
           keyword,
           group: row.group_name || (row.query || row.seed_keyword ? "이전 저장본" : "-"),
-          totalSearches: formatMetricValue(totalSearches),
-          clickRate: avgCtr == null ? "-" : `${(avgCtr * 100).toFixed(2)}%`,
+          totalSearches: formatMetricValue(row.monthly_mobile_searches ?? row.total_searches),
+          clickRate: row.monthly_mobile_ctr == null ? "-" : `${row.monthly_mobile_ctr}%`,
           competitionLevel: row.competition_level || "-",
-          adEfficiency: getAdEfficiencyLabel(row),
-          productCount: "-",
-          season: "-",
+          adEfficiency: row.ad_efficiency || row.group_name || "-",
+          productCount: formatMetricValue(row.product_count),
+          season: row.season_months || "-",
           coupangAction: "불러오기",
         });
       });
@@ -1461,26 +1453,6 @@ ADMIN_HTML = """
           </tr>
         `)
         .join("");
-    }
-
-    function getAdEfficiencyLabel(row) {
-      const avgCtr = row.avg_ctr ?? (() => {
-        const values = [row.monthly_pc_ctr, row.monthly_mobile_ctr].filter((value) => value != null);
-        if (values.length === 0) return null;
-        return values.reduce((sum, value) => sum + value, 0) / values.length;
-      })();
-      const competition = row.competition_level || "";
-
-      if (avgCtr == null) {
-        return "-";
-      }
-      if (avgCtr >= 0.03 && competition !== "높음") {
-        return "높음";
-      }
-      if (avgCtr >= 0.02) {
-        return "중간";
-      }
-      return "낮음";
     }
 
     async function refreshKeywordSourcingStatus() {
@@ -2194,36 +2166,22 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
             or keyword_row.get("seed_keyword")
             or ""
         )
-        monthly_pc_ctr = keyword_row.get("monthly_pc_ctr")
-        monthly_mobile_ctr = keyword_row.get("monthly_mobile_ctr")
-        ctr_values = [value for value in [monthly_pc_ctr, monthly_mobile_ctr] if value is not None]
-        avg_ctr = keyword_row.get("avg_ctr")
-        if avg_ctr is None and ctr_values:
-            avg_ctr = sum(ctr_values) / len(ctr_values)
-
-        total_searches = keyword_row.get("total_searches")
+        total_searches = keyword_row.get("monthly_mobile_searches")
         if total_searches is None:
-            total_searches = (keyword_row.get("monthly_pc_searches") or 0) + (
-                keyword_row.get("monthly_mobile_searches") or 0
-            )
-
+            total_searches = keyword_row.get("total_searches")
+        monthly_mobile_ctr = keyword_row.get("monthly_mobile_ctr")
         competition_level = str(keyword_row.get("competition_level") or "-")
-        if avg_ctr is None:
-            ad_efficiency = "-"
-        elif avg_ctr >= 0.03 and competition_level != "높음":
-            ad_efficiency = "높음"
-        elif avg_ctr >= 0.02:
-            ad_efficiency = "중간"
-        else:
-            ad_efficiency = "낮음"
-
-        click_rate_text = "-" if avg_ctr is None else f"{avg_ctr * 100:.2f}%"
+        ad_efficiency = str(keyword_row.get("ad_efficiency") or keyword_row.get("group_name") or "-")
+        click_rate_text = "-" if monthly_mobile_ctr is None else f"{monthly_mobile_ctr}%"
         theme_detail = (
-            keyword_row.get("full_path")
+            keyword_row.get("shopping_category_path")
+            or keyword_row.get("full_path")
             or keyword_row.get("category_name")
             or keyword_row.get("theme_name")
             or "-"
         )
+        product_count = keyword_row.get("product_count")
+        season_months = keyword_row.get("season_months") or "-"
         rows.append(
             (
                 "<tr>"
@@ -2234,8 +2192,8 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
                 f"<td class=\"metric-cell\">{escape(click_rate_text)}</td>"
                 f"<td class=\"metric-center\">{escape(competition_level)}</td>"
                 f"<td class=\"metric-center\">{escape(ad_efficiency)}</td>"
-                "<td class=\"metric-center\">-</td>"
-                "<td class=\"metric-center\">-</td>"
+                f"<td class=\"metric-center\">{escape(f'{int(product_count):,}' if product_count is not None else '-')}</td>"
+                f"<td class=\"metric-center\">{escape(str(season_months))}</td>"
                 "<td class=\"metric-center\"><button class=\"action-btn\" type=\"button\" disabled>불러오기</button></td>"
                 "</tr>"
             )
