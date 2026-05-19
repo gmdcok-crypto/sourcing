@@ -1975,7 +1975,10 @@ def render_admin_html(
     selected_tab = active_tab if active_tab in VALID_ADMIN_TABS else "dashboard"
     html = ADMIN_HTML
     taxonomy_data = load_admin_taxonomy_data()
-    keyword_status = history_status or load_keyword_status_data()
+    keyword_status = load_keyword_status_data()
+    if history_status is not None:
+        keyword_status.update(history_status)
+        keyword_status["log_text"] = "\n".join(history_status.get("logs") or ["실행 대기중입니다."])
     default_history_date = history_date or date.today()
     history_title, history_grid = build_history_calendar_markup(default_history_date)
 
