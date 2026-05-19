@@ -543,7 +543,7 @@ ADMIN_HTML = """
               <div class="progress-grid">
                 <div class="progress-card"><p class="progress-card-label">상태</p><p class="progress-card-value" id="keyword-status-text">__KEYWORD_STATUS_TEXT__</p></div>
                 <div class="progress-card"><p class="progress-card-label">처리 CID</p><p class="progress-card-value" id="keyword-processed-count">__KEYWORD_PROCESSED_COUNT__</p></div>
-                <div class="progress-card"><p class="progress-card-label">수집 행 수</p><p class="progress-card-value" id="keyword-row-count">__KEYWORD_ROW_COUNT__</p></div>
+                <div class="progress-card"><p class="progress-card-label">키워드 수</p><p class="progress-card-value" id="keyword-row-count">__KEYWORD_ROW_COUNT__</p></div>
                 <div class="progress-card"><p class="progress-card-label">성공 / 실패</p><p class="progress-card-value" id="keyword-success-failure">__KEYWORD_SUCCESS_FAILURE__</p></div>
               </div>
               <div class="progress-meta">

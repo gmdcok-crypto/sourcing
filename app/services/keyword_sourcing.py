@@ -10,7 +10,6 @@ import pandas as pd
 
 from app.services.db import get_mysql_connection
 from app.services.naver_datalab import NaverShoppingInsightService
-from app.services.naver_api import NaverShoppingService
 from app.services.keyword_noise import filter_noise
 from app.services.naver_searchad import NaverSearchAdService
 from app.services.r2_storage import R2StorageService
@@ -36,7 +35,6 @@ class KeywordSourcingService:
 
     def __init__(self, settings) -> None:
         self.settings = settings
-        self.naver_service = NaverShoppingService(settings)
         self.datalab_service = NaverShoppingInsightService(settings)
         self.searchad_service = NaverSearchAdService(settings)
         self.r2_service = R2StorageService(settings)
@@ -160,16 +158,9 @@ class KeywordSourcingService:
                     continue
 
                 try:
-                    seed_result = await self.naver_service.search_products(
-                        query=query,
-                        display=max(display_per_cid, 100),
-                        start=1,
-                        sort="sim",
-                    )
-                    seed_keywords = self._extract_seed_keywords_from_items(seed_result.get("items", []))
                     top_keyword_result = await self.datalab_service.fetch_category_top_keywords(
                         cid=str(category["cid"]),
-                        seed_keywords=seed_keywords,
+                        seed_keywords=[],
                         limit=150,
                     )
                     top_keywords = top_keyword_result.keywords
@@ -188,6 +179,8 @@ class KeywordSourcingService:
                         keyword = row["keyword"]
                         existing = keyword_pool.get(keyword)
                         row_payload = {
+                            "run_id": run_id,
+                            "collected_at": datetime.now(timezone.utc).isoformat(),
                             "keyword": keyword,
                             "rank": row.get("rank"),
                             "ratio": row.get("ratio"),
@@ -205,39 +198,10 @@ class KeywordSourcingService:
                         if not existing or (row_payload["rank"] or 999999) < (existing.get("rank") or 999999):
                             keyword_pool[keyword] = row_payload
 
-                    items = (seed_result.get("items") or [])[:display_per_cid]
-                    collected_at = datetime.now(timezone.utc).isoformat()
-
-                    for item in items:
-                        rows.append(
-                            {
-                                "run_id": run_id,
-                                "collected_at": collected_at,
-                                "theme_id": category["theme_id"],
-                                "theme_code": category["theme_code"],
-                                "theme_name": category["theme_name"],
-                                "category_id": category["category_id"],
-                                "cid": category["cid"],
-                                "category_name": category["category_name"],
-                                "full_path": category["full_path"],
-                                "seed_keyword": query,
-                                "query": query,
-                                "source": "naver_shop_api",
-                                "product_id": item.get("product_id"),
-                                "product_name": item.get("title"),
-                                "mall_name": item.get("mall_name"),
-                                "price": self._to_int(item.get("lprice")),
-                                "product_type": item.get("product_type"),
-                                "brand": item.get("brand"),
-                                "maker": item.get("maker"),
-                                "link": item.get("link"),
-                            }
-                        )
-
                     state["success_count"] += 1
                     self._append_log(
                         state,
-                        f"[{index}/{len(categories)}] {category['category_name']} 완료 (상품 {len(items)}건 / 유효키워드 {len(valid_top100)}건)",
+                        f"[{index}/{len(categories)}] {category['category_name']} 완료 (top150 {len(top_keywords)}건 / 유효키워드 {len(valid_top100)}건)",
                     )
                 except Exception as error:  # noqa: BLE001
                     state["failure_count"] += 1
@@ -247,11 +211,12 @@ class KeywordSourcingService:
                     )
 
                 state["processed_categories"] = index
-                state["row_count"] = len(rows)
+                state["row_count"] = len(keyword_pool)
                 state["progress_percent"] = self._progress_percent(index, len(categories))
 
-            dataframe = pd.DataFrame(rows)
             top_keywords = self._build_top_keyword_rows(keyword_pool)
+            rows = [dict(row) for row in top_keywords]
+            dataframe = pd.DataFrame(rows)
             valid_keywords = [row["keyword"] for row in top_keywords if row.get("is_valid")]
             noise_keywords = [row["keyword"] for row in top_keywords if row.get("is_noise")]
             metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords[:100])
@@ -273,7 +238,7 @@ class KeywordSourcingService:
             state["status"] = "completed"
             state["message"] = "키워드 소싱이 완료되었습니다."
             state["finished_at"] = datetime.now(timezone.utc).isoformat()
-            state["row_count"] = len(rows)
+            state["row_count"] = len(top_keywords)
             state["progress_percent"] = 100
             state["dataframe_columns"] = dataframe.columns.tolist()
             state["preview_rows"] = (
@@ -285,7 +250,7 @@ class KeywordSourcingService:
             state["noise_keywords"] = noise_keywords[:100]
             state["top_keywords"] = top_keywords[:150]
             state["classified_keywords"] = classified_keywords[:100]
-            self._append_log(state, f"실행 완료: 총 {len(rows)}행 수집")
+            self._append_log(state, f"실행 완료: 총 {len(top_keywords)}개 키워드 수집")
         except Exception as error:  # noqa: BLE001
             state["status"] = "failed"
             state["message"] = f"키워드 소싱 실패: {error}"
@@ -370,58 +335,6 @@ class KeywordSourcingService:
             dataframe=dataframe,
         )
         return saved_json_key, saved_parquet_key
-
-    def _extract_seed_keywords_from_items(self, items: List[Dict[str, Any]]) -> List[str]:
-        keywords: List[str] = []
-        seen = set()
-        for item in items:
-            title = str(item.get("title") or "").strip()
-            if not title:
-                continue
-            for token in self._split_title_to_tokens(title):
-                if token in seen:
-                    continue
-                seen.add(token)
-                keywords.append(token)
-        return keywords
-
-    @staticmethod
-    def _split_title_to_tokens(title: str) -> List[str]:
-        normalized = (
-            title.replace("/", " ")
-            .replace("|", " ")
-            .replace(",", " ")
-            .replace("(", " ")
-            .replace(")", " ")
-            .replace("[", " ")
-            .replace("]", " ")
-        )
-        tokens = []
-        for raw in normalized.split():
-            token = raw.strip()
-            if len(token) < 2:
-                continue
-            if token.isdigit():
-                continue
-            tokens.append(token)
-        return tokens
-
-    @staticmethod
-    def _extract_keyword_candidates(dataframe: pd.DataFrame) -> List[str]:
-        if dataframe.empty or "product_name" not in dataframe.columns:
-            return []
-
-        seen = set()
-        keywords: List[str] = []
-        for value in dataframe["product_name"].dropna().tolist():
-            keyword = str(value).strip()
-            if not keyword:
-                continue
-            if keyword in seen:
-                continue
-            seen.add(keyword)
-            keywords.append(keyword)
-        return keywords
 
     @staticmethod
     def _build_top_keyword_rows(keyword_pool: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
