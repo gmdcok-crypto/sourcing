@@ -1,7 +1,7 @@
 import json
 from datetime import date, timedelta
 from html import escape
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
@@ -1944,9 +1944,9 @@ ADMIN_HTML = """
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_console(
     tab: str = "dashboard",
-    history_date: date | None = Query(default=None),
+    history_date: Optional[date] = Query(default=None),
 ) -> HTMLResponse:
-    history_status: Dict[str, Any] | None = None
+    history_status: Optional[Dict[str, Any]] = None
     if tab == "pipeline" and history_date is not None:
         history_status = KeywordSourcingService.load_saved_result_for_date(
             get_settings(),
@@ -1969,8 +1969,8 @@ VALID_ADMIN_TABS = {
 def render_admin_html(
     active_tab: str,
     *,
-    history_status: Dict[str, Any] | None = None,
-    history_date: date | None = None,
+    history_status: Optional[Dict[str, Any]] = None,
+    history_date: Optional[date] = None,
 ) -> str:
     selected_tab = active_tab if active_tab in VALID_ADMIN_TABS else "dashboard"
     html = ADMIN_HTML
