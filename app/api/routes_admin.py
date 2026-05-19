@@ -3,11 +3,13 @@ from datetime import date, timedelta
 from html import escape
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
 
 from app.api.routes_admin_theme_api import ensure_tables
+from app.core.config import get_settings
 from app.services.db import get_mysql_connection
+from app.services.keyword_sourcing import KeywordSourcingService
 
 router = APIRouter(tags=["admin"])
 
@@ -671,11 +673,12 @@ ADMIN_HTML = """
           <div class="section-title">
             <div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div>
             <div class="toolbar-inline">
-              <div class="history-toolbar">
+              <form class="history-toolbar" action="/admin" method="get">
+                <input type="hidden" name="tab" value="pipeline" />
                 <div class="field">
                   <label for="keyword-history-date">저장 결과 조회 날짜</label>
                   <div class="history-date-wrap">
-                    <input class="input" id="keyword-history-date" type="text" inputmode="none" readonly value="__DEFAULT_HISTORY_DATE__" />
+                    <input class="input" id="keyword-history-date" name="history_date" type="text" inputmode="none" readonly value="__DEFAULT_HISTORY_DATE__" />
                     <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택" aria-expanded="false">📅</button>
                     <div class="history-calendar-popup" id="keyword-history-calendar-popup">
                       <div class="calendar-header">
@@ -696,8 +699,8 @@ ADMIN_HTML = """
                     </div>
                   </div>
                 </div>
-                <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
-              </div>
+                <button class="action-btn" id="keyword-history-load-btn" type="submit">조회</button>
+              </form>
               <script>
                 (() => {
                   const displayInput = document.getElementById("keyword-history-date");
@@ -1828,7 +1831,7 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryLoadBtn) {
+    if (keywordHistoryLoadBtn && keywordHistoryLoadBtn.type === "button") {
       keywordHistoryLoadBtn.addEventListener("click", async () => {
         try {
           await loadKeywordSourcingHistoryByDate();
@@ -1939,8 +1942,17 @@ ADMIN_HTML = """
 
 
 @router.get("/admin", response_class=HTMLResponse)
-async def admin_console(tab: str = "dashboard") -> HTMLResponse:
-    return HTMLResponse(content=render_admin_html(tab))
+async def admin_console(
+    tab: str = "dashboard",
+    history_date: date | None = Query(default=None),
+) -> HTMLResponse:
+    history_status: Dict[str, Any] | None = None
+    if tab == "pipeline" and history_date is not None:
+        history_status = KeywordSourcingService.load_saved_result_for_date(
+            get_settings(),
+            target_date=history_date,
+        )
+    return HTMLResponse(content=render_admin_html(tab, history_status=history_status, history_date=history_date))
 
 
 VALID_ADMIN_TABS = {
@@ -1954,12 +1966,17 @@ VALID_ADMIN_TABS = {
 }
 
 
-def render_admin_html(active_tab: str) -> str:
+def render_admin_html(
+    active_tab: str,
+    *,
+    history_status: Dict[str, Any] | None = None,
+    history_date: date | None = None,
+) -> str:
     selected_tab = active_tab if active_tab in VALID_ADMIN_TABS else "dashboard"
     html = ADMIN_HTML
     taxonomy_data = load_admin_taxonomy_data()
-    keyword_status = load_keyword_status_data()
-    default_history_date = date.today()
+    keyword_status = history_status or load_keyword_status_data()
+    default_history_date = history_date or date.today()
     history_title, history_grid = build_history_calendar_markup(default_history_date)
 
     for tab in VALID_ADMIN_TABS:
