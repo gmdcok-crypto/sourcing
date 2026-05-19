@@ -344,15 +344,34 @@ ADMIN_HTML = """
     .history-toolbar .field {
       gap: 6px;
     }
+    .history-date-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
     .history-toolbar .input {
       width: auto;
       min-width: 180px;
       color-scheme: dark;
     }
+    .history-picker-btn {
+      width: 40px;
+      height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-size: 18px;
+      line-height: 1;
+      color: #f5f7ff;
+    }
     .history-toolbar input[type="date"]::-webkit-calendar-picker-indicator {
-      filter: invert(1) brightness(1.4);
-      opacity: 1;
+      opacity: 0.01;
       cursor: pointer;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
     }
 
     table { width: 100%; border-collapse: collapse; }
@@ -452,20 +471,42 @@ ADMIN_HTML = """
       padding: 8px 12px;
       font-size: 12px;
       cursor: pointer;
+      transition: transform 0.14s ease, background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    }
+    .action-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.18);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+      transform: translateY(-1px);
+    }
+    .action-btn:active {
+      transform: translateY(1px) scale(0.985);
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18);
     }
 
     .action-btn.primary {
       background: rgba(124, 156, 255, 0.16);
       border-color: rgba(124, 156, 255, 0.36);
     }
+    .action-btn.primary:hover {
+      background: rgba(124, 156, 255, 0.24);
+      border-color: rgba(124, 156, 255, 0.5);
+    }
 
     .action-btn.danger {
       background: rgba(255, 107, 107, 0.12);
       border-color: rgba(255, 107, 107, 0.24);
     }
+    .action-btn.danger:hover {
+      background: rgba(255, 107, 107, 0.18);
+      border-color: rgba(255, 107, 107, 0.36);
+    }
     .action-btn:disabled {
       opacity: 0.45;
       cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
     }
 
     .helper-text {
@@ -566,7 +607,10 @@ ADMIN_HTML = """
               <div class="history-toolbar">
                 <div class="field">
                   <label for="keyword-history-date">저장 결과 조회 날짜</label>
-                  <input class="input" id="keyword-history-date" type="date" />
+                  <div class="history-date-wrap">
+                    <input class="input" id="keyword-history-date" type="date" />
+                    <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택">📅</button>
+                  </div>
                 </div>
                 <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
               </div>
@@ -634,17 +678,16 @@ ADMIN_HTML = """
               <table class="keyword-metrics-table">
                 <thead>
                   <tr>
-                    <th>순위</th>
-                    <th>연관키워드</th>
-                    <th>월간검색수(PC)</th>
-                    <th>월간검색수(모바일)</th>
-                    <th>월평균클릭수(PC)</th>
-                    <th>월평균클릭수(모바일)</th>
-                    <th>월평균클릭률(PC)</th>
-                    <th>월평균클릭률(모바일)</th>
-                    <th>경쟁정도</th>
-                    <th>월평균노출 광고수</th>
-                    <th>그룹</th>
+                    <th>테마 세부위치</th>
+                    <th>키워드명</th>
+                    <th>소속그룹</th>
+                    <th>검색량</th>
+                    <th>클릭률</th>
+                    <th>경쟁강도</th>
+                    <th>광고효율</th>
+                    <th>등록상품수</th>
+                    <th>시즌</th>
+                    <th>쿠팡불러오기</th>
                   </tr>
                 </thead>
                 <tbody id="keyword-summary-body">__KEYWORD_SUMMARY_ROWS__</tbody>
@@ -864,6 +907,7 @@ ADMIN_HTML = """
     const keywordSourcingForm = document.getElementById("keyword-sourcing-form");
     const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
     const keywordHistoryDateInput = document.getElementById("keyword-history-date");
+    const keywordHistoryPickerBtn = document.getElementById("keyword-history-picker-btn");
     const keywordHistoryLoadBtn = document.getElementById("keyword-history-load-btn");
     const keywordProgressLabel = document.getElementById("keyword-progress-label");
     const keywordProgressFill = document.getElementById("keyword-progress-fill");
@@ -886,6 +930,7 @@ ADMIN_HTML = """
     let keywordStatusPoller = null;
     let keywordStatusStream = null;
     let keywordStreamRetryTimer = null;
+    let keywordHistoryMode = false;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1058,46 +1103,75 @@ ADMIN_HTML = """
     function renderKeywordSummaryRows(classifiedKeywords) {
       const rows = [];
       classifiedKeywords.slice(0, 100).forEach((row, index) => {
+        const totalSearches = row.total_searches ?? (
+          (row.monthly_pc_searches || 0) + (row.monthly_mobile_searches || 0)
+        );
+        const avgCtr = row.avg_ctr ?? (() => {
+          const values = [row.monthly_pc_ctr, row.monthly_mobile_ctr].filter((value) => value != null);
+          if (values.length === 0) return null;
+          return values.reduce((sum, value) => sum + value, 0) / values.length;
+        })();
         rows.push({
-          rank: row.rank || index + 1,
+          themeDetail: row.full_path || row.category_name || row.theme_name || "-",
           keyword: row.keyword,
-          monthlyPcSearches: row.monthly_pc_searches ?? "-",
-          monthlyMobileSearches: row.monthly_mobile_searches ?? "-",
-          monthlyPcClicks: row.monthly_pc_clicks == null ? "-" : row.monthly_pc_clicks,
-          monthlyMobileClicks: row.monthly_mobile_clicks == null ? "-" : row.monthly_mobile_clicks,
-          monthlyPcCtr: row.monthly_pc_ctr == null ? "-" : `${(row.monthly_pc_ctr * 100).toFixed(2)}%`,
-          monthlyMobileCtr: row.monthly_mobile_ctr == null ? "-" : `${(row.monthly_mobile_ctr * 100).toFixed(2)}%`,
-          competitionLevel: row.competition_level || "-",
-          plAvgDepth: row.pl_avg_depth == null ? "-" : row.pl_avg_depth,
           group: row.group_name || "-",
+          totalSearches: totalSearches ? totalSearches.toLocaleString("ko-KR") : "-",
+          clickRate: avgCtr == null ? "-" : `${(avgCtr * 100).toFixed(2)}%`,
+          competitionLevel: row.competition_level || "-",
+          adEfficiency: getAdEfficiencyLabel(row),
+          productCount: "-",
+          season: "-",
+          coupangAction: "불러오기",
         });
       });
 
       if (rows.length === 0) {
-        keywordSummaryBody.innerHTML = '<tr><td colspan="6" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
+        keywordSummaryBody.innerHTML = '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
         return;
       }
 
       keywordSummaryBody.innerHTML = rows
         .map((row) => `
           <tr>
-            <td class="metric-center">${row.rank}</td>
+            <td>${row.themeDetail}</td>
             <td class="keyword-col">${row.keyword}</td>
-            <td class="metric-cell">${row.monthlyPcSearches}</td>
-            <td class="metric-cell">${row.monthlyMobileSearches}</td>
-            <td class="metric-cell">${row.monthlyPcClicks}</td>
-            <td class="metric-cell">${row.monthlyMobileClicks}</td>
-            <td class="metric-cell">${row.monthlyPcCtr}</td>
-            <td class="metric-cell">${row.monthlyMobileCtr}</td>
-            <td class="metric-center">${row.competitionLevel}</td>
-            <td class="metric-center">${row.plAvgDepth}</td>
             <td class="metric-center">${row.group}</td>
+            <td class="metric-cell">${row.totalSearches}</td>
+            <td class="metric-cell">${row.clickRate}</td>
+            <td class="metric-center">${row.competitionLevel}</td>
+            <td class="metric-center">${row.adEfficiency}</td>
+            <td class="metric-center">${row.productCount}</td>
+            <td class="metric-center">${row.season}</td>
+            <td class="metric-center"><button class="action-btn" type="button" disabled>${row.coupangAction}</button></td>
           </tr>
         `)
         .join("");
     }
 
+    function getAdEfficiencyLabel(row) {
+      const avgCtr = row.avg_ctr ?? (() => {
+        const values = [row.monthly_pc_ctr, row.monthly_mobile_ctr].filter((value) => value != null);
+        if (values.length === 0) return null;
+        return values.reduce((sum, value) => sum + value, 0) / values.length;
+      })();
+      const competition = row.competition_level || "";
+
+      if (avgCtr == null) {
+        return "-";
+      }
+      if (avgCtr >= 0.03 && competition !== "높음") {
+        return "높음";
+      }
+      if (avgCtr >= 0.02) {
+        return "중간";
+      }
+      return "낮음";
+    }
+
     async function refreshKeywordSourcingStatus() {
+      if (keywordHistoryMode) {
+        return;
+      }
       const params = new URLSearchParams();
       if (keywordSourcingRunId) {
         params.set("run_id", keywordSourcingRunId);
@@ -1161,6 +1235,9 @@ ADMIN_HTML = """
         return;
       }
 
+      keywordHistoryMode = true;
+      stopKeywordStatusPolling();
+      closeKeywordStatusStream();
       const state = await apiFetch(`/api/admin/keyword-sourcing/history?date_value=${encodeURIComponent(selectedDate)}&_ts=${Date.now()}`);
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
@@ -1170,6 +1247,9 @@ ADMIN_HTML = """
 
     function ensureKeywordStatusStream() {
       if (keywordStatusStream) {
+        return;
+      }
+      if (keywordHistoryMode) {
         return;
       }
 
@@ -1410,6 +1490,7 @@ ADMIN_HTML = """
 
         try {
           event.preventDefault();
+          keywordHistoryMode = false;
           const result = await apiFetch("/api/admin/keyword-sourcing/test", {
             method: "POST"
           });
@@ -1434,8 +1515,19 @@ ADMIN_HTML = """
       });
     }
 
+    if (keywordHistoryPickerBtn && keywordHistoryDateInput) {
+      keywordHistoryPickerBtn.addEventListener("click", () => {
+        if (typeof keywordHistoryDateInput.showPicker === "function") {
+          keywordHistoryDateInput.showPicker();
+          return;
+        }
+        keywordHistoryDateInput.focus();
+        keywordHistoryDateInput.click();
+      });
+    }
+
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !keywordHistoryMode) {
         refreshKeywordSourcingStatus().catch((error) => {
           console.error(error);
         });
@@ -1444,10 +1536,12 @@ ADMIN_HTML = """
     });
 
     window.addEventListener("focus", () => {
-      refreshKeywordSourcingStatus().catch((error) => {
-        console.error(error);
-      });
-      ensureKeywordStatusStream();
+      if (!keywordHistoryMode) {
+        refreshKeywordSourcingStatus().catch((error) => {
+          console.error(error);
+        });
+        ensureKeywordStatusStream();
+      }
     });
 
     loadTaxonomy().catch((error) => {
@@ -1666,27 +1760,52 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
     for index, keyword_row in enumerate(classified_keywords[:100], start=1):
         monthly_pc_ctr = keyword_row.get("monthly_pc_ctr")
         monthly_mobile_ctr = keyword_row.get("monthly_mobile_ctr")
-        monthly_pc_ctr_text = "-" if monthly_pc_ctr is None else f"{monthly_pc_ctr * 100:.2f}%"
-        monthly_mobile_ctr_text = "-" if monthly_mobile_ctr is None else f"{monthly_mobile_ctr * 100:.2f}%"
+        ctr_values = [value for value in [monthly_pc_ctr, monthly_mobile_ctr] if value is not None]
+        avg_ctr = keyword_row.get("avg_ctr")
+        if avg_ctr is None and ctr_values:
+            avg_ctr = sum(ctr_values) / len(ctr_values)
+
+        total_searches = keyword_row.get("total_searches")
+        if total_searches is None:
+            total_searches = (keyword_row.get("monthly_pc_searches") or 0) + (
+                keyword_row.get("monthly_mobile_searches") or 0
+            )
+
+        competition_level = str(keyword_row.get("competition_level") or "-")
+        if avg_ctr is None:
+            ad_efficiency = "-"
+        elif avg_ctr >= 0.03 and competition_level != "높음":
+            ad_efficiency = "높음"
+        elif avg_ctr >= 0.02:
+            ad_efficiency = "중간"
+        else:
+            ad_efficiency = "낮음"
+
+        click_rate_text = "-" if avg_ctr is None else f"{avg_ctr * 100:.2f}%"
+        theme_detail = (
+            keyword_row.get("full_path")
+            or keyword_row.get("category_name")
+            or keyword_row.get("theme_name")
+            or "-"
+        )
         rows.append(
             (
                 "<tr>"
-                f"<td class=\"metric-center\">{escape(str(keyword_row.get('rank') or index))}</td>"
+                f"<td>{escape(str(theme_detail))}</td>"
                 f"<td class=\"keyword-col\">{escape(str(keyword_row.get('keyword') or ''))}</td>"
-                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_pc_searches') if keyword_row.get('monthly_pc_searches') is not None else '-'))}</td>"
-                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_mobile_searches') if keyword_row.get('monthly_mobile_searches') is not None else '-'))}</td>"
-                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_pc_clicks') if keyword_row.get('monthly_pc_clicks') is not None else '-'))}</td>"
-                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_mobile_clicks') if keyword_row.get('monthly_mobile_clicks') is not None else '-'))}</td>"
-                f"<td class=\"metric-cell\">{escape(monthly_pc_ctr_text)}</td>"
-                f"<td class=\"metric-cell\">{escape(monthly_mobile_ctr_text)}</td>"
-                f"<td class=\"metric-center\">{escape(str(keyword_row.get('competition_level') or '-'))}</td>"
-                f"<td class=\"metric-center\">{escape(str(keyword_row.get('pl_avg_depth') if keyword_row.get('pl_avg_depth') is not None else '-'))}</td>"
                 f"<td class=\"metric-center\">{escape(str(keyword_row.get('group_name') or '-'))}</td>"
+                f"<td class=\"metric-cell\">{escape(f'{int(total_searches):,}' if total_searches else '-')}</td>"
+                f"<td class=\"metric-cell\">{escape(click_rate_text)}</td>"
+                f"<td class=\"metric-center\">{escape(competition_level)}</td>"
+                f"<td class=\"metric-center\">{escape(ad_efficiency)}</td>"
+                "<td class=\"metric-center\">-</td>"
+                "<td class=\"metric-center\">-</td>"
+                "<td class=\"metric-center\"><button class=\"action-btn\" type=\"button\" disabled>불러오기</button></td>"
                 "</tr>"
             )
         )
 
     if not rows:
-        return '<tr><td colspan="11" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
+        return '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
 
     return "".join(rows)
