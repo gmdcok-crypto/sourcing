@@ -21,6 +21,11 @@ async def run_keyword_sourcing_test(
     return state
 
 
+@router.post("/keyword-sourcing/stop")
+async def stop_keyword_sourcing() -> Dict[str, Any]:
+    return KeywordSourcingService.stop_active_run()
+
+
 @router.get("/keyword-sourcing/status")
 async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> Dict[str, Any]:
     return KeywordSourcingService.get_status(run_id=run_id)

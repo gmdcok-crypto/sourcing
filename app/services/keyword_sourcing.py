@@ -34,6 +34,7 @@ class KeywordSourcingService:
     _latest_run_id: Optional[str] = None
     _active_run_id: Optional[str] = None
     _active_task: Optional[asyncio.Task] = None
+    CATEGORY_DELAY_SECONDS = 0.5
 
     def __init__(self, settings) -> None:
         self.settings = settings
@@ -191,6 +192,28 @@ class KeywordSourcingService:
         )
         return state
 
+    @classmethod
+    def stop_active_run(cls) -> Dict[str, Any]:
+        active_task = cls._active_task
+        active_run_id = cls._active_run_id or cls._latest_run_id
+
+        if active_task is None or active_task.done() or not active_run_id:
+            return cls.get_status()
+
+        active_task.cancel()
+        state = cls._runs.get(active_run_id)
+        if state is not None:
+            state["status"] = "failed"
+            state["message"] = "사용자 요청으로 소싱을 중지했습니다."
+            state["finished_at"] = datetime.now(timezone.utc).isoformat()
+            state["logs"] = (
+                (state.get("logs") or []) + ["사용자 요청으로 백그라운드 작업을 취소했습니다."]
+            )[-20:]
+
+        cls._active_task = None
+        cls._active_run_id = None
+        return cls.get_status(run_id=active_run_id)
+
     async def _run_collection(self, *, run_id: str, display_per_cid: int) -> None:
         state = self._runs[run_id]
         rows: List[Dict[str, Any]] = []
@@ -209,6 +232,7 @@ class KeywordSourcingService:
                 return
 
             for index, category in enumerate(categories, start=1):
+                await asyncio.sleep(0)
                 query = category["category_name"].strip()
                 state["current_theme_name"] = category["theme_name"]
                 state["current_cid"] = category["cid"]
@@ -282,15 +306,67 @@ class KeywordSourcingService:
                 state["processed_categories"] = index
                 state["row_count"] = len(keyword_pool)
                 state["progress_percent"] = self._progress_percent(index, len(categories))
+                if index < len(categories):
+                    await asyncio.sleep(self.CATEGORY_DELAY_SECONDS)
 
             top_keywords = self._build_top_keyword_rows(keyword_pool)
             rows = [dict(row) for row in top_keywords]
             dataframe = pd.DataFrame(rows)
             valid_keywords = [row["keyword"] for row in top_keywords if row.get("is_valid")]
             noise_keywords = [row["keyword"] for row in top_keywords if row.get("is_noise")]
-            metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords)
-            product_info_map = await self.shopping_service.fetch_product_infos(valid_keywords)
-            monthly_trend_map = await self.search_trend_service.fetch_monthly_trends(valid_keywords)
+            metrics_map: Dict[str, Dict[str, Any]] = {}
+            product_info_map: Dict[str, Dict[str, Any]] = {}
+            monthly_trend_map: Dict[str, List[Dict[str, Any]]] = {}
+
+            if valid_keywords:
+                try:
+                    state["message"] = "광고 API 지표를 수집 중입니다."
+                    self._append_log(
+                        state,
+                        f"SearchAd 지표 수집 시작 ({len(valid_keywords)}개 키워드)",
+                    )
+                    metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords)
+                    self._append_log(
+                        state,
+                        f"SearchAd 지표 수집 완료 ({len(metrics_map)}개 키워드)",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # noqa: BLE001
+                    self._append_log(state, f"SearchAd 지표 수집 실패: {error}")
+
+                try:
+                    state["message"] = "네이버 쇼핑 상품수를 수집 중입니다."
+                    self._append_log(
+                        state,
+                        f"쇼핑 상품수 수집 시작 ({len(valid_keywords)}개 키워드)",
+                    )
+                    product_info_map = await self.shopping_service.fetch_product_infos(valid_keywords)
+                    self._append_log(
+                        state,
+                        f"쇼핑 상품수 수집 완료 ({len(product_info_map)}개 키워드)",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # noqa: BLE001
+                    self._append_log(state, f"쇼핑 상품수 수집 실패: {error}")
+
+                try:
+                    state["message"] = "월별 검색 트렌드를 수집 중입니다."
+                    self._append_log(
+                        state,
+                        f"검색 트렌드 수집 시작 ({len(valid_keywords)}개 키워드)",
+                    )
+                    monthly_trend_map = await self.search_trend_service.fetch_monthly_trends(valid_keywords)
+                    self._append_log(
+                        state,
+                        f"검색 트렌드 수집 완료 ({len(monthly_trend_map)}개 키워드)",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # noqa: BLE001
+                    self._append_log(state, f"검색 트렌드 수집 실패: {error}")
+
             classified_keywords = self._classify_keywords(
                 top_keywords=top_keywords,
                 metrics_map=metrics_map,
@@ -327,6 +403,12 @@ class KeywordSourcingService:
             state["top_keywords"] = top_keywords[:150]
             state["classified_keywords"] = classified_keywords
             self._append_log(state, f"실행 완료: 총 {len(top_keywords)}개 키워드 수집")
+        except asyncio.CancelledError:
+            state["status"] = "failed"
+            state["message"] = "사용자 요청으로 소싱을 중지했습니다."
+            state["finished_at"] = datetime.now(timezone.utc).isoformat()
+            self._append_log(state, state["message"])
+            raise
         except Exception as error:  # noqa: BLE001
             state["status"] = "failed"
             state["message"] = f"키워드 소싱 실패: {error}"

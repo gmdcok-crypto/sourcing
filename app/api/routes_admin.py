@@ -822,6 +822,7 @@ ADMIN_HTML = """
               <form action="/api/admin/keyword-sourcing/start" method="post" id="keyword-sourcing-form">
                 <button class="action-btn primary" id="run-keyword-sourcing-btn" type="submit">키워드 소싱</button>
               </form>
+              <button class="action-btn danger" id="stop-keyword-sourcing-btn" type="button">소싱 중지</button>
             </div>
           </div>
           <div class="pipeline-stack">
@@ -1111,6 +1112,7 @@ ADMIN_HTML = """
     const cidTableBody = document.getElementById("cid-table-body");
     const keywordSourcingForm = document.getElementById("keyword-sourcing-form");
     const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
+    const stopKeywordSourcingBtn = document.getElementById("stop-keyword-sourcing-btn");
     const keywordHistoryDateInput = document.getElementById("keyword-history-date");
     const keywordHistoryPickerBtn = document.getElementById("keyword-history-picker-btn");
     const keywordHistoryCalendarPopup = document.getElementById("keyword-history-calendar-popup");
@@ -1477,11 +1479,17 @@ ADMIN_HTML = """
       if (state.status === "running") {
         runKeywordSourcingBtn.disabled = true;
         runKeywordSourcingBtn.textContent = "수집 중...";
+        if (stopKeywordSourcingBtn) {
+          stopKeywordSourcingBtn.disabled = false;
+        }
         startKeywordStatusPolling();
         ensureKeywordStatusStream();
       } else {
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
+        if (stopKeywordSourcingBtn) {
+          stopKeywordSourcingBtn.disabled = true;
+        }
         stopKeywordStatusPolling();
         closeKeywordStatusStream();
       }
@@ -1491,6 +1499,9 @@ ADMIN_HTML = """
       if (keywordStatusPoller) {
         return;
       }
+      refreshKeywordSourcingStatus().catch((error) => {
+        console.error(error);
+      });
       keywordStatusPoller = setInterval(async () => {
         try {
           await refreshKeywordSourcingStatus();
@@ -1564,10 +1575,16 @@ ADMIN_HTML = """
         if (state.status === "running") {
           runKeywordSourcingBtn.disabled = true;
           runKeywordSourcingBtn.textContent = "수집 중...";
+          if (stopKeywordSourcingBtn) {
+            stopKeywordSourcingBtn.disabled = false;
+          }
           startKeywordStatusPolling();
         } else {
           runKeywordSourcingBtn.disabled = false;
           runKeywordSourcingBtn.textContent = "키워드 소싱";
+          if (stopKeywordSourcingBtn) {
+            stopKeywordSourcingBtn.disabled = true;
+          }
           stopKeywordStatusPolling();
           closeKeywordStatusStream();
         }
@@ -1803,6 +1820,24 @@ ADMIN_HTML = """
       });
     }
 
+    if (stopKeywordSourcingBtn) {
+      stopKeywordSourcingBtn.disabled = true;
+      stopKeywordSourcingBtn.addEventListener("click", async () => {
+        if (!confirm("현재 진행 중인 키워드 소싱을 중지하시겠습니까?")) {
+          return;
+        }
+
+        try {
+          const state = await apiFetch("/api/admin/keyword-sourcing/stop", {
+            method: "POST"
+          });
+          renderKeywordSourcingStatus(state);
+        } catch (error) {
+          alert(`키워드 소싱 중지 실패: ${error.message}`);
+        }
+      });
+    }
+
     if (keywordHistoryLoadBtn && keywordHistoryLoadBtn.type === "button") {
       keywordHistoryLoadBtn.addEventListener("click", async () => {
         try {
@@ -1906,6 +1941,9 @@ ADMIN_HTML = """
       }
       console.error(error);
     });
+    if (keywordStatusText && keywordStatusText.textContent === "running") {
+      startKeywordStatusPolling();
+    }
     ensureKeywordStatusStream();
   </script>
 </body>

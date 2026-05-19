@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import time
+import asyncio
 from typing import Any, Dict, List
 
 import httpx
@@ -12,6 +13,8 @@ import httpx
 class NaverSearchAdService:
     BASE_URL = "https://api.searchad.naver.com"
     KEYWORDS_TOOL_URI = "/keywordstool"
+    RETRY_DELAYS = (0.8, 1.6, 3.2)
+    BATCH_DELAY_SECONDS = 0.35
 
     def __init__(self, settings) -> None:
         self.settings = settings
@@ -41,12 +44,11 @@ class NaverSearchAdService:
         async with httpx.AsyncClient(timeout=20.0) as client:
             for batch in self._chunk(unique_keywords, 5):
                 headers = self._build_headers(method="GET", uri=self.KEYWORDS_TOOL_URI)
-                response = await client.get(
-                    f"{self.BASE_URL}{self.KEYWORDS_TOOL_URI}",
+                response = await self._get_with_retry(
+                    client=client,
                     headers=headers,
                     params={"hintKeywords": ",".join(batch), "showDetail": "1"},
                 )
-                response.raise_for_status()
                 data = response.json()
                 for item in data.get("keywordList", []):
                     keyword = str(item.get("relKeyword") or "").strip()
@@ -63,7 +65,33 @@ class NaverSearchAdService:
                         "competition_level": self._to_competition_level(item.get("compIdx")),
                         "pl_avg_depth": self._to_float(item.get("plAvgDepth")),
                     }
+                await asyncio.sleep(self.BATCH_DELAY_SECONDS)
         return metrics
+
+    async def _get_with_retry(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        headers: Dict[str, str],
+        params: Dict[str, str],
+    ) -> httpx.Response:
+        last_response: httpx.Response | None = None
+        for attempt, delay in enumerate(self.RETRY_DELAYS, start=1):
+            response = await client.get(
+                f"{self.BASE_URL}{self.KEYWORDS_TOOL_URI}",
+                headers=headers,
+                params=params,
+            )
+            last_response = response
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response
+            if attempt < len(self.RETRY_DELAYS):
+                await asyncio.sleep(delay)
+
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise RuntimeError("SearchAd API 응답을 받지 못했습니다.")
 
     def _build_headers(self, *, method: str, uri: str) -> Dict[str, str]:
         timestamp = str(round(time.time() * 1000))

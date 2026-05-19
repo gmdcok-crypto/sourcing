@@ -14,6 +14,8 @@ HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 class NaverShoppingService:
+    RETRY_DELAYS = (0.6, 1.2, 2.4)
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
@@ -82,7 +84,7 @@ class NaverShoppingService:
             async with semaphore:
                 total = 0
                 category_path = ""
-                for attempt in range(3):
+                for attempt, delay in enumerate(self.RETRY_DELAYS, start=1):
                     try:
                         response = await client.get(
                             NAVER_SHOPPING_URL,
@@ -94,8 +96,8 @@ class NaverShoppingService:
                                 "sort": "sim",
                             },
                         )
-                        if response.status_code == 429 and attempt < 2:
-                            await asyncio.sleep(0.4)
+                        if response.status_code == 429 and attempt < len(self.RETRY_DELAYS):
+                            await asyncio.sleep(delay)
                             continue
                         response.raise_for_status()
                         data = response.json()
@@ -112,8 +114,8 @@ class NaverShoppingService:
                             category_path = " > ".join(str(value).strip() for value in categories if value)
                         break
                     except Exception:
-                        if attempt < 2:
-                            await asyncio.sleep(0.4)
+                        if attempt < len(self.RETRY_DELAYS):
+                            await asyncio.sleep(delay)
                             continue
                         total = 0
                         category_path = ""

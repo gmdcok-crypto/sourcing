@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any, Dict, List
 
@@ -8,6 +9,8 @@ import httpx
 
 class NaverSearchTrendService:
     SEARCH_TREND_URL = "https://openapi.naver.com/v1/datalab/search"
+    RETRY_DELAYS = (0.8, 1.6, 3.2)
+    BATCH_DELAY_SECONDS = 0.35
 
     def __init__(self, settings) -> None:
         self.settings = settings
@@ -55,19 +58,44 @@ class NaverSearchTrendService:
                         for keyword in batch
                     ],
                 }
-                response = await client.post(
-                    self.SEARCH_TREND_URL,
+                response = await self._post_with_retry(
+                    client=client,
                     headers=headers,
-                    json=payload,
+                    payload=payload,
                 )
-                response.raise_for_status()
                 data = response.json()
                 for result in data.get("results", []):
                     keyword = str(result.get("title") or "").strip()
                     if keyword:
                         trends[keyword] = result.get("data") or []
+                await asyncio.sleep(self.BATCH_DELAY_SECONDS)
 
         return trends
+
+    async def _post_with_retry(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+    ) -> httpx.Response:
+        last_response: httpx.Response | None = None
+        for attempt, delay in enumerate(self.RETRY_DELAYS, start=1):
+            response = await client.post(
+                self.SEARCH_TREND_URL,
+                headers=headers,
+                json=payload,
+            )
+            last_response = response
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response
+            if attempt < len(self.RETRY_DELAYS):
+                await asyncio.sleep(delay)
+
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise RuntimeError("검색 트렌드 API 응답을 받지 못했습니다.")
 
     @staticmethod
     def _chunk(items: List[str], size: int) -> List[List[str]]:

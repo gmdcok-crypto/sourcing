@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
@@ -18,6 +19,10 @@ class NaverShoppingInsightService:
     OPENAPI_BASE_URL = "https://openapi.naver.com/v1/datalab/shopping"
     CATEGORY_PAGE_URL = f"{BASE_URL}/shoppingInsight/sCategory.naver"
     OPENAPI_CATEGORY_KEYWORDS_URL = f"{OPENAPI_BASE_URL}/category/keywords"
+    OPENAPI_RETRY_DELAYS = (1.0, 2.0, 4.0)
+    WEB_RETRY_DELAYS = (0.8, 1.6, 3.2)
+    PAGE_DELAY_SECONDS = 0.35
+    OPENAPI_BATCH_DELAY_SECONDS = 0.6
     RANK_ENDPOINT_CANDIDATES = (
         f"{BASE_URL}/shoppingInsight/getCategoryKeywordRank.naver",
         f"{BASE_URL}/shoppingInsight/getCategoryKeywordRankAjax.naver",
@@ -103,6 +108,7 @@ class NaverShoppingInsightService:
                     break
 
                 page += 1
+                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
         deduped: List[Dict[str, Any]] = []
         seen = set()
@@ -164,12 +170,11 @@ class NaverShoppingInsightService:
                     "gender": "",
                     "ages": [],
                 }
-                response = await client.post(
-                    self.OPENAPI_CATEGORY_KEYWORDS_URL,
+                response = await self._post_openapi_with_retry(
+                    client=client,
                     headers=headers,
-                    json=payload,
+                    payload=payload,
                 )
-                response.raise_for_status()
                 data = response.json()
 
                 for result in data.get("results", []):
@@ -196,6 +201,7 @@ class NaverShoppingInsightService:
                             "source": "shopping_insight_openapi",
                         }
                     )
+                await asyncio.sleep(self.OPENAPI_BATCH_DELAY_SECONDS)
 
         scored_rows.sort(
             key=lambda item: (
@@ -208,6 +214,31 @@ class NaverShoppingInsightService:
             row["rank"] = index
         return scored_rows[:limit]
 
+    async def _post_openapi_with_retry(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+    ) -> httpx.Response:
+        last_response: httpx.Response | None = None
+        for attempt, delay in enumerate(self.OPENAPI_RETRY_DELAYS, start=1):
+            response = await client.post(
+                self.OPENAPI_CATEGORY_KEYWORDS_URL,
+                headers=headers,
+                json=payload,
+            )
+            last_response = response
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response
+            if attempt < len(self.OPENAPI_RETRY_DELAYS):
+                await asyncio.sleep(delay)
+
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise RuntimeError("쇼핑 인사이트 OpenAPI 응답을 받지 못했습니다.")
+
     async def _request_rank_page(
         self,
         *,
@@ -216,18 +247,36 @@ class NaverShoppingInsightService:
     ) -> Dict[str, Any]:
         last_error: str | None = None
         for url in self.RANK_ENDPOINT_CANDIDATES:
-            response = await client.post(url, data=payload)
-            if response.status_code == 404:
-                last_error = f"{url} returned 404"
-                continue
-            content_type = response.headers.get("content-type", "")
-            if "json" not in content_type.lower():
-                body_preview = response.text[:120].strip()
-                last_error = f"{url} returned non-json response: {body_preview}"
-                continue
-            response.raise_for_status()
-            return response.json()
+            for attempt, delay in enumerate(self.WEB_RETRY_DELAYS, start=1):
+                response = await client.post(url, data=payload)
+                if response.status_code == 404:
+                    last_error = f"{url} returned 404"
+                    break
+                if response.status_code == 429:
+                    last_error = f"{url} returned 429"
+                    wait_seconds = self._resolve_retry_delay(response=response, fallback=delay)
+                    if attempt < len(self.WEB_RETRY_DELAYS):
+                        await asyncio.sleep(wait_seconds)
+                        continue
+                    break
+                content_type = response.headers.get("content-type", "")
+                if "json" not in content_type.lower():
+                    body_preview = response.text[:120].strip()
+                    last_error = f"{url} returned non-json response: {body_preview}"
+                    break
+                response.raise_for_status()
+                return response.json()
         raise RuntimeError(last_error or "쇼핑 인사이트 랭킹 엔드포인트를 찾지 못했습니다.")
+
+    @staticmethod
+    def _resolve_retry_delay(*, response: httpx.Response, fallback: float) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(float(retry_after), fallback)
+            except ValueError:
+                return fallback
+        return fallback
 
     @staticmethod
     def _build_request_payload(*, cid: str, page: int, count: int) -> Dict[str, Any]:
