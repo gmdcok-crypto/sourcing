@@ -1374,6 +1374,9 @@ ADMIN_HTML = """
 
     function renderKeywordSourcingStatus(state) {
       const progress = Number(state.progress_percent || 0);
+      const classifiedKeywords = Array.isArray(state.classified_keywords) ? state.classified_keywords : [];
+      const previewRows = Array.isArray(state.preview_rows) ? state.preview_rows : [];
+      const fallbackRows = classifiedKeywords.length > 0 ? classifiedKeywords : previewRows;
       keywordProgressLabel.textContent = state.message || "대기중";
       keywordProgressFill.style.width = `${progress}%`;
       keywordProgressValue.textContent = `${progress}%`;
@@ -1392,12 +1395,13 @@ ADMIN_HTML = """
       keywordR2Status.textContent = state.r2_parquet_key ? "완료" : "대기";
       const groupCounts = state.group_counts || {};
       keywordGroupCounts.textContent = `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`;
-      renderKeywordSummaryRows(state.classified_keywords || []);
+      renderKeywordSummaryRows(fallbackRows);
     }
 
     function renderKeywordSummaryRows(classifiedKeywords) {
       const rows = [];
       classifiedKeywords.slice(0, 100).forEach((row, index) => {
+        const keyword = row.keyword || row.query || row.seed_keyword || "-";
         const totalSearches = row.total_searches ?? (
           (row.monthly_pc_searches || 0) + (row.monthly_mobile_searches || 0)
         );
@@ -1408,8 +1412,8 @@ ADMIN_HTML = """
         })();
         rows.push({
           themeDetail: row.full_path || row.category_name || row.theme_name || "-",
-          keyword: row.keyword,
-          group: row.group_name || "-",
+          keyword,
+          group: row.group_name || (row.query || row.seed_keyword ? "이전 저장본" : "-"),
           totalSearches: totalSearches == null ? "-" : Number(totalSearches).toLocaleString("ko-KR"),
           clickRate: avgCtr == null ? "-" : `${(avgCtr * 100).toFixed(2)}%`,
           competitionLevel: row.competition_level || "-",
@@ -2135,9 +2139,17 @@ def build_category_rows_html(categories: List[Dict[str, Any]]) -> str:
 
 def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
     classified_keywords = keyword_status.get("classified_keywords") or []
+    if not classified_keywords:
+        classified_keywords = keyword_status.get("preview_rows") or []
 
     rows: List[str] = []
     for index, keyword_row in enumerate(classified_keywords[:100], start=1):
+        keyword_text = (
+            keyword_row.get("keyword")
+            or keyword_row.get("query")
+            or keyword_row.get("seed_keyword")
+            or ""
+        )
         monthly_pc_ctr = keyword_row.get("monthly_pc_ctr")
         monthly_mobile_ctr = keyword_row.get("monthly_mobile_ctr")
         ctr_values = [value for value in [monthly_pc_ctr, monthly_mobile_ctr] if value is not None]
@@ -2172,9 +2184,9 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
             (
                 "<tr>"
                 f"<td>{escape(str(theme_detail))}</td>"
-                f"<td class=\"keyword-col\">{escape(str(keyword_row.get('keyword') or ''))}</td>"
-                f"<td class=\"metric-center\">{escape(str(keyword_row.get('group_name') or '-'))}</td>"
-                f"<td class=\"metric-cell\">{escape(f'{int(total_searches):,}' if total_searches else '-')}</td>"
+                f"<td class=\"keyword-col\">{escape(str(keyword_text))}</td>"
+                f"<td class=\"metric-center\">{escape(str(keyword_row.get('group_name') or ('이전 저장본' if keyword_row.get('query') or keyword_row.get('seed_keyword') else '-')))}</td>"
+                f"<td class=\"metric-cell\">{escape(f'{int(total_searches):,}' if total_searches is not None else '-')}</td>"
                 f"<td class=\"metric-cell\">{escape(click_rate_text)}</td>"
                 f"<td class=\"metric-center\">{escape(competition_level)}</td>"
                 f"<td class=\"metric-center\">{escape(ad_efficiency)}</td>"
