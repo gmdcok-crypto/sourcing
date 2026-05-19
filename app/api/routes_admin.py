@@ -858,6 +858,7 @@ ADMIN_HTML = """
                 <div id="keyword-current-theme">현재 테마: __KEYWORD_CURRENT_THEME__</div>
                 <div id="keyword-current-cid">현재 CID: __KEYWORD_CURRENT_CID__</div>
                 <div id="keyword-current-query">현재 Query: __KEYWORD_CURRENT_QUERY__</div>
+                <div id="keyword-last-updated">마지막 갱신: 방금 전</div>
               </div>
               <div class="log-box" id="keyword-log-box">__KEYWORD_LOG_TEXT__</div>
             </div>
@@ -1138,6 +1139,7 @@ ADMIN_HTML = """
     const keywordCurrentTheme = document.getElementById("keyword-current-theme");
     const keywordCurrentCid = document.getElementById("keyword-current-cid");
     const keywordCurrentQuery = document.getElementById("keyword-current-query");
+    const keywordLastUpdated = document.getElementById("keyword-last-updated");
     const keywordLogBox = document.getElementById("keyword-log-box");
     const keywordTop150Count = document.getElementById("keyword-top150-count");
     const keywordTop100Count = document.getElementById("keyword-top100-count");
@@ -1157,6 +1159,8 @@ ADMIN_HTML = """
     let keywordDetailLoadedRunId = null;
     let keywordStatusRefreshInFlight = false;
     let keywordStatusPollingEnabled = false;
+    let keywordStatusLastSuccessAt = Date.now();
+    let keywordStatusWatchdogTimer = null;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1250,13 +1254,29 @@ ADMIN_HTML = """
     }
 
     async function apiFetch(url, options = {}) {
-      const response = await fetch(url, {
-        cache: "no-store",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        ...options
-      });
+      const controller = new AbortController();
+      const timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : 12000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const { timeoutMs: _timeoutMs, headers: optionHeaders, ...restOptions } = options;
+      let response;
+      try {
+        response = await fetch(url, {
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            ...(optionHeaders || {})
+          },
+          signal: controller.signal,
+          ...restOptions
+        });
+      } catch (error) {
+        if (error && error.name === "AbortError") {
+          throw new Error("요청 시간이 초과되었습니다.");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         let detail = "요청 처리에 실패했습니다.";
@@ -1274,6 +1294,16 @@ ADMIN_HTML = """
       }
 
       return response.json();
+    }
+
+    function markKeywordStatusHealthy() {
+      keywordStatusLastSuccessAt = Date.now();
+      if (keywordStatusText && keywordStatusText.textContent === "연결 재시도 중") {
+        keywordStatusText.textContent = "running";
+      }
+      if (keywordLastUpdated) {
+        keywordLastUpdated.textContent = "마지막 갱신: 방금 전";
+      }
     }
 
     function getThemeById(themeId) {
@@ -1545,6 +1575,7 @@ ADMIN_HTML = """
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
       }
+      markKeywordStatusHealthy();
       renderKeywordSourcingStatus(state);
       if (state.status === "running") {
         keywordDetailLoadedRunId = null;
@@ -1576,6 +1607,7 @@ ADMIN_HTML = """
         return;
       }
       keywordStatusPollingEnabled = true;
+      startKeywordStatusWatchdog();
       scheduleKeywordStatusPolling(0);
     }
 
@@ -1615,6 +1647,50 @@ ADMIN_HTML = """
         clearTimeout(keywordStatusPoller);
         keywordStatusPoller = null;
       }
+      stopKeywordStatusWatchdog();
+    }
+
+    function startKeywordStatusWatchdog() {
+      if (keywordStatusWatchdogTimer) {
+        return;
+      }
+      keywordStatusWatchdogTimer = setInterval(() => {
+        if (!keywordStatusPollingEnabled || keywordHistoryMode) {
+          return;
+        }
+        const stalledForMs = Date.now() - keywordStatusLastSuccessAt;
+        if (stalledForMs < 10000) {
+          return;
+        }
+        if (keywordProgressLabel) {
+          keywordProgressLabel.textContent = "진행 상태 재연결 중...";
+        }
+        if (keywordStatusText) {
+          keywordStatusText.textContent = "연결 재시도 중";
+        }
+        scheduleKeywordStatusPolling(0);
+      }, 3000);
+    }
+
+    function stopKeywordStatusWatchdog() {
+      if (keywordStatusWatchdogTimer) {
+        clearInterval(keywordStatusWatchdogTimer);
+        keywordStatusWatchdogTimer = null;
+      }
+    }
+
+    function startKeywordLastUpdatedTicker() {
+      setInterval(() => {
+        if (!keywordLastUpdated) {
+          return;
+        }
+        const diffSeconds = Math.max(0, Math.floor((Date.now() - keywordStatusLastSuccessAt) / 1000));
+        if (diffSeconds < 5) {
+          keywordLastUpdated.textContent = "마지막 갱신: 방금 전";
+          return;
+        }
+        keywordLastUpdated.textContent = `마지막 갱신: ${diffSeconds}초 전`;
+      }, 1000);
     }
 
     function closeKeywordStatusStream() {
@@ -1642,6 +1718,7 @@ ADMIN_HTML = """
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
       }
+      markKeywordStatusHealthy();
       renderKeywordSourcingStatus(state);
     }
 
@@ -2004,6 +2081,7 @@ ADMIN_HTML = """
     loadKeywordSourcingDetail(keywordSourcingRunId).catch((error) => {
       console.error(error);
     });
+    startKeywordLastUpdatedTicker();
     if (keywordStatusText && keywordStatusText.textContent === "running") {
       startKeywordStatusPolling();
     }
