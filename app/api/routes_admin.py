@@ -310,7 +310,22 @@ ADMIN_HTML = """
       border-radius: 18px;
       border: 1px solid var(--line);
       background: rgba(255, 255, 255, 0.03);
+      overflow-x: auto;
     }
+    .keyword-metrics-table { min-width: 1280px; }
+    .keyword-metrics-table th {
+      padding: 0 12px 14px;
+      text-transform: none;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+    .keyword-metrics-table td {
+      padding: 10px 12px;
+      white-space: nowrap;
+    }
+    .keyword-col { min-width: 160px; color: #9fc0ff; font-weight: 600; }
+    .metric-cell { text-align: right; }
+    .metric-center { text-align: center; }
 
     table { width: 100%; border-collapse: collapse; }
     th {
@@ -579,15 +594,20 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div><h2>키워드 파이프라인 결과</h2></div>
               </div>
-              <table>
+              <table class="keyword-metrics-table">
                 <thead>
                   <tr>
                     <th>순위</th>
-                    <th>키워드</th>
+                    <th>연관키워드</th>
+                    <th>월간검색수(PC)</th>
+                    <th>월간검색수(모바일)</th>
+                    <th>월평균클릭수(PC)</th>
+                    <th>월평균클릭수(모바일)</th>
+                    <th>월평균클릭률(PC)</th>
+                    <th>월평균클릭률(모바일)</th>
+                    <th>경쟁정도</th>
+                    <th>월평균노출 광고수</th>
                     <th>그룹</th>
-                    <th>검색량</th>
-                    <th>CTR</th>
-                    <th>경쟁도</th>
                   </tr>
                 </thead>
                 <tbody id="keyword-summary-body">__KEYWORD_SUMMARY_ROWS__</tbody>
@@ -826,6 +846,7 @@ ADMIN_HTML = """
     let keywordSourcingRunId = null;
     let keywordStatusPoller = null;
     let keywordStatusStream = null;
+    let keywordStreamRetryTimer = null;
 
     async function apiFetch(url, options = {}) {
       const response = await fetch(url, {
@@ -988,29 +1009,24 @@ ADMIN_HTML = """
       keywordR2Status.textContent = state.r2_parquet_key ? "완료" : "대기";
       const groupCounts = state.group_counts || {};
       keywordGroupCounts.textContent = `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`;
-      renderKeywordSummaryRows(state.classified_keywords || [], state.noise_keywords || []);
+      renderKeywordSummaryRows(state.classified_keywords || []);
     }
 
-    function renderKeywordSummaryRows(classifiedKeywords, noiseKeywords) {
+    function renderKeywordSummaryRows(classifiedKeywords) {
       const rows = [];
       classifiedKeywords.slice(0, 100).forEach((row, index) => {
         rows.push({
           rank: row.rank || index + 1,
           keyword: row.keyword,
+          monthlyPcSearches: row.monthly_pc_searches ?? "-",
+          monthlyMobileSearches: row.monthly_mobile_searches ?? "-",
+          monthlyPcClicks: row.monthly_pc_clicks == null ? "-" : row.monthly_pc_clicks,
+          monthlyMobileClicks: row.monthly_mobile_clicks == null ? "-" : row.monthly_mobile_clicks,
+          monthlyPcCtr: row.monthly_pc_ctr == null ? "-" : `${(row.monthly_pc_ctr * 100).toFixed(2)}%`,
+          monthlyMobileCtr: row.monthly_mobile_ctr == null ? "-" : `${(row.monthly_mobile_ctr * 100).toFixed(2)}%`,
+          competitionLevel: row.competition_level || "-",
+          plAvgDepth: row.pl_avg_depth == null ? "-" : row.pl_avg_depth,
           group: row.group_name || "-",
-          searches: row.total_searches || 0,
-          ctr: row.avg_ctr == null ? "-" : `${(row.avg_ctr * 100).toFixed(2)}%`,
-          competition: row.competition_index == null ? "-" : row.competition_index
-        });
-      });
-      noiseKeywords.slice(0, 20).forEach((keyword, index) => {
-        rows.push({
-          rank: `N-${index + 1}`,
-          keyword,
-          group: "노이즈",
-          searches: "-",
-          ctr: "-",
-          competition: "-"
         });
       });
 
@@ -1022,12 +1038,17 @@ ADMIN_HTML = """
       keywordSummaryBody.innerHTML = rows
         .map((row) => `
           <tr>
-            <td>${row.rank}</td>
-            <td>${row.keyword}</td>
-            <td>${row.group}</td>
-            <td>${row.searches}</td>
-            <td>${row.ctr}</td>
-            <td>${row.competition}</td>
+            <td class="metric-center">${row.rank}</td>
+            <td class="keyword-col">${row.keyword}</td>
+            <td class="metric-cell">${row.monthlyPcSearches}</td>
+            <td class="metric-cell">${row.monthlyMobileSearches}</td>
+            <td class="metric-cell">${row.monthlyPcClicks}</td>
+            <td class="metric-cell">${row.monthlyMobileClicks}</td>
+            <td class="metric-cell">${row.monthlyPcCtr}</td>
+            <td class="metric-cell">${row.monthlyMobileCtr}</td>
+            <td class="metric-center">${row.competitionLevel}</td>
+            <td class="metric-center">${row.plAvgDepth}</td>
+            <td class="metric-center">${row.group}</td>
           </tr>
         `)
         .join("");
@@ -1049,22 +1070,44 @@ ADMIN_HTML = """
       if (state.status === "running") {
         runKeywordSourcingBtn.disabled = true;
         runKeywordSourcingBtn.textContent = "수집 중...";
-        if (!keywordStatusPoller) {
-          keywordStatusPoller = setInterval(async () => {
-            try {
-              await refreshKeywordSourcingStatus();
-            } catch (error) {
-              console.error(error);
-            }
-          }, 2000);
-        }
+        startKeywordStatusPolling();
+        ensureKeywordStatusStream();
       } else {
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
-        if (keywordStatusPoller) {
-          clearInterval(keywordStatusPoller);
-          keywordStatusPoller = null;
+        stopKeywordStatusPolling();
+        closeKeywordStatusStream();
+      }
+    }
+
+    function startKeywordStatusPolling() {
+      if (keywordStatusPoller) {
+        return;
+      }
+      keywordStatusPoller = setInterval(async () => {
+        try {
+          await refreshKeywordSourcingStatus();
+        } catch (error) {
+          console.error(error);
         }
+      }, 2000);
+    }
+
+    function stopKeywordStatusPolling() {
+      if (keywordStatusPoller) {
+        clearInterval(keywordStatusPoller);
+        keywordStatusPoller = null;
+      }
+    }
+
+    function closeKeywordStatusStream() {
+      if (keywordStatusStream) {
+        keywordStatusStream.close();
+        keywordStatusStream = null;
+      }
+      if (keywordStreamRetryTimer) {
+        clearTimeout(keywordStreamRetryTimer);
+        keywordStreamRetryTimer = null;
       }
     }
 
@@ -1090,22 +1133,20 @@ ADMIN_HTML = """
         if (state.status === "running") {
           runKeywordSourcingBtn.disabled = true;
           runKeywordSourcingBtn.textContent = "수집 중...";
+          startKeywordStatusPolling();
         } else {
           runKeywordSourcingBtn.disabled = false;
           runKeywordSourcingBtn.textContent = "키워드 소싱";
-          if (keywordStatusStream) {
-            keywordStatusStream.close();
-            keywordStatusStream = null;
-          }
+          stopKeywordStatusPolling();
+          closeKeywordStatusStream();
         }
       };
 
       keywordStatusStream.onerror = () => {
-        if (keywordStatusStream) {
-          keywordStatusStream.close();
-          keywordStatusStream = null;
-        }
-        setTimeout(() => {
+        closeKeywordStatusStream();
+        startKeywordStatusPolling();
+        keywordStreamRetryTimer = setTimeout(() => {
+          keywordStreamRetryTimer = null;
           ensureKeywordStatusStream();
         }, 2000);
       };
@@ -1316,6 +1357,7 @@ ADMIN_HTML = """
             method: "POST"
           });
           keywordSourcingRunId = result.run_id || keywordSourcingRunId;
+          startKeywordStatusPolling();
           await refreshKeywordSourcingStatus();
           ensureKeywordStatusStream();
         } catch (error) {
@@ -1324,6 +1366,22 @@ ADMIN_HTML = """
         }
       });
     }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        refreshKeywordSourcingStatus().catch((error) => {
+          console.error(error);
+        });
+        ensureKeywordStatusStream();
+      }
+    });
+
+    window.addEventListener("focus", () => {
+      refreshKeywordSourcingStatus().catch((error) => {
+        console.error(error);
+      });
+      ensureKeywordStatusStream();
+    });
 
     loadTaxonomy().catch((error) => {
       themeTableBody.innerHTML = `<tr><td colspan="2" class="empty-state">${error.message}</td></tr>`;
@@ -1536,42 +1594,32 @@ def build_category_rows_html(categories: List[Dict[str, Any]]) -> str:
 
 def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
     classified_keywords = keyword_status.get("classified_keywords") or []
-    noise_keywords = keyword_status.get("noise_keywords") or []
 
     rows: List[str] = []
     for index, keyword_row in enumerate(classified_keywords[:100], start=1):
-        avg_ctr = keyword_row.get("avg_ctr")
-        avg_ctr_text = "-" if avg_ctr is None else f"{avg_ctr * 100:.2f}%"
-        competition = keyword_row.get("competition_index")
-        competition_text = "-" if competition is None else str(competition)
+        monthly_pc_ctr = keyword_row.get("monthly_pc_ctr")
+        monthly_mobile_ctr = keyword_row.get("monthly_mobile_ctr")
+        monthly_pc_ctr_text = "-" if monthly_pc_ctr is None else f"{monthly_pc_ctr * 100:.2f}%"
+        monthly_mobile_ctr_text = "-" if monthly_mobile_ctr is None else f"{monthly_mobile_ctr * 100:.2f}%"
         rows.append(
             (
                 "<tr>"
-                f"<td>{escape(str(keyword_row.get('rank') or index))}</td>"
-                f"<td>{escape(str(keyword_row.get('keyword') or ''))}</td>"
-                f"<td>{escape(str(keyword_row.get('group_name') or '-'))}</td>"
-                f"<td>{escape(str(keyword_row.get('total_searches') or 0))}</td>"
-                f"<td>{escape(avg_ctr_text)}</td>"
-                f"<td>{escape(competition_text)}</td>"
-                "</tr>"
-            )
-        )
-
-    for index, keyword in enumerate(noise_keywords[:20], start=1):
-        rows.append(
-            (
-                "<tr>"
-                f"<td>N-{index}</td>"
-                f"<td>{escape(str(keyword))}</td>"
-                "<td>노이즈</td>"
-                "<td>-</td>"
-                "<td>-</td>"
-                "<td>-</td>"
+                f"<td class=\"metric-center\">{escape(str(keyword_row.get('rank') or index))}</td>"
+                f"<td class=\"keyword-col\">{escape(str(keyword_row.get('keyword') or ''))}</td>"
+                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_pc_searches') if keyword_row.get('monthly_pc_searches') is not None else '-'))}</td>"
+                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_mobile_searches') if keyword_row.get('monthly_mobile_searches') is not None else '-'))}</td>"
+                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_pc_clicks') if keyword_row.get('monthly_pc_clicks') is not None else '-'))}</td>"
+                f"<td class=\"metric-cell\">{escape(str(keyword_row.get('monthly_mobile_clicks') if keyword_row.get('monthly_mobile_clicks') is not None else '-'))}</td>"
+                f"<td class=\"metric-cell\">{escape(monthly_pc_ctr_text)}</td>"
+                f"<td class=\"metric-cell\">{escape(monthly_mobile_ctr_text)}</td>"
+                f"<td class=\"metric-center\">{escape(str(keyword_row.get('competition_level') or '-'))}</td>"
+                f"<td class=\"metric-center\">{escape(str(keyword_row.get('pl_avg_depth') if keyword_row.get('pl_avg_depth') is not None else '-'))}</td>"
+                f"<td class=\"metric-center\">{escape(str(keyword_row.get('group_name') or '-'))}</td>"
                 "</tr>"
             )
         )
 
     if not rows:
-        return '<tr><td colspan="6" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
+        return '<tr><td colspan="11" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
 
     return "".join(rows)

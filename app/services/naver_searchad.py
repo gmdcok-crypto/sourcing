@@ -60,6 +60,7 @@ class NaverSearchAdService:
                         "monthly_pc_ctr": self._to_float(item.get("monthlyAvePcCtr")),
                         "monthly_mobile_ctr": self._to_float(item.get("monthlyAveMobileCtr")),
                         "competition_index": self._to_float(item.get("compIdx")),
+                        "competition_level": self._to_competition_level(item.get("compIdx")),
                         "pl_avg_depth": self._to_float(item.get("plAvgDepth")),
                     }
         return metrics
@@ -117,3 +118,14 @@ class NaverSearchAdService:
             return float(str(value).replace(",", ""))
         except (TypeError, ValueError):
             return None
+
+    @classmethod
+    def _to_competition_level(cls, value: Any) -> str | None:
+        score = cls._to_float(value)
+        if score is None:
+            return None
+        if score >= 1:
+            return "높음"
+        if score >= 0.34:
+            return "중간"
+        return "낮음"
