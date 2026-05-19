@@ -1144,6 +1144,7 @@ ADMIN_HTML = """
     let keywordStreamRetryTimer = null;
     let keywordHistoryMode = false;
     let keywordCalendarViewDate = new Date();
+    let keywordDetailLoadedRunId = null;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1379,11 +1380,7 @@ ADMIN_HTML = """
 
     function renderKeywordSourcingStatus(state) {
       const progress = Number(state.progress_percent || 0);
-      const classifiedKeywords = Array.isArray(state.classified_keywords) ? state.classified_keywords : [];
-      const previewRows = Array.isArray(state.preview_rows) ? state.preview_rows : [];
-      const fallbackRows = classifiedKeywords.length > 0 ? classifiedKeywords : previewRows;
       const existingLogs = Array.isArray(state.logs) ? [...state.logs] : ["실행 대기중입니다."];
-      existingLogs.push(`화면 렌더 기준 행 수: ${fallbackRows.length}`);
       keywordProgressLabel.textContent = state.message || "대기중";
       keywordProgressFill.style.width = `${progress}%`;
       keywordProgressValue.textContent = `${progress}%`;
@@ -1402,7 +1399,6 @@ ADMIN_HTML = """
       keywordR2Status.textContent = state.r2_parquet_key ? "완료" : "대기";
       const groupCounts = state.group_counts || {};
       keywordGroupCounts.textContent = `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`;
-      renderKeywordSummaryRows(fallbackRows);
     }
 
     function renderKeywordSummaryRows(classifiedKeywords) {
@@ -1457,6 +1453,23 @@ ADMIN_HTML = """
         .join("");
     }
 
+    async function loadKeywordSourcingDetail(runId) {
+      const params = new URLSearchParams();
+      if (runId) {
+        params.set("run_id", runId);
+      }
+      params.set("_ts", String(Date.now()));
+      const state = await apiFetch(`/api/admin/keyword-sourcing/detail?${params.toString()}`);
+      if (state.run_id) {
+        keywordSourcingRunId = state.run_id;
+      }
+      keywordDetailLoadedRunId = state.run_id || runId || null;
+      const classifiedKeywords = Array.isArray(state.classified_keywords) ? state.classified_keywords : [];
+      const previewRows = Array.isArray(state.preview_rows) ? state.preview_rows : [];
+      const fallbackRows = classifiedKeywords.length > 0 ? classifiedKeywords : previewRows;
+      renderKeywordSummaryRows(fallbackRows);
+    }
+
     async function refreshKeywordSourcingStatus() {
       if (keywordHistoryMode) {
         return;
@@ -1475,6 +1488,15 @@ ADMIN_HTML = """
         keywordSourcingRunId = state.run_id;
       }
       renderKeywordSourcingStatus(state);
+      if (state.status === "running") {
+        keywordDetailLoadedRunId = null;
+      } else if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
+        try {
+          await loadKeywordSourcingDetail(state.run_id);
+        } catch (error) {
+          console.error(error);
+        }
+      }
 
       if (state.status === "running") {
         runKeywordSourcingBtn.disabled = true;
@@ -1571,6 +1593,13 @@ ADMIN_HTML = """
           keywordSourcingRunId = state.run_id;
         }
         renderKeywordSourcingStatus(state);
+        if (state.status === "running") {
+          keywordDetailLoadedRunId = null;
+        } else if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
+          loadKeywordSourcingDetail(state.run_id).catch((error) => {
+            console.error(error);
+          });
+        }
 
         if (state.status === "running") {
           runKeywordSourcingBtn.disabled = true;
@@ -1806,6 +1835,7 @@ ADMIN_HTML = """
         try {
           event.preventDefault();
           keywordHistoryMode = false;
+          keywordDetailLoadedRunId = null;
           const result = await apiFetch("/api/admin/keyword-sourcing/test", {
             method: "POST"
           });
@@ -1832,6 +1862,9 @@ ADMIN_HTML = """
             method: "POST"
           });
           renderKeywordSourcingStatus(state);
+          if (state.run_id) {
+            await loadKeywordSourcingDetail(state.run_id);
+          }
         } catch (error) {
           alert(`키워드 소싱 중지 실패: ${error.message}`);
         }
@@ -1939,6 +1972,9 @@ ADMIN_HTML = """
       if (keywordLogBox) {
         keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
       }
+      console.error(error);
+    });
+    loadKeywordSourcingDetail(keywordSourcingRunId).catch((error) => {
       console.error(error);
     });
     if (keywordStatusText && keywordStatusText.textContent === "running") {

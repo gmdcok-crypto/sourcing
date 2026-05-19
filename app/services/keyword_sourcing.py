@@ -79,6 +79,34 @@ class KeywordSourcingService:
         return cls._runs[target_run_id]
 
     @classmethod
+    def get_progress_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
+        state = cls.get_status(run_id=run_id)
+        return {
+            "run_id": state.get("run_id"),
+            "status": state.get("status") or "idle",
+            "message": state.get("message") or "대기중",
+            "theme_count": int(state.get("theme_count") or 0),
+            "category_count": int(state.get("category_count") or 0),
+            "processed_categories": int(state.get("processed_categories") or 0),
+            "row_count": int(state.get("row_count") or 0),
+            "success_count": int(state.get("success_count") or 0),
+            "failure_count": int(state.get("failure_count") or 0),
+            "progress_percent": int(state.get("progress_percent") or 0),
+            "current_theme_name": state.get("current_theme_name"),
+            "current_cid": state.get("current_cid"),
+            "current_query": state.get("current_query"),
+            "logs": state.get("logs") or [],
+            "started_at": state.get("started_at"),
+            "finished_at": state.get("finished_at"),
+            "r2_json_key": state.get("r2_json_key"),
+            "r2_parquet_key": state.get("r2_parquet_key"),
+            "top150_count": int(state.get("top150_count") or 0),
+            "top100_count": int(state.get("top100_count") or 0),
+            "searchad_count": int(state.get("searchad_count") or 0),
+            "group_counts": state.get("group_counts") or {},
+        }
+
+    @classmethod
     def load_saved_result_for_date(cls, settings, *, target_date: date) -> Dict[str, Any]:
         service = cls(settings)
         key = service.r2_service.find_latest_json_key_for_date(target_date=target_date)

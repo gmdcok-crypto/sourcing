@@ -28,6 +28,11 @@ async def stop_keyword_sourcing() -> Dict[str, Any]:
 
 @router.get("/keyword-sourcing/status")
 async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> Dict[str, Any]:
+    return KeywordSourcingService.get_progress_status(run_id=run_id)
+
+
+@router.get("/keyword-sourcing/detail")
+async def get_keyword_sourcing_detail(run_id: Optional[str] = None) -> Dict[str, Any]:
     return KeywordSourcingService.get_status(run_id=run_id)
 
 
@@ -47,7 +52,7 @@ async def stream_keyword_sourcing_status(run_id: Optional[str] = None) -> Stream
     async def event_generator():
         yield "retry: 2000\n\n"
         while True:
-            state = KeywordSourcingService.get_status(run_id=run_id)
+            state = KeywordSourcingService.get_progress_status(run_id=run_id)
             yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
             if state.get("status") in {"completed", "failed", "idle"}:
                 break
