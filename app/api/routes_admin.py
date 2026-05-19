@@ -349,6 +349,12 @@ ADMIN_HTML = """
       align-items: center;
       gap: 8px;
     }
+    .history-picker-wrap {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+    }
     .history-toolbar .input {
       width: auto;
       min-width: 180px;
@@ -364,6 +370,15 @@ ADMIN_HTML = """
       font-size: 18px;
       line-height: 1;
       color: #f5f7ff;
+    }
+    .history-picker-native {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+      z-index: 2;
     }
     .history-toolbar input[type="date"]::-webkit-calendar-picker-indicator {
       opacity: 0;
@@ -609,7 +624,10 @@ ADMIN_HTML = """
                   <label for="keyword-history-date">저장 결과 조회 날짜</label>
                   <div class="history-date-wrap">
                     <input class="input" id="keyword-history-date" type="date" />
-                    <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택">📅</button>
+                    <div class="history-picker-wrap">
+                      <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택" tabindex="-1">📅</button>
+                      <input class="history-picker-native" id="keyword-history-picker-native" type="date" aria-label="날짜 선택" />
+                    </div>
                   </div>
                 </div>
                 <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
@@ -908,6 +926,7 @@ ADMIN_HTML = """
     const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
     const keywordHistoryDateInput = document.getElementById("keyword-history-date");
     const keywordHistoryPickerBtn = document.getElementById("keyword-history-picker-btn");
+    const keywordHistoryPickerNative = document.getElementById("keyword-history-picker-native");
     const keywordHistoryLoadBtn = document.getElementById("keyword-history-load-btn");
     const keywordProgressLabel = document.getElementById("keyword-progress-label");
     const keywordProgressFill = document.getElementById("keyword-progress-fill");
@@ -934,6 +953,9 @@ ADMIN_HTML = """
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
+    }
+    if (keywordHistoryPickerNative && keywordHistoryDateInput) {
+      keywordHistoryPickerNative.value = keywordHistoryDateInput.value;
     }
 
     async function apiFetch(url, options = {}) {
@@ -1515,14 +1537,28 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryPickerBtn && keywordHistoryDateInput) {
+    if (keywordHistoryPickerNative && keywordHistoryDateInput) {
+      keywordHistoryPickerNative.addEventListener("input", () => {
+        if (keywordHistoryPickerNative.value) {
+          keywordHistoryDateInput.value = keywordHistoryPickerNative.value;
+        }
+      });
+
+      keywordHistoryPickerNative.addEventListener("change", () => {
+        if (keywordHistoryPickerNative.value) {
+          keywordHistoryDateInput.value = keywordHistoryPickerNative.value;
+        }
+      });
+    }
+
+    if (keywordHistoryPickerBtn && keywordHistoryPickerNative) {
       keywordHistoryPickerBtn.addEventListener("click", () => {
-        if (typeof keywordHistoryDateInput.showPicker === "function") {
-          keywordHistoryDateInput.showPicker();
+        if (typeof keywordHistoryPickerNative.showPicker === "function") {
+          keywordHistoryPickerNative.showPicker();
           return;
         }
-        keywordHistoryDateInput.focus();
-        keywordHistoryDateInput.click();
+        keywordHistoryPickerNative.focus();
+        keywordHistoryPickerNative.click();
       });
     }
 
