@@ -323,7 +323,7 @@ ADMIN_HTML = """
       white-space: nowrap;
     }
     .keyword-metrics-table td {
-      padding: 10px 12px;
+      padding: 2px 12px;
       white-space: nowrap;
     }
     .keyword-col { min-width: 160px; color: #9fc0ff; font-weight: 600; }
@@ -1416,7 +1416,7 @@ ADMIN_HTML = """
       };
 
       const rows = [];
-      classifiedKeywords.slice(0, 100).forEach((row, index) => {
+      classifiedKeywords.forEach((row, index) => {
         const keyword = row.keyword || row.query || row.seed_keyword || "-";
         const totalSearches = row.total_searches ?? (
           (row.monthly_pc_searches || 0) + (row.monthly_mobile_searches || 0)
@@ -2187,7 +2187,7 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
         classified_keywords = keyword_status.get("preview_rows") or []
 
     rows: List[str] = []
-    for index, keyword_row in enumerate(classified_keywords[:100], start=1):
+    for index, keyword_row in enumerate(classified_keywords, start=1):
         keyword_text = (
             keyword_row.get("keyword")
             or keyword_row.get("query")
