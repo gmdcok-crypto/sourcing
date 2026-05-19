@@ -1377,6 +1377,8 @@ ADMIN_HTML = """
       const classifiedKeywords = Array.isArray(state.classified_keywords) ? state.classified_keywords : [];
       const previewRows = Array.isArray(state.preview_rows) ? state.preview_rows : [];
       const fallbackRows = classifiedKeywords.length > 0 ? classifiedKeywords : previewRows;
+      const existingLogs = Array.isArray(state.logs) ? [...state.logs] : ["실행 대기중입니다."];
+      existingLogs.push(`화면 렌더 기준 행 수: ${fallbackRows.length}`);
       keywordProgressLabel.textContent = state.message || "대기중";
       keywordProgressFill.style.width = `${progress}%`;
       keywordProgressValue.textContent = `${progress}%`;
@@ -1387,7 +1389,7 @@ ADMIN_HTML = """
       keywordCurrentTheme.textContent = `현재 테마: ${state.current_theme_name || "-"}`;
       keywordCurrentCid.textContent = `현재 CID: ${state.current_cid || "-"}`;
       keywordCurrentQuery.textContent = `현재 Query: ${state.current_query || "-"}`;
-      keywordLogBox.textContent = (state.logs || ["실행 대기중입니다."]).join("\n");
+      keywordLogBox.textContent = existingLogs.join("\n");
       keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
       keywordTop150Count.textContent = String(state.top150_count || 0);
       keywordTop100Count.textContent = String(state.top100_count || 0);
@@ -1399,6 +1401,17 @@ ADMIN_HTML = """
     }
 
     function renderKeywordSummaryRows(classifiedKeywords) {
+      const formatMetricValue = (value) => {
+        if (value == null || value === "") {
+          return "-";
+        }
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return numeric.toLocaleString("ko-KR");
+        }
+        return String(value);
+      };
+
       const rows = [];
       classifiedKeywords.slice(0, 100).forEach((row, index) => {
         const keyword = row.keyword || row.query || row.seed_keyword || "-";
@@ -1414,7 +1427,7 @@ ADMIN_HTML = """
           themeDetail: row.full_path || row.category_name || row.theme_name || "-",
           keyword,
           group: row.group_name || (row.query || row.seed_keyword ? "이전 저장본" : "-"),
-          totalSearches: totalSearches == null ? "-" : Number(totalSearches).toLocaleString("ko-KR"),
+          totalSearches: formatMetricValue(totalSearches),
           clickRate: avgCtr == null ? "-" : `${(avgCtr * 100).toFixed(2)}%`,
           competitionLevel: row.competition_level || "-",
           adEfficiency: getAdEfficiencyLabel(row),
