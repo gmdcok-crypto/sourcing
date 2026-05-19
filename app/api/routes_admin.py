@@ -349,6 +349,11 @@ ADMIN_HTML = """
       min-width: 180px;
       color-scheme: dark;
     }
+    .history-toolbar input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(1) brightness(1.4);
+      opacity: 1;
+      cursor: pointer;
+    }
 
     table { width: 100%; border-collapse: collapse; }
     th {
