@@ -84,6 +84,8 @@ class NaverShoppingInsightService:
                     break
 
                 for row in ranks:
+                    if not isinstance(row, dict):
+                        continue
                     keyword = str(row.get("keyword") or "").strip()
                     if not keyword:
                         continue

@@ -229,7 +229,7 @@ class KeywordSourcingService:
                 try:
                     top_keyword_result = await self.datalab_service.fetch_category_top_keywords(
                         cid=str(category["cid"]),
-                        seed_keywords=[],
+                        seed_keywords=[query],
                         limit=150,
                     )
                     top_keywords = top_keyword_result.keywords
