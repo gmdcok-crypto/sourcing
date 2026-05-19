@@ -1,4 +1,5 @@
 import json
+from datetime import date, timedelta
 from html import escape
 from typing import Any, Dict, List
 
@@ -674,12 +675,12 @@ ADMIN_HTML = """
                 <div class="field">
                   <label for="keyword-history-date">저장 결과 조회 날짜</label>
                   <div class="history-date-wrap">
-                    <input class="input" id="keyword-history-date" type="text" inputmode="none" readonly />
-                    <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택">📅</button>
+                    <input class="input" id="keyword-history-date" type="text" inputmode="none" readonly value="__DEFAULT_HISTORY_DATE__" />
+                    <button class="action-btn history-picker-btn" id="keyword-history-picker-btn" type="button" aria-label="날짜 선택" aria-expanded="false">📅</button>
                     <div class="history-calendar-popup" id="keyword-history-calendar-popup">
                       <div class="calendar-header">
                         <button class="action-btn calendar-nav-btn" id="keyword-history-prev-month" type="button" aria-label="이전 달">&lt;</button>
-                        <div class="calendar-title" id="keyword-history-calendar-title">2026년 5월</div>
+                        <div class="calendar-title" id="keyword-history-calendar-title">__HISTORY_CALENDAR_TITLE__</div>
                         <button class="action-btn calendar-nav-btn" id="keyword-history-next-month" type="button" aria-label="다음 달">&gt;</button>
                       </div>
                       <div class="calendar-weekdays">
@@ -691,12 +692,130 @@ ADMIN_HTML = """
                         <div class="calendar-weekday">금</div>
                         <div class="calendar-weekday">토</div>
                       </div>
-                      <div class="calendar-grid" id="keyword-history-calendar-grid"></div>
+                      <div class="calendar-grid" id="keyword-history-calendar-grid">__HISTORY_CALENDAR_GRID__</div>
                     </div>
                   </div>
                 </div>
                 <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
               </div>
+              <script>
+                (() => {
+                  const displayInput = document.getElementById("keyword-history-date");
+                  const pickerBtn = document.getElementById("keyword-history-picker-btn");
+                  const popup = document.getElementById("keyword-history-calendar-popup");
+                  const title = document.getElementById("keyword-history-calendar-title");
+                  const grid = document.getElementById("keyword-history-calendar-grid");
+                  const prevBtn = document.getElementById("keyword-history-prev-month");
+                  const nextBtn = document.getElementById("keyword-history-next-month");
+                  if (!displayInput || !pickerBtn || !popup || !title || !grid || !prevBtn || !nextBtn) {
+                    return;
+                  }
+
+                  function parseDate(value) {
+                    if (!value) return null;
+                    const parts = value.split("-").map((item) => Number(item));
+                    if (parts.length !== 3 || parts.some((item) => Number.isNaN(item))) return null;
+                    return new Date(parts[0], parts[1] - 1, parts[2]);
+                  }
+
+                  function formatDate(value) {
+                    const year = value.getFullYear();
+                    const month = String(value.getMonth() + 1).padStart(2, "0");
+                    const day = String(value.getDate()).padStart(2, "0");
+                    return `${year}-${month}-${day}`;
+                  }
+
+                  function sameDate(left, right) {
+                    return left.getFullYear() === right.getFullYear()
+                      && left.getMonth() === right.getMonth()
+                      && left.getDate() === right.getDate();
+                  }
+
+                  let selectedDate = parseDate(displayInput.value) || new Date();
+                  let viewDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+
+                  function renderCalendar() {
+                    title.textContent = `${viewDate.getFullYear()}년 ${viewDate.getMonth() + 1}월`;
+                    const firstDay = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
+                    const startDate = new Date(firstDay);
+                    startDate.setDate(firstDay.getDate() - firstDay.getDay());
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+
+                    const cells = [];
+                    for (let offset = 0; offset < 42; offset += 1) {
+                      const cellDate = new Date(startDate);
+                      cellDate.setDate(startDate.getDate() + offset);
+                      const classes = ["calendar-day"];
+                      if (cellDate.getMonth() !== viewDate.getMonth()) classes.push("outside");
+                      if (sameDate(cellDate, selectedDate)) classes.push("selected");
+                      if (sameDate(cellDate, today)) classes.push("today");
+                      cells.push(`
+                        <button class="${classes.join(" ")}" type="button" data-date="${formatDate(cellDate)}">${cellDate.getDate()}</button>
+                      `);
+                    }
+                    grid.innerHTML = cells.join("");
+                  }
+
+                  function openCalendar() {
+                    renderCalendar();
+                    popup.classList.add("open");
+                    pickerBtn.setAttribute("aria-expanded", "true");
+                  }
+
+                  function closeCalendar() {
+                    popup.classList.remove("open");
+                    pickerBtn.setAttribute("aria-expanded", "false");
+                  }
+
+                  pickerBtn.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    if (popup.classList.contains("open")) {
+                      closeCalendar();
+                    } else {
+                      openCalendar();
+                    }
+                  });
+
+                  displayInput.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    openCalendar();
+                  });
+
+                  prevBtn.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1);
+                    renderCalendar();
+                  });
+
+                  nextBtn.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1);
+                    renderCalendar();
+                  });
+
+                  grid.addEventListener("click", (event) => {
+                    const target = event.target.closest("[data-date]");
+                    if (!target) return;
+                    selectedDate = parseDate(target.dataset.date) || selectedDate;
+                    displayInput.value = formatDate(selectedDate);
+                    viewDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+                    closeCalendar();
+                  });
+
+                  document.addEventListener("click", (event) => {
+                    if (!popup.classList.contains("open")) return;
+                    if (event.target.closest(".history-date-wrap")) return;
+                    closeCalendar();
+                  });
+
+                  displayInput.value = formatDate(selectedDate);
+                  renderCalendar();
+                  window.__historyCalendarInitialized = true;
+                  window.__openHistoryCalendar = openCalendar;
+                  window.__closeHistoryCalendar = closeCalendar;
+                })();
+              </script>
               <form action="/api/admin/keyword-sourcing/start" method="post" id="keyword-sourcing-form">
                 <button class="action-btn primary" id="run-keyword-sourcing-btn" type="submit">키워드 소싱</button>
               </form>
@@ -1691,7 +1810,7 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryPickerBtn) {
+    if (!window.__historyCalendarInitialized && keywordHistoryPickerBtn) {
       keywordHistoryPickerBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         if (keywordHistoryCalendarPopup && keywordHistoryCalendarPopup.classList.contains("open")) {
@@ -1702,14 +1821,14 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryDateInput) {
+    if (!window.__historyCalendarInitialized && keywordHistoryDateInput) {
       keywordHistoryDateInput.addEventListener("click", (event) => {
         event.stopPropagation();
         openHistoryCalendar();
       });
     }
 
-    if (keywordHistoryPrevMonthBtn) {
+    if (!window.__historyCalendarInitialized && keywordHistoryPrevMonthBtn) {
       keywordHistoryPrevMonthBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         keywordCalendarViewDate = new Date(
@@ -1721,7 +1840,7 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryNextMonthBtn) {
+    if (!window.__historyCalendarInitialized && keywordHistoryNextMonthBtn) {
       keywordHistoryNextMonthBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         keywordCalendarViewDate = new Date(
@@ -1733,7 +1852,7 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryCalendarGrid) {
+    if (!window.__historyCalendarInitialized && keywordHistoryCalendarGrid) {
       keywordHistoryCalendarGrid.addEventListener("click", (event) => {
         const dayButton = event.target.closest("[data-date]");
         if (!dayButton) {
@@ -1744,15 +1863,17 @@ ADMIN_HTML = """
       });
     }
 
-    document.addEventListener("click", (event) => {
-      if (!keywordHistoryCalendarPopup || !keywordHistoryCalendarPopup.classList.contains("open")) {
-        return;
-      }
-      if (event.target.closest(".history-date-wrap")) {
-        return;
-      }
-      closeHistoryCalendar();
-    });
+    if (!window.__historyCalendarInitialized) {
+      document.addEventListener("click", (event) => {
+        if (!keywordHistoryCalendarPopup || !keywordHistoryCalendarPopup.classList.contains("open")) {
+          return;
+        }
+        if (event.target.closest(".history-date-wrap")) {
+          return;
+        }
+        closeHistoryCalendar();
+      });
+    }
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && !keywordHistoryMode) {
@@ -1810,6 +1931,8 @@ def render_admin_html(active_tab: str) -> str:
     html = ADMIN_HTML
     taxonomy_data = load_admin_taxonomy_data()
     keyword_status = load_keyword_status_data()
+    default_history_date = date.today()
+    history_title, history_grid = build_history_calendar_markup(default_history_date)
 
     for tab in VALID_ADMIN_TABS:
         nav_token = f"__NAV_{tab.upper()}_ACTIVE__"
@@ -1858,6 +1981,9 @@ def render_admin_html(active_tab: str) -> str:
         ),
     )
     html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status))
+    html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
+    html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
+    html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)
     html = html.replace(
         "__AUTO_REFRESH_META__",
         '<meta http-equiv="refresh" content="3">' if selected_tab == "pipeline" and keyword_status["status"] == "running" else "",
@@ -1940,6 +2066,32 @@ def load_keyword_status_data() -> Dict[str, Any]:
         "group_counts": state.get("group_counts") or {},
         "classified_keywords": state.get("classified_keywords") or [],
     }
+
+
+def build_history_calendar_markup(selected_date: date) -> tuple[str, str]:
+    view_month = date(selected_date.year, selected_date.month, 1)
+    first_weekday_offset = (view_month.weekday() + 1) % 7
+    start_date = view_month - timedelta(days=first_weekday_offset)
+    today = date.today()
+
+    cells: List[str] = []
+    for day_offset in range(42):
+        cell_date = start_date + timedelta(days=day_offset)
+        classes = ["calendar-day"]
+        if cell_date.month != view_month.month:
+            classes.append("outside")
+        if cell_date == selected_date:
+            classes.append("selected")
+        if cell_date == today:
+            classes.append("today")
+        cells.append(
+            (
+                f'<button class="{" ".join(classes)}" type="button" '
+                f'data-date="{cell_date.isoformat()}">{cell_date.day}</button>'
+            )
+        )
+
+    return f"{view_month.year}년 {view_month.month}월", "".join(cells)
 
 
 def build_theme_options_html(themes: List[Dict[str, Any]]) -> str:
