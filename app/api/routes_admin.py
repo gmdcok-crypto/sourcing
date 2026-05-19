@@ -1410,7 +1410,7 @@ ADMIN_HTML = """
           themeDetail: row.full_path || row.category_name || row.theme_name || "-",
           keyword: row.keyword,
           group: row.group_name || "-",
-          totalSearches: totalSearches ? totalSearches.toLocaleString("ko-KR") : "-",
+          totalSearches: totalSearches == null ? "-" : Number(totalSearches).toLocaleString("ko-KR"),
           clickRate: avgCtr == null ? "-" : `${(avgCtr * 100).toFixed(2)}%`,
           competitionLevel: row.competition_level || "-",
           adEfficiency: getAdEfficiencyLabel(row),

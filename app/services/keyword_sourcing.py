@@ -93,6 +93,14 @@ class KeywordSourcingService:
                 "r2_json_key": key,
             }
 
+        classified_keywords = payload.get("classified_keywords") or []
+        fallback_rows = payload.get("rows") or []
+        if not classified_keywords and fallback_rows:
+            classified_keywords = cls._build_legacy_history_rows(fallback_rows)
+
+        top_keywords = payload.get("top_keywords") or []
+        valid_keywords = payload.get("valid_keywords") or []
+
         state = {
             "run_id": payload.get("run_id"),
             "status": "completed",
@@ -113,15 +121,15 @@ class KeywordSourcingService:
             "r2_json_key": key,
             "r2_parquet_key": None,
             "dataframe_columns": payload.get("columns") or [],
-            "preview_rows": (payload.get("rows") or [])[:20],
-            "valid_keywords": payload.get("valid_keywords") or [],
+            "preview_rows": fallback_rows[:20],
+            "valid_keywords": valid_keywords,
             "noise_keywords": payload.get("noise_keywords") or [],
-            "top_keywords": payload.get("top_keywords") or [],
-            "classified_keywords": payload.get("classified_keywords") or [],
-            "top150_count": len(payload.get("top_keywords") or []),
-            "top100_count": len(payload.get("valid_keywords") or []),
-            "searchad_count": len(payload.get("classified_keywords") or []),
-            "group_counts": cls._count_groups(payload.get("classified_keywords") or []),
+            "top_keywords": top_keywords,
+            "classified_keywords": classified_keywords,
+            "top150_count": len(top_keywords) or len(classified_keywords),
+            "top100_count": len(valid_keywords) or len(classified_keywords),
+            "searchad_count": len(classified_keywords),
+            "group_counts": cls._count_groups(classified_keywords),
             "selected_date": target_date.isoformat(),
         }
 
@@ -483,6 +491,44 @@ class KeywordSourcingService:
         if not filtered:
             return None
         return sum(filtered) / len(filtered)
+
+    @staticmethod
+    def _build_legacy_history_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        deduped: Dict[str, Dict[str, Any]] = {}
+
+        for row in rows:
+            keyword = str(row.get("query") or row.get("seed_keyword") or "").strip()
+            if not keyword:
+                continue
+
+            category_name = row.get("category_name")
+            full_path = row.get("full_path")
+            theme_name = row.get("theme_name")
+            dedupe_key = f"{keyword}|{full_path or category_name or ''}|{theme_name or ''}"
+            if dedupe_key in deduped:
+                continue
+
+            deduped[dedupe_key] = {
+                "keyword": keyword,
+                "full_path": full_path,
+                "category_name": category_name,
+                "theme_name": theme_name,
+                "group_name": "이전 저장본",
+                "competition_level": "-",
+                "total_searches": 0,
+                "avg_ctr": None,
+                "legacy_source": True,
+            }
+
+        legacy_rows = list(deduped.values())
+        legacy_rows.sort(
+            key=lambda item: (
+                str(item.get("theme_name") or ""),
+                str(item.get("full_path") or item.get("category_name") or ""),
+                str(item.get("keyword") or ""),
+            )
+        )
+        return legacy_rows[:100]
 
     @staticmethod
     def _to_int(value: Any) -> int | None:
