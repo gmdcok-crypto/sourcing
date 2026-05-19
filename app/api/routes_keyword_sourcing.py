@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends
@@ -23,6 +24,17 @@ async def run_keyword_sourcing_test(
 @router.get("/keyword-sourcing/status")
 async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> Dict[str, Any]:
     return KeywordSourcingService.get_status(run_id=run_id)
+
+
+@router.get("/keyword-sourcing/history")
+async def get_keyword_sourcing_history(
+    date_value: date,
+    settings: Settings = Depends(get_settings),
+) -> Dict[str, Any]:
+    return KeywordSourcingService.load_saved_result_for_date(
+        settings,
+        target_date=date_value,
+    )
 
 
 @router.get("/keyword-sourcing/stream")

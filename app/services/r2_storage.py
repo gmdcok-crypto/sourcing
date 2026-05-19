@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
 
 import boto3
@@ -103,6 +103,60 @@ class R2StorageService:
             body=buffer.getvalue(),
             content_type="application/octet-stream",
         )
+
+    def read_json(self, *, key: str) -> Optional[Dict[str, Any]]:
+        if not self.is_configured():
+            return None
+
+        client = self._build_client()
+        try:
+            response = client.get_object(Bucket=self.settings.r2_bucket_name, Key=key)
+            body = response["Body"].read().decode("utf-8")
+        except (BotoCoreError, ClientError, KeyError, UnicodeDecodeError):
+            return None
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return None
+
+    def find_latest_json_key_for_date(self, *, target_date: date) -> Optional[str]:
+        if not self.is_configured():
+            return None
+
+        client = self._build_client()
+        prefix = "search-results/raw/"
+        continuation_token = None
+        matching_keys = []
+        date_token = target_date.strftime("%Y%m%d")
+
+        try:
+            while True:
+                kwargs = {
+                    "Bucket": self.settings.r2_bucket_name,
+                    "Prefix": prefix,
+                    "MaxKeys": 1000,
+                }
+                if continuation_token:
+                    kwargs["ContinuationToken"] = continuation_token
+                response = client.list_objects_v2(**kwargs)
+
+                for item in response.get("Contents", []):
+                    key = item.get("Key") or ""
+                    name = key.rsplit("/", 1)[-1]
+                    if name.startswith(date_token) and name.endswith(".json"):
+                        matching_keys.append(key)
+
+                if not response.get("IsTruncated"):
+                    break
+                continuation_token = response.get("NextContinuationToken")
+        except (BotoCoreError, ClientError):
+            return None
+
+        if not matching_keys:
+            return None
+        matching_keys.sort(reverse=True)
+        return matching_keys[0]
 
     def _build_key(self, *, query: str) -> str:
         safe_query = "-".join(query.strip().lower().split()) or "empty-query"

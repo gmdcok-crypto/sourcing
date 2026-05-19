@@ -326,6 +326,16 @@ ADMIN_HTML = """
     .keyword-col { min-width: 160px; color: #9fc0ff; font-weight: 600; }
     .metric-cell { text-align: right; }
     .metric-center { text-align: center; }
+    .toolbar-inline {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .toolbar-inline .input {
+      width: auto;
+      min-width: 180px;
+    }
 
     table { width: 100%; border-collapse: collapse; }
     th {
@@ -534,9 +544,13 @@ ADMIN_HTML = """
         <article class="card panel">
           <div class="section-title">
             <div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div>
-            <form action="/api/admin/keyword-sourcing/start" method="post" id="keyword-sourcing-form">
-              <button class="action-btn primary" id="run-keyword-sourcing-btn" type="submit">키워드 소싱</button>
-            </form>
+            <div class="toolbar-inline">
+              <input class="input" id="keyword-history-date" type="date" />
+              <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
+              <form action="/api/admin/keyword-sourcing/start" method="post" id="keyword-sourcing-form">
+                <button class="action-btn primary" id="run-keyword-sourcing-btn" type="submit">키워드 소싱</button>
+              </form>
+            </div>
           </div>
           <div class="pipeline-stack">
             <div class="bars">
@@ -826,6 +840,8 @@ ADMIN_HTML = """
     const cidTableBody = document.getElementById("cid-table-body");
     const keywordSourcingForm = document.getElementById("keyword-sourcing-form");
     const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
+    const keywordHistoryDateInput = document.getElementById("keyword-history-date");
+    const keywordHistoryLoadBtn = document.getElementById("keyword-history-load-btn");
     const keywordProgressLabel = document.getElementById("keyword-progress-label");
     const keywordProgressFill = document.getElementById("keyword-progress-fill");
     const keywordProgressValue = document.getElementById("keyword-progress-value");
@@ -1111,6 +1127,20 @@ ADMIN_HTML = """
       }
     }
 
+    async function loadKeywordSourcingHistoryByDate() {
+      const selectedDate = keywordHistoryDateInput.value;
+      if (!selectedDate) {
+        alert("조회할 날짜를 먼저 선택해 주세요.");
+        return;
+      }
+
+      const state = await apiFetch(`/api/admin/keyword-sourcing/history?date_value=${encodeURIComponent(selectedDate)}&_ts=${Date.now()}`);
+      if (state.run_id) {
+        keywordSourcingRunId = state.run_id;
+      }
+      renderKeywordSourcingStatus(state);
+    }
+
     function ensureKeywordStatusStream() {
       if (keywordStatusStream) {
         return;
@@ -1363,6 +1393,16 @@ ADMIN_HTML = """
         } catch (error) {
           alert(`키워드 소싱 실패: ${error.message}`);
           keywordSourcingForm.submit();
+        }
+      });
+    }
+
+    if (keywordHistoryLoadBtn) {
+      keywordHistoryLoadBtn.addEventListener("click", async () => {
+        try {
+          await loadKeywordSourcingHistoryByDate();
+        } catch (error) {
+          alert(`저장된 결과 조회 실패: ${error.message}`);
         }
       });
     }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from statistics import median
 from typing import Any, Dict, List, Optional
 
@@ -72,6 +72,63 @@ class KeywordSourcingService:
                 "group_counts": {},
             }
         return cls._runs[target_run_id]
+
+    @classmethod
+    def load_saved_result_for_date(cls, settings, *, target_date: date) -> Dict[str, Any]:
+        service = cls(settings)
+        key = service.r2_service.find_latest_json_key_for_date(target_date=target_date)
+        if not key:
+            return {
+                "status": "idle",
+                "message": "선택한 날짜의 저장된 소싱 결과가 없습니다.",
+                "selected_date": target_date.isoformat(),
+            }
+
+        payload = service.r2_service.read_json(key=key)
+        if not payload:
+            return {
+                "status": "failed",
+                "message": "선택한 날짜의 저장된 결과를 읽지 못했습니다.",
+                "selected_date": target_date.isoformat(),
+                "r2_json_key": key,
+            }
+
+        state = {
+            "run_id": payload.get("run_id"),
+            "status": "completed",
+            "message": "저장된 소싱 결과를 불러왔습니다.",
+            "theme_count": 0,
+            "category_count": 0,
+            "processed_categories": 0,
+            "row_count": int(payload.get("row_count") or len(payload.get("rows") or [])),
+            "success_count": 0,
+            "failure_count": 0,
+            "progress_percent": 100,
+            "current_theme_name": None,
+            "current_cid": None,
+            "current_query": None,
+            "logs": [f"{target_date.isoformat()} 저장 결과를 R2에서 조회했습니다."],
+            "started_at": None,
+            "finished_at": None,
+            "r2_json_key": key,
+            "r2_parquet_key": None,
+            "dataframe_columns": payload.get("columns") or [],
+            "preview_rows": (payload.get("rows") or [])[:20],
+            "valid_keywords": payload.get("valid_keywords") or [],
+            "noise_keywords": payload.get("noise_keywords") or [],
+            "top_keywords": payload.get("top_keywords") or [],
+            "classified_keywords": payload.get("classified_keywords") or [],
+            "top150_count": len(payload.get("top_keywords") or []),
+            "top100_count": len(payload.get("valid_keywords") or []),
+            "searchad_count": len(payload.get("classified_keywords") or []),
+            "group_counts": cls._count_groups(payload.get("classified_keywords") or []),
+            "selected_date": target_date.isoformat(),
+        }
+
+        run_id = state.get("run_id") or f"saved-{target_date.strftime('%Y%m%d')}"
+        cls._runs[run_id] = state
+        cls._latest_run_id = run_id
+        return state
 
     @classmethod
     def start_background_run(cls, settings, *, display_per_cid: int = 30) -> Dict[str, Any]:
