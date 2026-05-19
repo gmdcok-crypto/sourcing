@@ -9,8 +9,9 @@ import httpx
 
 class NaverSearchTrendService:
     SEARCH_TREND_URL = "https://openapi.naver.com/v1/datalab/search"
-    RETRY_DELAYS = (0.8, 1.6, 3.2)
-    BATCH_DELAY_SECONDS = 0.35
+    RETRY_DELAYS = (2.0, 4.0, 8.0, 15.0)
+    BATCH_DELAY_SECONDS = 1.5
+    BATCH_SIZE = 3
 
     def __init__(self, settings) -> None:
         self.settings = settings
@@ -48,7 +49,7 @@ class NaverSearchTrendService:
 
         trends: Dict[str, List[Dict[str, Any]]] = {}
         async with httpx.AsyncClient(timeout=20.0) as client:
-            for batch in self._chunk(unique_keywords, 5):
+            for batch in self._chunk(unique_keywords, self.BATCH_SIZE):
                 payload = {
                     "startDate": start_date.isoformat(),
                     "endDate": end_date.isoformat(),
@@ -91,11 +92,21 @@ class NaverSearchTrendService:
                 response.raise_for_status()
                 return response
             if attempt < len(self.RETRY_DELAYS):
-                await asyncio.sleep(delay)
+                await asyncio.sleep(self._resolve_retry_delay(response=response, fallback=delay))
 
         if last_response is not None:
             last_response.raise_for_status()
         raise RuntimeError("검색 트렌드 API 응답을 받지 못했습니다.")
+
+    @staticmethod
+    def _resolve_retry_delay(*, response: httpx.Response, fallback: float) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(float(retry_after), fallback)
+            except ValueError:
+                return fallback
+        return fallback
 
     @staticmethod
     def _chunk(items: List[str], size: int) -> List[List[str]]:

@@ -315,6 +315,12 @@ ADMIN_HTML = """
       background: rgba(255, 255, 255, 0.03);
       overflow-x: auto;
     }
+    .keyword-page-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
     .keyword-metrics-table { min-width: 1280px; }
     .keyword-metrics-table th {
       padding: 0 12px 14px;
@@ -881,6 +887,7 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div><h2>키워드 파이프라인 결과</h2></div>
               </div>
+              <div class="keyword-page-tabs" id="keyword-page-tabs">__KEYWORD_PAGE_TABS__</div>
               <table class="keyword-metrics-table">
                 <thead>
                   <tr>
@@ -1137,7 +1144,10 @@ ADMIN_HTML = """
     const keywordSearchadCount = document.getElementById("keyword-searchad-count");
     const keywordR2Status = document.getElementById("keyword-r2-status");
     const keywordGroupCounts = document.getElementById("keyword-group-counts");
+    const keywordPageTabs = document.getElementById("keyword-page-tabs");
     const keywordSummaryBody = document.getElementById("keyword-summary-body");
+    let keywordSummaryPages = [];
+    let keywordSummaryPageIndex = 0;
     let keywordSourcingRunId = null;
     let keywordStatusPoller = null;
     let keywordStatusStream = null;
@@ -1145,6 +1155,8 @@ ADMIN_HTML = """
     let keywordHistoryMode = false;
     let keywordCalendarViewDate = new Date();
     let keywordDetailLoadedRunId = null;
+    let keywordStatusRefreshInFlight = false;
+    let keywordStatusPollingEnabled = false;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1239,6 +1251,7 @@ ADMIN_HTML = """
 
     async function apiFetch(url, options = {}) {
       const response = await fetch(url, {
+        cache: "no-store",
         headers: {
           "Content-Type": "application/json"
         },
@@ -1401,7 +1414,7 @@ ADMIN_HTML = """
       keywordGroupCounts.textContent = `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`;
     }
 
-    function renderKeywordSummaryRows(classifiedKeywords) {
+    function buildKeywordSummaryPages(classifiedKeywords) {
       const formatMetricValue = (value) => {
         if (value == null || value === "") {
           return "-";
@@ -1430,12 +1443,40 @@ ADMIN_HTML = """
         });
       });
 
-      if (rows.length === 0) {
+      const pages = [];
+      for (let index = 0; index < rows.length; index += 100) {
+        pages.push(rows.slice(index, index + 100));
+      }
+      return pages;
+    }
+
+    function renderKeywordPageTabs() {
+      if (!keywordPageTabs) {
+        return;
+      }
+      if (keywordSummaryPages.length === 0) {
+        keywordPageTabs.innerHTML = "";
+        return;
+      }
+      keywordPageTabs.innerHTML = keywordSummaryPages
+        .map((pageRows, index) => `
+          <button
+            class="action-btn ${index === keywordSummaryPageIndex ? "primary" : ""}"
+            type="button"
+            data-keyword-page="${index}"
+          >
+            ${index + 1}탭 (${pageRows.length})
+          </button>
+        `)
+        .join("");
+    }
+
+    function renderKeywordSummaryPageRows(pageRows) {
+      if (!pageRows || pageRows.length === 0) {
         keywordSummaryBody.innerHTML = '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
         return;
       }
-
-      keywordSummaryBody.innerHTML = rows
+      keywordSummaryBody.innerHTML = pageRows
         .map((row) => `
           <tr>
             <td>${row.themeDetail}</td>
@@ -1451,6 +1492,23 @@ ADMIN_HTML = """
           </tr>
         `)
         .join("");
+    }
+
+    function renderKeywordSummaryRows(classifiedKeywords) {
+      keywordSummaryPages = buildKeywordSummaryPages(classifiedKeywords);
+      if (keywordSummaryPages.length === 0) {
+        keywordSummaryPageIndex = 0;
+        renderKeywordPageTabs();
+        renderKeywordSummaryPageRows([]);
+        return;
+      }
+
+      if (keywordSummaryPageIndex >= keywordSummaryPages.length) {
+        keywordSummaryPageIndex = 0;
+      }
+
+      renderKeywordPageTabs();
+      renderKeywordSummaryPageRows(keywordSummaryPages[keywordSummaryPageIndex]);
     }
 
     async function loadKeywordSourcingDetail(runId) {
@@ -1504,38 +1562,57 @@ ADMIN_HTML = """
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = false;
         }
-        startKeywordStatusPolling();
-        ensureKeywordStatusStream();
       } else {
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = true;
         }
-        stopKeywordStatusPolling();
-        closeKeywordStatusStream();
       }
     }
 
     function startKeywordStatusPolling() {
-      if (keywordStatusPoller) {
+      if (keywordStatusPollingEnabled) {
         return;
       }
-      refreshKeywordSourcingStatus().catch((error) => {
-        console.error(error);
-      });
-      keywordStatusPoller = setInterval(async () => {
+      keywordStatusPollingEnabled = true;
+      scheduleKeywordStatusPolling(0);
+    }
+
+    function scheduleKeywordStatusPolling(delay = 2000) {
+      if (!keywordStatusPollingEnabled) {
+        return;
+      }
+      if (keywordStatusPoller) {
+        clearTimeout(keywordStatusPoller);
+      }
+      keywordStatusPoller = setTimeout(async () => {
+        keywordStatusPoller = null;
+        if (!keywordStatusPollingEnabled || keywordHistoryMode) {
+          return;
+        }
+        if (keywordStatusRefreshInFlight) {
+          scheduleKeywordStatusPolling(1000);
+          return;
+        }
+        keywordStatusRefreshInFlight = true;
         try {
           await refreshKeywordSourcingStatus();
         } catch (error) {
           console.error(error);
+        } finally {
+          keywordStatusRefreshInFlight = false;
+          if (!keywordHistoryMode) {
+            scheduleKeywordStatusPolling(2000);
+          }
         }
-      }, 2000);
+      }, delay);
     }
 
     function stopKeywordStatusPolling() {
+      keywordStatusPollingEnabled = false;
       if (keywordStatusPoller) {
-        clearInterval(keywordStatusPoller);
+        clearTimeout(keywordStatusPoller);
         keywordStatusPoller = null;
       }
     }
@@ -1569,68 +1646,7 @@ ADMIN_HTML = """
     }
 
     function ensureKeywordStatusStream() {
-      if (keywordStatusStream) {
-        return;
-      }
-      if (keywordHistoryMode) {
-        return;
-      }
-
-      const params = new URLSearchParams();
-      if (keywordSourcingRunId) {
-        params.set("run_id", keywordSourcingRunId);
-      }
-      params.set("_ts", String(Date.now()));
-      keywordStatusStream = new EventSource(`/api/admin/keyword-sourcing/stream?${params.toString()}`);
-
-      keywordStatusStream.onmessage = (event) => {
-        if (keywordHistoryMode) {
-          closeKeywordStatusStream();
-          return;
-        }
-        const state = JSON.parse(event.data);
-        if (state.run_id) {
-          keywordSourcingRunId = state.run_id;
-        }
-        renderKeywordSourcingStatus(state);
-        if (state.status === "running") {
-          keywordDetailLoadedRunId = null;
-        } else if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
-          loadKeywordSourcingDetail(state.run_id).catch((error) => {
-            console.error(error);
-          });
-        }
-
-        if (state.status === "running") {
-          runKeywordSourcingBtn.disabled = true;
-          runKeywordSourcingBtn.textContent = "수집 중...";
-          if (stopKeywordSourcingBtn) {
-            stopKeywordSourcingBtn.disabled = false;
-          }
-          startKeywordStatusPolling();
-        } else {
-          runKeywordSourcingBtn.disabled = false;
-          runKeywordSourcingBtn.textContent = "키워드 소싱";
-          if (stopKeywordSourcingBtn) {
-            stopKeywordSourcingBtn.disabled = true;
-          }
-          stopKeywordStatusPolling();
-          closeKeywordStatusStream();
-        }
-      };
-
-      keywordStatusStream.onerror = () => {
-        if (keywordHistoryMode) {
-          closeKeywordStatusStream();
-          return;
-        }
-        closeKeywordStatusStream();
-        startKeywordStatusPolling();
-        keywordStreamRetryTimer = setTimeout(() => {
-          keywordStreamRetryTimer = null;
-          ensureKeywordStatusStream();
-        }, 2000);
-      };
+      return;
     }
 
     function editTheme(themeId) {
@@ -1842,7 +1858,6 @@ ADMIN_HTML = """
           keywordSourcingRunId = result.run_id || keywordSourcingRunId;
           startKeywordStatusPolling();
           await refreshKeywordSourcingStatus();
-          ensureKeywordStatusStream();
         } catch (error) {
           alert(`키워드 소싱 실패: ${error.message}`);
           keywordSourcingForm.submit();
@@ -1878,6 +1893,18 @@ ADMIN_HTML = """
         } catch (error) {
           alert(`저장된 결과 조회 실패: ${error.message}`);
         }
+      });
+    }
+
+    if (keywordPageTabs) {
+      keywordPageTabs.addEventListener("click", (event) => {
+        const target = event.target.closest("[data-keyword-page]");
+        if (!target) {
+          return;
+        }
+        keywordSummaryPageIndex = Number(target.dataset.keywordPage || 0);
+        renderKeywordPageTabs();
+        renderKeywordSummaryPageRows(keywordSummaryPages[keywordSummaryPageIndex] || []);
       });
     }
 
@@ -1951,7 +1978,7 @@ ADMIN_HTML = """
         refreshKeywordSourcingStatus().catch((error) => {
           console.error(error);
         });
-        ensureKeywordStatusStream();
+        startKeywordStatusPolling();
       }
     });
 
@@ -1960,7 +1987,7 @@ ADMIN_HTML = """
         refreshKeywordSourcingStatus().catch((error) => {
           console.error(error);
         });
-        ensureKeywordStatusStream();
+        startKeywordStatusPolling();
       }
     });
 
@@ -1980,7 +2007,7 @@ ADMIN_HTML = """
     if (keywordStatusText && keywordStatusText.textContent === "running") {
       startKeywordStatusPolling();
     }
-    ensureKeywordStatusStream();
+    startKeywordStatusPolling();
   </script>
 </body>
 </html>
@@ -2075,6 +2102,7 @@ def render_admin_html(
         ),
     )
     html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status))
+    html = html.replace("__KEYWORD_PAGE_TABS__", build_keyword_summary_page_tabs_html(keyword_status))
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
     html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)
@@ -2232,8 +2260,9 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
     if not classified_keywords:
         classified_keywords = keyword_status.get("preview_rows") or []
 
+    first_page_rows = classified_keywords[:100]
     rows: List[str] = []
-    for index, keyword_row in enumerate(classified_keywords, start=1):
+    for index, keyword_row in enumerate(first_page_rows, start=1):
         keyword_text = (
             keyword_row.get("keyword")
             or keyword_row.get("query")
@@ -2277,3 +2306,28 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
         return '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
 
     return "".join(rows)
+
+
+def build_keyword_summary_page_tabs_html(keyword_status: Dict[str, Any]) -> str:
+    classified_keywords = keyword_status.get("classified_keywords") or []
+    if not classified_keywords:
+        classified_keywords = keyword_status.get("preview_rows") or []
+
+    total_rows = len(classified_keywords)
+    if total_rows == 0:
+        return ""
+
+    tabs: List[str] = []
+    page_count = (total_rows + 99) // 100
+    for index in range(page_count):
+        start = index * 100
+        end = min(start + 100, total_rows)
+        page_size = end - start
+        classes = "action-btn primary" if index == 0 else "action-btn"
+        tabs.append(
+            (
+                f'<button class="{classes}" type="button" '
+                f'data-keyword-page="{index}">{index + 1}탭 ({page_size})</button>'
+            )
+        )
+    return "".join(tabs)

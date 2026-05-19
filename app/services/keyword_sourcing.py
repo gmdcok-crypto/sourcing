@@ -394,6 +394,7 @@ class KeywordSourcingService:
                     raise
                 except Exception as error:  # noqa: BLE001
                     self._append_log(state, f"검색 트렌드 수집 실패: {error}")
+                    self._append_log(state, "시즌 컬럼은 수집된 트렌드 데이터 범위 내에서만 반영합니다.")
 
             classified_keywords = self._classify_keywords(
                 top_keywords=top_keywords,
