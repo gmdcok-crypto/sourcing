@@ -1491,6 +1491,9 @@ ADMIN_HTML = """
       params.set("_ts", String(Date.now()));
       const query = `?${params.toString()}`;
       const state = await apiFetch(`/api/admin/keyword-sourcing/status${query}`);
+      if (keywordHistoryMode) {
+        return;
+      }
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
       }
@@ -1573,6 +1576,10 @@ ADMIN_HTML = """
       keywordStatusStream = new EventSource(`/api/admin/keyword-sourcing/stream?${params.toString()}`);
 
       keywordStatusStream.onmessage = (event) => {
+        if (keywordHistoryMode) {
+          closeKeywordStatusStream();
+          return;
+        }
         const state = JSON.parse(event.data);
         if (state.run_id) {
           keywordSourcingRunId = state.run_id;
@@ -1592,6 +1599,10 @@ ADMIN_HTML = """
       };
 
       keywordStatusStream.onerror = () => {
+        if (keywordHistoryMode) {
+          closeKeywordStatusStream();
+          return;
+        }
         closeKeywordStatusStream();
         startKeywordStatusPolling();
         keywordStreamRetryTimer = setTimeout(() => {
