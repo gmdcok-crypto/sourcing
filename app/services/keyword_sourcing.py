@@ -458,7 +458,14 @@ class KeywordSourcingService:
             state["noise_keywords"] = noise_keywords
             state["top_keywords"] = top_keywords[:150]
             state["classified_keywords"] = classified_keywords
-            self._append_log(state, f"실행 완료: 총 {len(top_keywords)}개 키워드 수집")
+            elapsed_text = self._format_elapsed_time(
+                started_at=state.get("started_at"),
+                finished_at=state.get("finished_at"),
+            )
+            completion_message = f"실행 완료: 총 {len(top_keywords)}개 키워드 수집"
+            if elapsed_text:
+                completion_message = f"{completion_message} / 소요 시간 {elapsed_text}"
+            self._append_log(state, completion_message)
             self._persist_state(state)
         except asyncio.CancelledError:
             state["status"] = "failed"
@@ -840,6 +847,26 @@ class KeywordSourcingService:
     def _append_log(state: Dict[str, Any], message: str) -> None:
         state["logs"] = (state.get("logs", []) + [message])[-20:]
         KeywordSourcingService._persist_state(state)
+
+    @staticmethod
+    def _format_elapsed_time(*, started_at: Any, finished_at: Any) -> Optional[str]:
+        if not started_at or not finished_at:
+            return None
+        try:
+            start_dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+            finish_dt = datetime.fromisoformat(str(finished_at).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        elapsed_seconds = max(0, int((finish_dt - start_dt).total_seconds()))
+        hours, remainder = divmod(elapsed_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        parts: List[str] = []
+        if hours:
+            parts.append(f"{hours}시간")
+        if minutes or hours:
+            parts.append(f"{minutes}분")
+        parts.append(f"{seconds}초")
+        return " ".join(parts)
 
     @classmethod
     def _empty_state(cls) -> Dict[str, Any]:
