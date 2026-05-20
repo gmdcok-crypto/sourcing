@@ -921,10 +921,12 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div><h2>키워드 파이프라인 결과</h2></div>
               </div>
-              <div class="keyword-pagination">
+              <form class="keyword-pagination" action="/admin" method="get">
+                <input type="hidden" name="tab" value="pipeline" />
+                <input type="hidden" name="history_date" value="__DEFAULT_HISTORY_DATE__" />
                 <div class="keyword-pagination-controls">
                   <label for="keyword-page-size">페이지당 표시</label>
-                  <select class="select" id="keyword-page-size">
+                  <select class="select" id="keyword-page-size" name="page_size">
                     <option value="15">15</option>
                     <option value="30">30</option>
                     <option value="50">50</option>
@@ -933,7 +935,7 @@ ADMIN_HTML = """
                 </div>
                 <div class="keyword-pagination-pages" id="keyword-pagination-pages">__KEYWORD_PAGE_BUTTONS__</div>
                 <div class="keyword-pagination-meta" id="keyword-pagination-meta">__KEYWORD_PAGE_META__</div>
-              </div>
+              </form>
               <table class="keyword-metrics-table">
                 <thead>
                   <tr>
@@ -1215,7 +1217,7 @@ ADMIN_HTML = """
     const keywordSummaryBody = document.getElementById("keyword-summary-body");
     let keywordSummaryRows = Array.isArray(initialKeywordRows) ? initialKeywordRows : [];
     let keywordSummaryPageIndex = 0;
-    let keywordSummaryPageSize = 15;
+    let keywordSummaryPageSize = Number(__INITIAL_KEYWORD_PAGE_SIZE__) || 15;
     let keywordSourcingRunId = null;
     let keywordStatusPoller = null;
     let keywordStatusStream = null;
@@ -1553,79 +1555,6 @@ ADMIN_HTML = """
       return rows;
     }
 
-    function getKeywordSummaryTotalPages() {
-      if (keywordSummaryRows.length === 0) {
-        return 0;
-      }
-      return Math.ceil(keywordSummaryRows.length / keywordSummaryPageSize);
-    }
-
-    function getKeywordSummaryCurrentPageRows() {
-      const startIndex = keywordSummaryPageIndex * keywordSummaryPageSize;
-      return keywordSummaryRows.slice(startIndex, startIndex + keywordSummaryPageSize);
-    }
-
-    function setKeywordSummaryPage(pageIndex) {
-      keywordSummaryPageIndex = Math.max(0, Number(pageIndex) || 0);
-      renderKeywordPagination();
-      renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
-    }
-
-    function moveKeywordSummaryPage(direction) {
-      const totalPages = getKeywordSummaryTotalPages();
-      if (direction === "prev" && keywordSummaryPageIndex > 0) {
-        keywordSummaryPageIndex -= 1;
-      }
-      if (direction === "next" && keywordSummaryPageIndex < totalPages - 1) {
-        keywordSummaryPageIndex += 1;
-      }
-      renderKeywordPagination();
-      renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
-    }
-
-    window.setKeywordSummaryPage = setKeywordSummaryPage;
-    window.moveKeywordSummaryPage = moveKeywordSummaryPage;
-
-    function renderKeywordPagination() {
-      if (!keywordPaginationPages || !keywordPaginationMeta) {
-        return;
-      }
-      const totalRows = keywordSummaryRows.length;
-      const totalPages = getKeywordSummaryTotalPages();
-      if (totalRows === 0 || totalPages === 0) {
-        keywordPaginationPages.innerHTML = "";
-        keywordPaginationMeta.textContent = "총 0건";
-        return;
-      }
-      if (keywordSummaryPageIndex >= totalPages) {
-        keywordSummaryPageIndex = 0;
-      }
-      const startRow = keywordSummaryPageIndex * keywordSummaryPageSize + 1;
-      const endRow = Math.min(startRow + keywordSummaryPageSize - 1, totalRows);
-      const pageButtons = [];
-      const startPage = Math.max(0, keywordSummaryPageIndex - 2);
-      const endPage = Math.min(totalPages, startPage + 5);
-      pageButtons.push(
-        `<button class="action-btn" type="button" onclick="moveKeywordSummaryPage('prev')" ${keywordSummaryPageIndex === 0 ? "disabled" : ""}>이전</button>`
-      );
-      for (let index = startPage; index < endPage; index += 1) {
-        pageButtons.push(`
-          <button
-            class="action-btn ${index === keywordSummaryPageIndex ? "primary" : ""}"
-            type="button"
-            onclick="setKeywordSummaryPage(${index})"
-          >
-            ${index + 1}
-          </button>
-        `);
-      }
-      pageButtons.push(
-        `<button class="action-btn" type="button" onclick="moveKeywordSummaryPage('next')" ${keywordSummaryPageIndex >= totalPages - 1 ? "disabled" : ""}>다음</button>`
-      );
-      keywordPaginationPages.innerHTML = pageButtons.join("");
-      keywordPaginationMeta.textContent = `총 ${totalRows.toLocaleString("ko-KR")}건 중 ${startRow}-${endRow} 표시`;
-    }
-
     function renderKeywordSummaryPageRows(pageRows) {
       if (!pageRows || pageRows.length === 0) {
         keywordSummaryBody.innerHTML = '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
@@ -1651,19 +1580,7 @@ ADMIN_HTML = """
 
     function renderKeywordSummaryRows(classifiedKeywords) {
       keywordSummaryRows = buildKeywordSummaryRows(classifiedKeywords);
-      if (keywordSummaryRows.length === 0) {
-        keywordSummaryPageIndex = 0;
-        renderKeywordPagination();
-        renderKeywordSummaryPageRows([]);
-        return;
-      }
-
-      if (keywordSummaryPageIndex >= getKeywordSummaryTotalPages()) {
-        keywordSummaryPageIndex = 0;
-      }
-
-      renderKeywordPagination();
-      renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
+      renderKeywordSummaryPageRows(keywordSummaryRows);
     }
 
     async function loadKeywordSourcingDetail(runId) {
@@ -2107,8 +2024,9 @@ ADMIN_HTML = """
     if (keywordPageSize) {
       keywordPageSize.value = String(keywordSummaryPageSize);
       keywordPageSize.addEventListener("change", () => {
-        keywordSummaryPageSize = Number(keywordPageSize.value || 15);
-        setKeywordSummaryPage(0);
+        if (keywordPageSize.form) {
+          keywordPageSize.form.submit();
+        }
       });
     }
 
@@ -2224,6 +2142,8 @@ ADMIN_HTML = """
 async def admin_console(
     tab: str = "dashboard",
     history_date: Optional[date] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=15, ge=1, le=100),
 ) -> HTMLResponse:
     history_status: Optional[Dict[str, Any]] = None
     if tab == "pipeline" and history_date is not None:
@@ -2231,7 +2151,15 @@ async def admin_console(
             get_settings(),
             target_date=history_date,
         )
-    return HTMLResponse(content=render_admin_html(tab, history_status=history_status, history_date=history_date))
+    return HTMLResponse(
+        content=render_admin_html(
+            tab,
+            history_status=history_status,
+            history_date=history_date,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 
 VALID_ADMIN_TABS = {
@@ -2250,6 +2178,8 @@ def render_admin_html(
     *,
     history_status: Optional[Dict[str, Any]] = None,
     history_date: Optional[date] = None,
+    page: int = 1,
+    page_size: int = 15,
 ) -> str:
     selected_tab = active_tab if active_tab in VALID_ADMIN_TABS else "dashboard"
     html = ADMIN_HTML
@@ -2279,10 +2209,17 @@ def render_admin_html(
         "__INITIAL_CATEGORIES_JSON__",
         json.dumps(taxonomy_data["categories"], ensure_ascii=False),
     )
+    paginated_keyword_data = build_keyword_summary_page_data(
+        keyword_status,
+        page=page,
+        page_size=page_size,
+        history_date=history_date,
+    )
     html = html.replace(
         "__INITIAL_KEYWORD_ROWS_JSON__",
-        json.dumps(build_keyword_summary_rows_data(keyword_status), ensure_ascii=False),
+        json.dumps(paginated_keyword_data["rows"], ensure_ascii=False),
     )
+    html = html.replace("__INITIAL_KEYWORD_PAGE_SIZE__", str(page_size))
     html = html.replace("__KEYWORD_PROGRESS_LABEL__", escape(str(keyword_status["message"])))
     html = html.replace("__KEYWORD_PROGRESS_PERCENT__", str(keyword_status["progress_percent"]))
     html = html.replace("__KEYWORD_STATUS_TEXT__", escape(str(keyword_status["status"])))
@@ -2311,9 +2248,9 @@ def render_admin_html(
             f'{keyword_status["group_counts"].get("대형", 0)}'
         ),
     )
-    html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status))
-    html = html.replace("__KEYWORD_PAGE_BUTTONS__", build_keyword_summary_page_buttons_html(keyword_status))
-    html = html.replace("__KEYWORD_PAGE_META__", build_keyword_summary_page_meta_text(keyword_status))
+    html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status, page=page, page_size=page_size))
+    html = html.replace("__KEYWORD_PAGE_BUTTONS__", build_keyword_summary_page_buttons_html(paginated_keyword_data))
+    html = html.replace("__KEYWORD_PAGE_META__", paginated_keyword_data["meta_text"])
     html = html.replace("__KEYWORD_THEME_OPTIONS__", build_theme_options_html(taxonomy_data["themes"]))
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
@@ -2467,10 +2404,20 @@ def build_category_rows_html(categories: List[Dict[str, Any]]) -> str:
     )
 
 
-def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
-    first_page_rows = build_keyword_summary_rows_data(keyword_status)[:15]
+def build_keyword_summary_rows_html(
+    keyword_status: Dict[str, Any],
+    *,
+    page: int = 1,
+    page_size: int = 15,
+) -> str:
+    page_rows = build_keyword_summary_page_data(
+        keyword_status,
+        page=page,
+        page_size=page_size,
+        history_date=None,
+    )["rows"]
     rows: List[str] = []
-    for row in first_page_rows:
+    for row in page_rows:
         rows.append(
             (
                 "<tr>"
@@ -2494,33 +2441,59 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
     return "".join(rows)
 
 
-def build_keyword_summary_page_buttons_html(keyword_status: Dict[str, Any]) -> str:
-    total_rows = len(build_keyword_summary_rows_data(keyword_status))
-    if total_rows == 0:
+def build_keyword_summary_page_buttons_html(page_data: Dict[str, Any]) -> str:
+    total_pages = int(page_data.get("total_pages") or 0)
+    current_page = int(page_data.get("page") or 1)
+    if total_pages == 0:
         return ""
 
     tabs: List[str] = []
-    page_count = (total_rows + 14) // 15
-    tabs.append('<button class="action-btn" type="button" onclick="moveKeywordSummaryPage(\'prev\')" disabled>이전</button>')
-    for index in range(min(page_count, 5)):
-        classes = "action-btn primary" if index == 0 else "action-btn"
-        tabs.append(
-            f'<button class="{classes}" type="button" onclick="setKeywordSummaryPage({index})">{index + 1}</button>'
-        )
+    prev_page = max(1, current_page - 1)
+    next_page = min(total_pages, current_page + 1)
     tabs.append(
-        '<button class="action-btn" type="button" onclick="moveKeywordSummaryPage(\'next\')" '
-        + ('disabled' if page_count <= 1 else '')
-        + '>다음</button>'
+        f'<button class="action-btn" type="submit" name="page" value="{prev_page}" {"disabled" if current_page == 1 else ""}>이전</button>'
+    )
+    start_page = max(1, current_page - 2)
+    end_page = min(total_pages, start_page + 4)
+    for page_number in range(start_page, end_page + 1):
+        classes = "action-btn primary" if page_number == current_page else "action-btn"
+        tabs.append(f'<button class="{classes}" type="submit" name="page" value="{page_number}">{page_number}</button>')
+    tabs.append(
+        f'<button class="action-btn" type="submit" name="page" value="{next_page}" {"disabled" if current_page >= total_pages else ""}>다음</button>'
     )
     return "".join(tabs)
 
 
-def build_keyword_summary_page_meta_text(keyword_status: Dict[str, Any]) -> str:
-    total_rows = len(build_keyword_summary_rows_data(keyword_status))
+def build_keyword_summary_page_data(
+    keyword_status: Dict[str, Any],
+    *,
+    page: int,
+    page_size: int,
+    history_date: Optional[date],
+) -> Dict[str, Any]:
+    all_rows = build_keyword_summary_rows_data(keyword_status)
+    total_rows = len(all_rows)
     if total_rows == 0:
-        return "총 0건"
-    end_row = min(15, total_rows)
-    return f"총 {total_rows:,}건 중 1-{end_row} 표시"
+        return {
+            "rows": [],
+            "page": 1,
+            "page_size": page_size,
+            "total_rows": 0,
+            "total_pages": 0,
+            "meta_text": "총 0건",
+        }
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    current_page = min(max(1, page), total_pages)
+    start_index = (current_page - 1) * page_size
+    end_index = min(start_index + page_size, total_rows)
+    return {
+        "rows": all_rows[start_index:end_index],
+        "page": current_page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "meta_text": f"총 {total_rows:,}건 중 {start_index + 1}-{end_index} 표시",
+    }
 
 
 def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict[str, Any]]:
