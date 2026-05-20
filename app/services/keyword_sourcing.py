@@ -762,8 +762,6 @@ class KeywordSourcingService:
             numeric = float(text)
         except ValueError:
             return None
-        if 0 < numeric < 1:
-            return numeric * 100.0
         return numeric
 
     @staticmethod
