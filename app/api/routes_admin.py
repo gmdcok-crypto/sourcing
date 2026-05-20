@@ -2288,7 +2288,7 @@ def render_admin_html(
     html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status))
     html = html.replace("__KEYWORD_PAGE_BUTTONS__", build_keyword_summary_page_buttons_html(keyword_status))
     html = html.replace("__KEYWORD_PAGE_META__", build_keyword_summary_page_meta_text(keyword_status))
-    html = html.replace("__KEYWORD_THEME_OPTIONS__", build_theme_options_html(themes))
+    html = html.replace("__KEYWORD_THEME_OPTIONS__", build_theme_options_html(taxonomy_data["themes"]))
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
     html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)
