@@ -21,6 +21,7 @@ ADMIN_HTML = """
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>소싱 관리자 콘솔</title>
+  __AUTO_REFRESH_META__
   <style>
     :root {
       --bg: #0b1020;
@@ -1217,6 +1218,7 @@ ADMIN_HTML = """
     let keywordStatusPollingEnabled = false;
     let keywordStatusLastSuccessAt = Date.now();
     let keywordStatusWatchdogTimer = null;
+    let keywordHardRefreshTimer = null;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1650,6 +1652,7 @@ ADMIN_HTML = """
       }
       keywordStatusPollingEnabled = true;
       startKeywordStatusWatchdog();
+      ensureKeywordStatusStream();
       scheduleKeywordStatusPolling(0);
     }
 
@@ -1710,6 +1713,10 @@ ADMIN_HTML = """
         if (keywordStatusText) {
           keywordStatusText.textContent = "연결 재시도 중";
         }
+        if (stalledForMs >= 15000) {
+          window.location.reload();
+          return;
+        }
         scheduleKeywordStatusPolling(0);
       }, 3000);
     }
@@ -1719,6 +1726,21 @@ ADMIN_HTML = """
         clearInterval(keywordStatusWatchdogTimer);
         keywordStatusWatchdogTimer = null;
       }
+    }
+
+    function startKeywordHardRefreshFallback() {
+      if (keywordHardRefreshTimer) {
+        clearInterval(keywordHardRefreshTimer);
+      }
+      keywordHardRefreshTimer = setInterval(() => {
+        if (keywordHistoryMode) {
+          return;
+        }
+        const status = keywordStatusText ? String(keywordStatusText.textContent || "").trim() : "";
+        if (status === "running" || status === "연결 재시도 중") {
+          window.location.reload();
+        }
+      }, 12000);
     }
 
     function startKeywordLastUpdatedTicker() {
@@ -1765,7 +1787,74 @@ ADMIN_HTML = """
     }
 
     function ensureKeywordStatusStream() {
-      return;
+      if (keywordHistoryMode) {
+        closeKeywordStatusStream();
+        return;
+      }
+      if (typeof EventSource === "undefined") {
+        return;
+      }
+      if (keywordStatusStream) {
+        return;
+      }
+
+      const params = new URLSearchParams();
+      if (keywordSourcingRunId) {
+        params.set("run_id", keywordSourcingRunId);
+      }
+      params.set("_ts", String(Date.now()));
+      keywordStatusStream = new EventSource(`/api/admin/keyword-sourcing/stream?${params.toString()}`);
+
+      keywordStatusStream.onmessage = async (event) => {
+        if (keywordHistoryMode) {
+          return;
+        }
+        try {
+          const state = JSON.parse(event.data || "{}");
+          if (state.run_id) {
+            keywordSourcingRunId = state.run_id;
+          }
+          markKeywordStatusHealthy();
+          renderKeywordSourcingStatus(state);
+          if (state.status === "running") {
+            keywordDetailLoadedRunId = null;
+          } else if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
+            await loadKeywordSourcingDetail(state.run_id);
+          }
+
+          if (state.status === "running") {
+            runKeywordSourcingBtn.disabled = true;
+            runKeywordSourcingBtn.textContent = "수집 중...";
+            if (stopKeywordSourcingBtn) {
+              stopKeywordSourcingBtn.disabled = false;
+            }
+          } else {
+            runKeywordSourcingBtn.disabled = false;
+            runKeywordSourcingBtn.textContent = "키워드 소싱";
+            if (stopKeywordSourcingBtn) {
+              stopKeywordSourcingBtn.disabled = true;
+            }
+            closeKeywordStatusStream();
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      };
+
+      keywordStatusStream.onerror = () => {
+        closeKeywordStatusStream();
+        if (keywordHistoryMode) {
+          return;
+        }
+        if (keywordStreamRetryTimer) {
+          clearTimeout(keywordStreamRetryTimer);
+        }
+        keywordStreamRetryTimer = setTimeout(() => {
+          keywordStreamRetryTimer = null;
+          ensureKeywordStatusStream();
+          scheduleKeywordStatusPolling(0);
+        }, 1500);
+      };
     }
 
     function editTheme(themeId) {
@@ -1981,6 +2070,7 @@ ADMIN_HTML = """
             body: JSON.stringify(payload)
           });
           keywordSourcingRunId = result.run_id || keywordSourcingRunId;
+          ensureKeywordStatusStream();
           startKeywordStatusPolling();
           await refreshKeywordSourcingStatus();
         } catch (error) {
@@ -2128,6 +2218,8 @@ ADMIN_HTML = """
       console.error(error);
     });
     startKeywordLastUpdatedTicker();
+    startKeywordHardRefreshFallback();
+    ensureKeywordStatusStream();
     if (keywordStatusText && keywordStatusText.textContent === "running") {
       startKeywordStatusPolling();
     }
