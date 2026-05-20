@@ -36,7 +36,7 @@ class KeywordSourcingService:
     _active_run_id: Optional[str] = None
     _active_task: Optional[asyncio.Task] = None
     CATEGORY_DELAY_SECONDS = 0.5
-    VALID_KEYWORD_LIMIT = 50
+    VALID_KEYWORD_LIMIT = 100
 
     def __init__(self, settings) -> None:
         self.settings = settings
