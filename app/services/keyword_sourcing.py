@@ -394,16 +394,10 @@ class KeywordSourcingService:
                     self._append_log(state, f"쇼핑 상품수 수집 실패: {error}")
 
                 try:
-                    state["message"] = "월별 검색 트렌드를 수집 중입니다."
+                    state["message"] = "검색 트렌드 수집은 현재 비활성화되어 있습니다."
                     self._append_log(
                         state,
-                        f"검색 트렌드 수집 시작 ({len(valid_keywords)}개 키워드)",
-                    )
-                    self._persist_state(state)
-                    monthly_trend_map = await self.search_trend_service.fetch_monthly_trends(valid_keywords)
-                    self._append_log(
-                        state,
-                        f"검색 트렌드 수집 완료 ({len(monthly_trend_map)}개 키워드)",
+                        f"검색 트렌드 수집 스킵 ({len(valid_keywords)}개 키워드)",
                     )
                     self._persist_state(state)
                 except asyncio.CancelledError:
