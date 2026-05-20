@@ -82,17 +82,6 @@ ADMIN_HTML = """
 
     .brand-title { font-size: 18px; font-weight: 700; margin: 0; }
     .brand-subtitle { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
-    .build-marker {
-      margin: 0 0 16px;
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(124, 156, 255, 0.28);
-      background: rgba(124, 156, 255, 0.12);
-      color: #dce4ff;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
     .nav-label {
       margin: 0 0 10px 12px;
       color: var(--muted);
@@ -675,7 +664,6 @@ ADMIN_HTML = """
     </aside>
 
     <main class="content">
-      <div class="build-marker">BUILD MARKER 2026-05-20 15:20 KST</div>
       <section id="dashboard" class="tab-panel __TAB_DASHBOARD_ACTIVE__">
         <div class="metrics">
           <article class="card metric-card"><div class="metric-label">키워드 풀</div><p class="metric-value">18,420</p><div class="metric-meta">지난 회차 대비 +12.8% / 활성 테마 23개</div></article>
@@ -1535,6 +1523,18 @@ ADMIN_HTML = """
         }
         return String(value);
       };
+      const formatPercentValue = (value) => {
+        if (value == null || value === "") {
+          return "-";
+        }
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return `${String(value)}%`;
+        }
+        const rounded = Math.round(numeric * 100) / 100;
+        const hasFraction = Math.abs(rounded % 1) > 0;
+        return `${rounded.toFixed(hasFraction ? 2 : 1).replace(/\.?0+$/, hasFraction ? "" : ".0")}%`;
+      };
 
       const rows = [];
       classifiedKeywords.forEach((row, index) => {
@@ -1544,7 +1544,7 @@ ADMIN_HTML = """
           keyword,
           group: row.group_name || (row.query || row.seed_keyword ? "이전 저장본" : "-"),
           totalSearches: formatMetricValue(row.monthly_mobile_searches ?? row.total_searches),
-          clickRate: row.monthly_mobile_ctr == null ? "-" : `${row.monthly_mobile_ctr}%`,
+          clickRate: formatPercentValue(row.monthly_mobile_ctr),
           competitionLevel: row.competition_level || "-",
           adEfficiency: row.ad_efficiency || row.group_name || "-",
           productCount: formatMetricValue(row.product_count),
@@ -2515,7 +2515,7 @@ def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict
         monthly_mobile_ctr = keyword_row.get("monthly_mobile_ctr")
         competition_level = str(keyword_row.get("competition_level") or "-")
         ad_efficiency = str(keyword_row.get("ad_efficiency") or keyword_row.get("group_name") or "-")
-        click_rate_text = "-" if monthly_mobile_ctr is None else f"{monthly_mobile_ctr}%"
+        click_rate_text = format_percent_value(monthly_mobile_ctr)
         theme_detail = (
             keyword_row.get("shopping_category_path")
             or keyword_row.get("full_path")
@@ -2542,3 +2542,17 @@ def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict
             }
         )
     return rows
+
+
+def format_percent_value(value: Any) -> str:
+    if value in (None, ""):
+        return "-"
+    try:
+        numeric = float(str(value).replace("%", "").strip())
+    except (TypeError, ValueError):
+        return f"{value}%"
+    rounded = round(numeric, 2)
+    if rounded.is_integer():
+        return f"{rounded:.1f}%"
+    formatted = f"{rounded:.2f}".rstrip("0").rstrip(".")
+    return f"{formatted}%"
