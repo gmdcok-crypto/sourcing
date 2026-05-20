@@ -4,9 +4,9 @@ import json
 from datetime import date
 from typing import Any, Dict, Optional
 
-import pandas as pd
 from fastapi import APIRouter, Body, Depends, Form
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
+from openpyxl import Workbook
 from starlette.responses import StreamingResponse
 
 from app.core.config import Settings, get_settings
@@ -72,44 +72,45 @@ async def export_keyword_sourcing_excel(
     from app.api.routes_admin import build_keyword_summary_rows_data
 
     rows = build_keyword_summary_rows_data(state)
-    dataframe = pd.DataFrame(
-        rows,
-        columns=[
-            "themeDetail",
-            "keyword",
-            "group",
-            "totalSearches",
-            "clickRate",
-            "competitionLevel",
-            "exposureAds",
-            "adEfficiency",
-            "season",
-            "productCount",
-        ],
-    )
-    dataframe = dataframe.rename(
-        columns={
-            "themeDetail": "테마 세부위치",
-            "keyword": "키워드명",
-            "group": "소속그룹",
-            "totalSearches": "검색량",
-            "clickRate": "클릭률",
-            "competitionLevel": "경쟁강도",
-            "exposureAds": "노출광고수",
-            "adEfficiency": "광고효율",
-            "season": "시즌",
-            "productCount": "등록상품수",
-        }
-    )
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "keyword-results"
+    headers = [
+        "테마 세부위치",
+        "키워드명",
+        "소속그룹",
+        "검색량",
+        "클릭률",
+        "경쟁강도",
+        "노출광고수",
+        "광고효율",
+        "시즌",
+        "등록상품수",
+    ]
+    worksheet.append(headers)
+    for row in rows:
+        worksheet.append(
+            [
+                row.get("themeDetail", ""),
+                row.get("keyword", ""),
+                row.get("group", ""),
+                row.get("totalSearches", ""),
+                row.get("clickRate", ""),
+                row.get("competitionLevel", ""),
+                row.get("exposureAds", ""),
+                row.get("adEfficiency", ""),
+                row.get("season", ""),
+                row.get("productCount", ""),
+            ]
+        )
 
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        dataframe.to_excel(writer, sheet_name="keyword-results", index=False)
+    workbook.save(output)
     output.seek(0)
 
     filename = f"keyword-results-{date_value.isoformat() if date_value else (state.get('run_id') or 'latest')}.xlsx"
-    return StreamingResponse(
-        output,
+    return Response(
+        content=output.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
