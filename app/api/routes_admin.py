@@ -1109,7 +1109,23 @@ ADMIN_HTML = """
       </section>
     </main>
   </div>
+  <script id="initial-themes-json" type="application/json">__INITIAL_THEMES_JSON__</script>
+  <script id="initial-categories-json" type="application/json">__INITIAL_CATEGORIES_JSON__</script>
+  <script id="initial-keyword-rows-json" type="application/json">__INITIAL_KEYWORD_ROWS_JSON__</script>
   <script>
+    function readInitialJson(scriptId) {
+      const node = document.getElementById(scriptId);
+      if (!node) {
+        return [];
+      }
+      try {
+        return JSON.parse(node.textContent || "[]");
+      } catch (error) {
+        console.error(error);
+        return [];
+      }
+    }
+
     const navButtons = document.querySelectorAll(".nav-button");
     const panels = document.querySelectorAll(".tab-panel");
 
@@ -1132,9 +1148,9 @@ ADMIN_HTML = """
 
     let editingThemeId = null;
     let editingCidId = null;
-    let themes = __INITIAL_THEMES_JSON__;
-    let cidItems = __INITIAL_CATEGORIES_JSON__;
-    let initialKeywordRows = __INITIAL_KEYWORD_ROWS_JSON__;
+    let themes = readInitialJson("initial-themes-json");
+    let cidItems = readInitialJson("initial-categories-json");
+    let initialKeywordRows = readInitialJson("initial-keyword-rows-json");
 
     const themeCodeInput = document.getElementById("theme-code");
     const themeNameInput = document.getElementById("theme-name");
