@@ -36,7 +36,7 @@ class KeywordSourcingService:
     _active_run_id: Optional[str] = None
     _active_task: Optional[asyncio.Task] = None
     CATEGORY_DELAY_SECONDS = 0.5
-    VALID_KEYWORD_LIMIT = 100
+    VALID_KEYWORD_LIMIT = 50
 
     def __init__(self, settings) -> None:
         self.settings = settings
@@ -297,11 +297,10 @@ class KeywordSourcingService:
                     )
 
                     raw_keyword_list = [row["keyword"] for row in top_keywords]
-                    valid_keywords, noise_keywords = filter_noise(raw_keyword_list)
-                    state["top100_count"] = min(
-                        self.VALID_KEYWORD_LIMIT,
-                        int(state.get("top100_count") or 0) + len(valid_keywords),
-                    )
+                    valid_keywords_all, noise_keywords = filter_noise(raw_keyword_list)
+                    valid_keywords = valid_keywords_all[: self.VALID_KEYWORD_LIMIT]
+                    valid_keyword_set = set(valid_keywords)
+                    state["top100_count"] = int(state.get("top100_count") or 0) + len(valid_keywords)
 
                     for row in top_keywords:
                         keyword = row["keyword"]
@@ -320,7 +319,7 @@ class KeywordSourcingService:
                             "category_name": category["category_name"],
                             "full_path": category["full_path"],
                             "is_noise": keyword in noise_keywords,
-                            "is_valid": keyword in valid_keywords,
+                            "is_valid": keyword in valid_keyword_set,
                             "source": "naver_shopping_insight",
                         }
                         if not existing or (row_payload["rank"] or 999999) < (existing.get("rank") or 999999):
@@ -346,14 +345,9 @@ class KeywordSourcingService:
                     await asyncio.sleep(self.CATEGORY_DELAY_SECONDS)
 
             top_keywords = self._build_top_keyword_rows(keyword_pool)
-            valid_keywords_all = [row["keyword"] for row in top_keywords if row.get("is_valid")]
-            valid_keywords = valid_keywords_all[: self.VALID_KEYWORD_LIMIT]
-            valid_keyword_set = set(valid_keywords)
-            for row in top_keywords:
-                row["is_valid"] = row.get("keyword") in valid_keyword_set
-
             rows = [dict(row) for row in top_keywords]
             dataframe = pd.DataFrame(rows)
+            valid_keywords = [row["keyword"] for row in top_keywords if row.get("is_valid")]
             noise_keywords = [row["keyword"] for row in top_keywords if row.get("is_noise")]
             metrics_map: Dict[str, Dict[str, Any]] = {}
             product_info_map: Dict[str, Dict[str, Any]] = {}
@@ -361,11 +355,6 @@ class KeywordSourcingService:
 
             state["top100_count"] = len(valid_keywords)
             self._persist_state(state)
-            if len(valid_keywords_all) > len(valid_keywords):
-                self._append_log(
-                    state,
-                    f"유효키워드 상위 {self.VALID_KEYWORD_LIMIT}개만 인리치 대상으로 제한했습니다.",
-                )
 
             if valid_keywords:
                 try:
