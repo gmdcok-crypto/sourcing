@@ -2490,16 +2490,28 @@ def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict
                     keyword_row.get("group_name")
                     or ("이전 저장본" if keyword_row.get("query") or keyword_row.get("seed_keyword") else "-")
                 ),
-                "totalSearches": f"{int(total_searches):,}" if total_searches is not None else "-",
+                "totalSearches": format_metric_value(total_searches),
                 "clickRate": click_rate_text,
                 "competitionLevel": competition_level,
-                "exposureAds": f"{int(exposure_ads):,}" if exposure_ads is not None else "-",
+                "exposureAds": format_metric_value(exposure_ads),
                 "adEfficiency": ad_efficiency,
                 "season": str(season_months),
-                "productCount": f"{int(product_count):,}" if product_count is not None else "-",
+                "productCount": format_metric_value(product_count),
             }
         )
     return rows
+
+
+def format_metric_value(value: Any) -> str:
+    if value in (None, ""):
+        return "-"
+    try:
+        normalized = str(value).replace(",", "").strip()
+        if not normalized:
+            return "-"
+        return f"{int(float(normalized)):,}"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def format_percent_value(value: Any) -> str:
