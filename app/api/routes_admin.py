@@ -724,6 +724,7 @@ ADMIN_HTML = """
                 </div>
                 <button class="action-btn" id="keyword-history-load-btn" type="submit">조회</button>
               </form>
+              <button class="action-btn" id="keyword-export-btn" type="button">엑셀 저장</button>
               <script>
                 (() => {
                   const displayInput = document.getElementById("keyword-history-date");
@@ -1183,6 +1184,7 @@ ADMIN_HTML = """
     const keywordHistoryPrevMonthBtn = document.getElementById("keyword-history-prev-month");
     const keywordHistoryNextMonthBtn = document.getElementById("keyword-history-next-month");
     const keywordHistoryLoadBtn = document.getElementById("keyword-history-load-btn");
+    const keywordExportBtn = document.getElementById("keyword-export-btn");
     const keywordProgressLabel = document.getElementById("keyword-progress-label");
     const keywordProgressFill = document.getElementById("keyword-progress-fill");
     const keywordProgressValue = document.getElementById("keyword-progress-value");
@@ -1709,6 +1711,17 @@ ADMIN_HTML = """
       renderKeywordSourcingStatus(state);
     }
 
+    function downloadKeywordExcel() {
+      const params = new URLSearchParams();
+      if (keywordHistoryMode && keywordHistoryDateInput && keywordHistoryDateInput.value) {
+        params.set("date_value", keywordHistoryDateInput.value);
+      } else if (keywordSourcingRunId) {
+        params.set("run_id", keywordSourcingRunId);
+      }
+      params.set("_ts", String(Date.now()));
+      window.location.href = `/api/admin/keyword-sourcing/export?${params.toString()}`;
+    }
+
     function editTheme(themeId) {
       const theme = getThemeById(themeId);
       if (!theme) return;
@@ -1959,6 +1972,12 @@ ADMIN_HTML = """
         } catch (error) {
           alert(`저장된 결과 조회 실패: ${error.message}`);
         }
+      });
+    }
+
+    if (keywordExportBtn) {
+      keywordExportBtn.addEventListener("click", () => {
+        downloadKeywordExcel();
       });
     }
 

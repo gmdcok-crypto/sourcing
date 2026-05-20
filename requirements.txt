@@ -6,3 +6,4 @@ boto3
 PyMySQL
 pandas
 python-multipart
+openpyxl

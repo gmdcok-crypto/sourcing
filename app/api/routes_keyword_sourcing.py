@@ -1,8 +1,10 @@
 import asyncio
+import io
 import json
 from datetime import date
 from typing import Any, Dict, Optional
 
+import pandas as pd
 from fastapi import APIRouter, Body, Depends, Form
 from fastapi.responses import RedirectResponse
 from starlette.responses import StreamingResponse
@@ -50,6 +52,68 @@ async def get_keyword_sourcing_history(
     return KeywordSourcingService.load_saved_result_for_date(
         settings,
         target_date=date_value,
+    )
+
+
+@router.get("/keyword-sourcing/export")
+async def export_keyword_sourcing_excel(
+    run_id: Optional[str] = None,
+    date_value: Optional[date] = None,
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    if date_value is not None:
+        state = KeywordSourcingService.load_saved_result_for_date(
+            settings,
+            target_date=date_value,
+        )
+    else:
+        state = KeywordSourcingService.get_status(run_id=run_id)
+
+    from app.api.routes_admin import build_keyword_summary_rows_data
+
+    rows = build_keyword_summary_rows_data(state)
+    dataframe = pd.DataFrame(
+        rows,
+        columns=[
+            "themeDetail",
+            "keyword",
+            "group",
+            "totalSearches",
+            "clickRate",
+            "competitionLevel",
+            "exposureAds",
+            "adEfficiency",
+            "season",
+            "productCount",
+        ],
+    )
+    dataframe = dataframe.rename(
+        columns={
+            "themeDetail": "테마 세부위치",
+            "keyword": "키워드명",
+            "group": "소속그룹",
+            "totalSearches": "검색량",
+            "clickRate": "클릭률",
+            "competitionLevel": "경쟁강도",
+            "exposureAds": "노출광고수",
+            "adEfficiency": "광고효율",
+            "season": "시즌",
+            "productCount": "등록상품수",
+        }
+    )
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        dataframe.to_excel(writer, sheet_name="keyword-results", index=False)
+    output.seek(0)
+
+    filename = f"keyword-results-{date_value.isoformat() if date_value else (state.get('run_id') or 'latest')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
     )
 
 
