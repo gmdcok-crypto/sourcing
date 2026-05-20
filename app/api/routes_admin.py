@@ -21,7 +21,6 @@ ADMIN_HTML = """
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>소싱 관리자 콘솔</title>
-  __AUTO_REFRESH_META__
   <style>
     :root {
       --bg: #0b1020;
@@ -1218,7 +1217,6 @@ ADMIN_HTML = """
     let keywordStatusPollingEnabled = false;
     let keywordStatusLastSuccessAt = Date.now();
     let keywordStatusWatchdogTimer = null;
-    let keywordHardRefreshTimer = null;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1713,10 +1711,6 @@ ADMIN_HTML = """
         if (keywordStatusText) {
           keywordStatusText.textContent = "연결 재시도 중";
         }
-        if (stalledForMs >= 15000) {
-          window.location.reload();
-          return;
-        }
         scheduleKeywordStatusPolling(0);
       }, 3000);
     }
@@ -1726,21 +1720,6 @@ ADMIN_HTML = """
         clearInterval(keywordStatusWatchdogTimer);
         keywordStatusWatchdogTimer = null;
       }
-    }
-
-    function startKeywordHardRefreshFallback() {
-      if (keywordHardRefreshTimer) {
-        clearInterval(keywordHardRefreshTimer);
-      }
-      keywordHardRefreshTimer = setInterval(() => {
-        if (keywordHistoryMode) {
-          return;
-        }
-        const status = keywordStatusText ? String(keywordStatusText.textContent || "").trim() : "";
-        if (status === "running" || status === "연결 재시도 중") {
-          window.location.reload();
-        }
-      }, 12000);
     }
 
     function startKeywordLastUpdatedTicker() {
@@ -2218,7 +2197,6 @@ ADMIN_HTML = """
       console.error(error);
     });
     startKeywordLastUpdatedTicker();
-    startKeywordHardRefreshFallback();
     ensureKeywordStatusStream();
     if (keywordStatusText && keywordStatusText.textContent === "running") {
       startKeywordStatusPolling();
@@ -2347,11 +2325,6 @@ def render_admin_html(
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
     html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)
-    html = html.replace(
-        "__AUTO_REFRESH_META__",
-        '<meta http-equiv="refresh" content="3">' if selected_tab == "pipeline" and keyword_status["status"] == "running" else "",
-    )
-
     return html
 
 
