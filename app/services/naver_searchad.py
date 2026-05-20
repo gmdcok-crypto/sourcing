@@ -144,6 +144,7 @@ class NaverSearchAdService:
                 "competition_index": self._to_float(item.get("compIdx")),
                 "competition_level": self._to_competition_level(item.get("compIdx")),
                 "pl_avg_depth": self._to_float(item.get("plAvgDepth")),
+                "monthly_exposure_ads": self._to_int(item.get("monthlyAveDepth")),
             }
         return metrics
 

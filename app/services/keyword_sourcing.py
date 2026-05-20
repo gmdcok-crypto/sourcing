@@ -583,6 +583,7 @@ class KeywordSourcingService:
             monthly_mobile_searches = self._parse_int(metrics.get("monthly_mobile_searches"))
             monthly_mobile_ctr = self._parse_ctr(metrics.get("monthly_mobile_ctr"))
             competition_level = metrics.get("competition_level")
+            monthly_exposure_ads = self._parse_int(metrics.get("monthly_exposure_ads"))
             product_count = self._parse_int(product_info.get("product_count")) or 0
             shopping_category_path = str(product_info.get("category_path") or "")
             monthly_trends = monthly_trend_map.get(keyword) or []
@@ -591,7 +592,7 @@ class KeywordSourcingService:
                 monthly_mobile_searches=monthly_mobile_searches,
                 monthly_mobile_ctr=monthly_mobile_ctr,
                 competition_level=competition_level,
-                product_count=product_count,
+                monthly_exposure_ads=monthly_exposure_ads,
             )
             if not group_name:
                 continue
@@ -603,6 +604,7 @@ class KeywordSourcingService:
                 "avg_ctr": monthly_mobile_ctr,
                 "monthly_mobile_searches": monthly_mobile_searches,
                 "monthly_mobile_ctr": monthly_mobile_ctr,
+                "monthly_exposure_ads": monthly_exposure_ads,
                 "product_count": product_count,
                 "shopping_category_path": shopping_category_path,
                 "season_months": season_months,
@@ -626,32 +628,34 @@ class KeywordSourcingService:
         monthly_mobile_searches: Any,
         monthly_mobile_ctr: Any,
         competition_level: Any,
-        product_count: Any,
+        monthly_exposure_ads: Any,
     ) -> Optional[str]:
         searches = KeywordSourcingService._parse_int(monthly_mobile_searches) or 0
         ctr = KeywordSourcingService._parse_ctr(monthly_mobile_ctr) or 0.0
-        products = KeywordSourcingService._parse_int(product_count) or 0
+        exposure_ads = KeywordSourcingService._parse_int(monthly_exposure_ads)
         competition = str(competition_level or "").strip()
 
         if (
-            300 <= searches <= 5000
-            and ctr >= 3.0
+            100 <= searches < 6000
+            and ctr >= 2.5
             and competition in {"중간", "낮음"}
-            and 0 <= products <= 5000
+            and exposure_ads is not None
+            and exposure_ads <= 7
         ):
             return "고효율"
 
         if (
-            4000 <= searches <= 13000
-            and ctr >= 2.0
-            and products <= 15000
+            6000 <= searches < 20000
+            and ctr >= 1.8
+            and competition in {"중간", "낮음"}
+            and exposure_ads is not None
+            and exposure_ads <= 8
         ):
             return "중간성장"
 
         if (
-            searches >= 13000
+            searches >= 20000
             and ctr >= 1.0
-            and products >= 15000
         ):
             return "대형"
 

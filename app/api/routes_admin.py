@@ -933,9 +933,10 @@ ADMIN_HTML = """
                     <th>검색량</th>
                     <th>클릭률</th>
                     <th>경쟁강도</th>
+                    <th>노출광고수</th>
                     <th>광고효율</th>
-                    <th>등록상품수</th>
                     <th>시즌</th>
+                    <th>등록상품수</th>
                     <th>쿠팡불러오기</th>
                   </tr>
                 </thead>
@@ -1546,9 +1547,10 @@ ADMIN_HTML = """
           totalSearches: formatMetricValue(row.monthly_mobile_searches ?? row.total_searches),
           clickRate: formatPercentValue(row.monthly_mobile_ctr),
           competitionLevel: row.competition_level || "-",
+          exposureAds: formatMetricValue(row.monthly_exposure_ads),
           adEfficiency: row.ad_efficiency || row.group_name || "-",
-          productCount: formatMetricValue(row.product_count),
           season: row.season_months || "-",
+          productCount: formatMetricValue(row.product_count),
           coupangAction: "불러오기",
         });
       });
@@ -1557,7 +1559,7 @@ ADMIN_HTML = """
 
     function renderKeywordSummaryPageRows(pageRows) {
       if (!pageRows || pageRows.length === 0) {
-        keywordSummaryBody.innerHTML = '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
+        keywordSummaryBody.innerHTML = '<tr><td colspan="11" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
         return;
       }
       keywordSummaryBody.innerHTML = pageRows
@@ -1569,9 +1571,10 @@ ADMIN_HTML = """
             <td class="metric-cell">${row.totalSearches}</td>
             <td class="metric-cell">${row.clickRate}</td>
             <td class="metric-center">${row.competitionLevel}</td>
+            <td class="metric-center">${row.exposureAds}</td>
             <td class="metric-center">${row.adEfficiency}</td>
-            <td class="metric-center">${row.productCount}</td>
             <td class="metric-center">${row.season}</td>
+            <td class="metric-center">${row.productCount}</td>
             <td class="metric-center"><button class="action-btn" type="button" disabled>${row.coupangAction}</button></td>
           </tr>
         `)
@@ -2492,16 +2495,17 @@ def build_keyword_summary_rows_html(
                 f"<td class=\"metric-cell\">{escape(str(row['totalSearches']))}</td>"
                 f"<td class=\"metric-cell\">{escape(str(row['clickRate']))}</td>"
                 f"<td class=\"metric-center\">{escape(str(row['competitionLevel']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['exposureAds']))}</td>"
                 f"<td class=\"metric-center\">{escape(str(row['adEfficiency']))}</td>"
-                f"<td class=\"metric-center\">{escape(str(row['productCount']))}</td>"
                 f"<td class=\"metric-center\">{escape(str(row['season']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['productCount']))}</td>"
                 "<td class=\"metric-center\"><button class=\"action-btn\" type=\"button\" disabled>불러오기</button></td>"
                 "</tr>"
             )
         )
 
     if not rows:
-        return '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
+        return '<tr><td colspan="11" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
 
     return "".join(rows)
 
@@ -2589,6 +2593,7 @@ def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict
             or "-"
         )
         product_count = keyword_row.get("product_count")
+        exposure_ads = keyword_row.get("monthly_exposure_ads")
         season_months = keyword_row.get("season_months") or "-"
         rows.append(
             {
@@ -2601,9 +2606,10 @@ def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict
                 "totalSearches": f"{int(total_searches):,}" if total_searches is not None else "-",
                 "clickRate": click_rate_text,
                 "competitionLevel": competition_level,
+                "exposureAds": f"{int(exposure_ads):,}" if exposure_ads is not None else "-",
                 "adEfficiency": ad_efficiency,
-                "productCount": f"{int(product_count):,}" if product_count is not None else "-",
                 "season": str(season_months),
+                "productCount": f"{int(product_count):,}" if product_count is not None else "-",
             }
         )
     return rows
