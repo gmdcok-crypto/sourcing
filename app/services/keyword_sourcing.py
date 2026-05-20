@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from statistics import median
@@ -47,37 +48,15 @@ class KeywordSourcingService:
 
     @classmethod
     def get_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
+        state = cls._load_state_from_db(run_id=run_id)
+        if state:
+            cls._sync_runtime_state(state)
+            return state
+
         target_run_id = run_id or cls._active_run_id or cls._latest_run_id
-        if not target_run_id or target_run_id not in cls._runs:
-            return {
-                "run_id": None,
-                "status": "idle",
-                "message": "아직 실행 이력이 없습니다.",
-                "theme_count": 0,
-                "category_count": 0,
-                "processed_categories": 0,
-                "row_count": 0,
-                "success_count": 0,
-                "failure_count": 0,
-                "progress_percent": 0,
-                "current_theme_name": None,
-                "current_cid": None,
-                "current_query": None,
-                "logs": [],
-                "started_at": None,
-                "finished_at": None,
-                "r2_json_key": None,
-                "r2_parquet_key": None,
-                "valid_keywords": [],
-                "noise_keywords": [],
-                "top_keywords": [],
-                "classified_keywords": [],
-                "top150_count": 0,
-                "top100_count": 0,
-                "searchad_count": 0,
-                "group_counts": {},
-            }
-        return cls._runs[target_run_id]
+        if target_run_id and target_run_id in cls._runs:
+            return cls._runs[target_run_id]
+        return cls._empty_state()
 
     @classmethod
     def get_progress_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
@@ -185,7 +164,10 @@ class KeywordSourcingService:
             active_task = cls._active_task
             if active_task is not None and not active_task.done():
                 return current
-            cls._mark_active_run_stale()
+            if active_task is not None and active_task.done() and cls._active_run_id:
+                cls._mark_active_run_stale()
+            else:
+                return current
 
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         state = {
@@ -222,6 +204,7 @@ class KeywordSourcingService:
         cls._runs[run_id] = state
         cls._latest_run_id = run_id
         cls._active_run_id = run_id
+        cls._persist_state(state)
         service = cls(settings)
         cls._active_task = asyncio.create_task(
             service._run_collection(
@@ -249,6 +232,7 @@ class KeywordSourcingService:
             state["logs"] = (
                 (state.get("logs") or []) + ["사용자 요청으로 백그라운드 작업을 취소했습니다."]
             )[-20:]
+            cls._persist_state(state)
 
         cls._active_task = None
         cls._active_run_id = None
@@ -269,12 +253,14 @@ class KeywordSourcingService:
             categories = self._load_theme_categories(theme_id=theme_id)
             state["theme_count"] = len({row["theme_id"] for row in categories})
             state["category_count"] = len(categories)
+            self._persist_state(state)
 
             if not categories:
                 state["status"] = "completed"
                 state["message"] = "연결된 CID가 없어 실행을 종료했습니다."
                 state["finished_at"] = datetime.now(timezone.utc).isoformat()
                 state["logs"].append(state["message"])
+                self._persist_state(state)
                 return
 
             for index, category in enumerate(categories, start=1):
@@ -284,6 +270,7 @@ class KeywordSourcingService:
                 state["current_cid"] = category["cid"]
                 state["current_query"] = query
                 state["message"] = f"{category['theme_name']} / {category['category_name']} 수집 중"
+                self._persist_state(state)
                 self._append_log(
                     state,
                     f"[{index}/{len(categories)}] {category['theme_name']} > {category['category_name']} 수집 시작",
@@ -354,6 +341,7 @@ class KeywordSourcingService:
                 state["processed_categories"] = index
                 state["row_count"] = len(keyword_pool)
                 state["progress_percent"] = self._progress_percent(index, len(categories))
+                self._persist_state(state)
                 if index < len(categories):
                     await asyncio.sleep(self.CATEGORY_DELAY_SECONDS)
 
@@ -372,6 +360,7 @@ class KeywordSourcingService:
             monthly_trend_map: Dict[str, List[Dict[str, Any]]] = {}
 
             state["top100_count"] = len(valid_keywords)
+            self._persist_state(state)
             if len(valid_keywords_all) > len(valid_keywords):
                 self._append_log(
                     state,
@@ -385,11 +374,13 @@ class KeywordSourcingService:
                         state,
                         f"SearchAd 지표 수집 시작 ({len(valid_keywords)}개 키워드)",
                     )
+                    self._persist_state(state)
                     metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords)
                     self._append_log(
                         state,
                         f"SearchAd 지표 수집 완료 ({len(metrics_map)}개 키워드)",
                     )
+                    self._persist_state(state)
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:  # noqa: BLE001
@@ -401,11 +392,13 @@ class KeywordSourcingService:
                         state,
                         f"쇼핑 상품수 수집 시작 ({len(valid_keywords)}개 키워드)",
                     )
+                    self._persist_state(state)
                     product_info_map = await self.shopping_service.fetch_product_infos(valid_keywords)
                     self._append_log(
                         state,
                         f"쇼핑 상품수 수집 완료 ({len(product_info_map)}개 키워드)",
                     )
+                    self._persist_state(state)
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:  # noqa: BLE001
@@ -417,11 +410,13 @@ class KeywordSourcingService:
                         state,
                         f"검색 트렌드 수집 시작 ({len(valid_keywords)}개 키워드)",
                     )
+                    self._persist_state(state)
                     monthly_trend_map = await self.search_trend_service.fetch_monthly_trends(valid_keywords)
                     self._append_log(
                         state,
                         f"검색 트렌드 수집 완료 ({len(monthly_trend_map)}개 키워드)",
                     )
+                    self._persist_state(state)
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:  # noqa: BLE001
@@ -464,17 +459,20 @@ class KeywordSourcingService:
             state["top_keywords"] = top_keywords[:150]
             state["classified_keywords"] = classified_keywords
             self._append_log(state, f"실행 완료: 총 {len(top_keywords)}개 키워드 수집")
+            self._persist_state(state)
         except asyncio.CancelledError:
             state["status"] = "failed"
             state["message"] = "사용자 요청으로 소싱을 중지했습니다."
             state["finished_at"] = datetime.now(timezone.utc).isoformat()
             self._append_log(state, state["message"])
+            self._persist_state(state)
             raise
         except Exception as error:  # noqa: BLE001
             state["status"] = "failed"
             state["message"] = f"키워드 소싱 실패: {error}"
             state["finished_at"] = datetime.now(timezone.utc).isoformat()
             self._append_log(state, state["message"])
+            self._persist_state(state)
         finally:
             if self._active_run_id == run_id:
                 self._active_run_id = None
@@ -493,6 +491,7 @@ class KeywordSourcingService:
             state["logs"] = (
                 (state.get("logs") or []) + ["백그라운드 작업이 종료되어 stale run으로 정리했습니다."]
             )[-20:]
+            cls._persist_state(state)
         cls._active_run_id = None
         cls._active_task = None
 
@@ -826,3 +825,324 @@ class KeywordSourcingService:
     @staticmethod
     def _append_log(state: Dict[str, Any], message: str) -> None:
         state["logs"] = (state.get("logs", []) + [message])[-20:]
+        KeywordSourcingService._persist_state(state)
+
+    @classmethod
+    def _empty_state(cls) -> Dict[str, Any]:
+        return {
+            "run_id": None,
+            "status": "idle",
+            "message": "아직 실행 이력이 없습니다.",
+            "theme_count": 0,
+            "category_count": 0,
+            "processed_categories": 0,
+            "row_count": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "progress_percent": 0,
+            "current_theme_name": None,
+            "current_cid": None,
+            "current_query": None,
+            "logs": [],
+            "started_at": None,
+            "finished_at": None,
+            "r2_json_key": None,
+            "r2_parquet_key": None,
+            "valid_keywords": [],
+            "noise_keywords": [],
+            "top_keywords": [],
+            "classified_keywords": [],
+            "top150_count": 0,
+            "top100_count": 0,
+            "searchad_count": 0,
+            "group_counts": {},
+            "dataframe_columns": [],
+            "preview_rows": [],
+            "selected_theme_id": None,
+        }
+
+    @classmethod
+    def _sync_runtime_state(cls, state: Dict[str, Any]) -> None:
+        run_id = state.get("run_id")
+        if not run_id:
+            return
+        cls._runs[run_id] = state
+        cls._latest_run_id = run_id
+        if state.get("status") == "running":
+            cls._active_run_id = run_id
+        elif cls._active_run_id == run_id:
+            cls._active_run_id = None
+
+    @classmethod
+    def _load_state_from_db(cls, run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        connection = get_mysql_connection()
+        try:
+            cls._ensure_run_table(connection)
+            with connection.cursor() as cursor:
+                if run_id:
+                    cursor.execute(
+                        """
+                        SELECT *
+                        FROM keyword_sourcing_runs
+                        WHERE run_id = %s
+                        LIMIT 1
+                        """,
+                        (run_id,),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT *
+                        FROM keyword_sourcing_runs
+                        ORDER BY
+                            CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+                            updated_at DESC
+                        LIMIT 1
+                        """
+                    )
+                row = cursor.fetchone()
+            if not row:
+                return None
+            return cls._db_row_to_state(row)
+        finally:
+            connection.close()
+
+    @classmethod
+    def _persist_state(cls, state: Dict[str, Any]) -> None:
+        run_id = state.get("run_id")
+        if not run_id:
+            return
+
+        connection = get_mysql_connection()
+        try:
+            cls._ensure_run_table(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO keyword_sourcing_runs (
+                        run_id,
+                        status,
+                        message,
+                        theme_count,
+                        category_count,
+                        processed_categories,
+                        row_count,
+                        success_count,
+                        failure_count,
+                        progress_percent,
+                        current_theme_name,
+                        current_cid,
+                        current_query,
+                        logs_json,
+                        started_at,
+                        finished_at,
+                        r2_json_key,
+                        r2_parquet_key,
+                        valid_keywords_json,
+                        noise_keywords_json,
+                        top_keywords_json,
+                        classified_keywords_json,
+                        top150_count,
+                        top100_count,
+                        searchad_count,
+                        group_counts_json,
+                        dataframe_columns_json,
+                        preview_rows_json,
+                        selected_theme_id
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        status = VALUES(status),
+                        message = VALUES(message),
+                        theme_count = VALUES(theme_count),
+                        category_count = VALUES(category_count),
+                        processed_categories = VALUES(processed_categories),
+                        row_count = VALUES(row_count),
+                        success_count = VALUES(success_count),
+                        failure_count = VALUES(failure_count),
+                        progress_percent = VALUES(progress_percent),
+                        current_theme_name = VALUES(current_theme_name),
+                        current_cid = VALUES(current_cid),
+                        current_query = VALUES(current_query),
+                        logs_json = VALUES(logs_json),
+                        started_at = VALUES(started_at),
+                        finished_at = VALUES(finished_at),
+                        r2_json_key = VALUES(r2_json_key),
+                        r2_parquet_key = VALUES(r2_parquet_key),
+                        valid_keywords_json = VALUES(valid_keywords_json),
+                        noise_keywords_json = VALUES(noise_keywords_json),
+                        top_keywords_json = VALUES(top_keywords_json),
+                        classified_keywords_json = VALUES(classified_keywords_json),
+                        top150_count = VALUES(top150_count),
+                        top100_count = VALUES(top100_count),
+                        searchad_count = VALUES(searchad_count),
+                        group_counts_json = VALUES(group_counts_json),
+                        dataframe_columns_json = VALUES(dataframe_columns_json),
+                        preview_rows_json = VALUES(preview_rows_json),
+                        selected_theme_id = VALUES(selected_theme_id),
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (
+                        run_id,
+                        str(state.get("status") or "idle"),
+                        str(state.get("message") or "대기중"),
+                        int(state.get("theme_count") or 0),
+                        int(state.get("category_count") or 0),
+                        int(state.get("processed_categories") or 0),
+                        int(state.get("row_count") or 0),
+                        int(state.get("success_count") or 0),
+                        int(state.get("failure_count") or 0),
+                        int(state.get("progress_percent") or 0),
+                        cls._to_optional_str(state.get("current_theme_name")),
+                        cls._to_optional_str(state.get("current_cid")),
+                        cls._to_optional_str(state.get("current_query")),
+                        cls._json_dumps(state.get("logs") or []),
+                        cls._to_db_datetime(state.get("started_at")),
+                        cls._to_db_datetime(state.get("finished_at")),
+                        cls._to_optional_str(state.get("r2_json_key")),
+                        cls._to_optional_str(state.get("r2_parquet_key")),
+                        cls._json_dumps(state.get("valid_keywords") or []),
+                        cls._json_dumps(state.get("noise_keywords") or []),
+                        cls._json_dumps(state.get("top_keywords") or []),
+                        cls._json_dumps(state.get("classified_keywords") or []),
+                        int(state.get("top150_count") or 0),
+                        int(state.get("top100_count") or 0),
+                        int(state.get("searchad_count") or 0),
+                        cls._json_dumps(state.get("group_counts") or {}),
+                        cls._json_dumps(state.get("dataframe_columns") or []),
+                        cls._json_dumps(state.get("preview_rows") or []),
+                        cls._to_int(state.get("selected_theme_id")),
+                    ),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+    @classmethod
+    def _ensure_run_table(cls, connection) -> None:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS keyword_sourcing_runs (
+                    run_id VARCHAR(32) NOT NULL,
+                    status VARCHAR(32) NOT NULL,
+                    message TEXT NOT NULL,
+                    theme_count INT NOT NULL DEFAULT 0,
+                    category_count INT NOT NULL DEFAULT 0,
+                    processed_categories INT NOT NULL DEFAULT 0,
+                    row_count INT NOT NULL DEFAULT 0,
+                    success_count INT NOT NULL DEFAULT 0,
+                    failure_count INT NOT NULL DEFAULT 0,
+                    progress_percent INT NOT NULL DEFAULT 0,
+                    current_theme_name VARCHAR(255) NULL,
+                    current_cid VARCHAR(50) NULL,
+                    current_query VARCHAR(255) NULL,
+                    logs_json LONGTEXT NULL,
+                    started_at DATETIME NULL,
+                    finished_at DATETIME NULL,
+                    r2_json_key VARCHAR(255) NULL,
+                    r2_parquet_key VARCHAR(255) NULL,
+                    valid_keywords_json LONGTEXT NULL,
+                    noise_keywords_json LONGTEXT NULL,
+                    top_keywords_json LONGTEXT NULL,
+                    classified_keywords_json LONGTEXT NULL,
+                    top150_count INT NOT NULL DEFAULT 0,
+                    top100_count INT NOT NULL DEFAULT 0,
+                    searchad_count INT NOT NULL DEFAULT 0,
+                    group_counts_json LONGTEXT NULL,
+                    dataframe_columns_json LONGTEXT NULL,
+                    preview_rows_json LONGTEXT NULL,
+                    selected_theme_id BIGINT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (run_id),
+                    KEY idx_keyword_sourcing_runs_updated_at (updated_at),
+                    KEY idx_keyword_sourcing_runs_status_updated_at (status, updated_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        connection.commit()
+
+    @classmethod
+    def _db_row_to_state(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        state = cls._empty_state()
+        state.update(
+            {
+                "run_id": row.get("run_id"),
+                "status": row.get("status") or "idle",
+                "message": row.get("message") or "대기중",
+                "theme_count": int(row.get("theme_count") or 0),
+                "category_count": int(row.get("category_count") or 0),
+                "processed_categories": int(row.get("processed_categories") or 0),
+                "row_count": int(row.get("row_count") or 0),
+                "success_count": int(row.get("success_count") or 0),
+                "failure_count": int(row.get("failure_count") or 0),
+                "progress_percent": int(row.get("progress_percent") or 0),
+                "current_theme_name": row.get("current_theme_name"),
+                "current_cid": row.get("current_cid"),
+                "current_query": row.get("current_query"),
+                "logs": cls._json_loads(row.get("logs_json"), []),
+                "started_at": cls._from_db_datetime(row.get("started_at")),
+                "finished_at": cls._from_db_datetime(row.get("finished_at")),
+                "r2_json_key": row.get("r2_json_key"),
+                "r2_parquet_key": row.get("r2_parquet_key"),
+                "valid_keywords": cls._json_loads(row.get("valid_keywords_json"), []),
+                "noise_keywords": cls._json_loads(row.get("noise_keywords_json"), []),
+                "top_keywords": cls._json_loads(row.get("top_keywords_json"), []),
+                "classified_keywords": cls._json_loads(row.get("classified_keywords_json"), []),
+                "top150_count": int(row.get("top150_count") or 0),
+                "top100_count": int(row.get("top100_count") or 0),
+                "searchad_count": int(row.get("searchad_count") or 0),
+                "group_counts": cls._json_loads(row.get("group_counts_json"), {}),
+                "dataframe_columns": cls._json_loads(row.get("dataframe_columns_json"), []),
+                "preview_rows": cls._json_loads(row.get("preview_rows_json"), []),
+                "selected_theme_id": cls._to_int(row.get("selected_theme_id")),
+            }
+        )
+        return state
+
+    @staticmethod
+    def _json_dumps(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _json_loads(value: Any, default: Any) -> Any:
+        if value in (None, ""):
+            return default
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _to_optional_str(value: Any) -> Optional[str]:
+        if value in (None, ""):
+            return None
+        return str(value)
+
+    @staticmethod
+    def _to_db_datetime(value: Any) -> Optional[datetime]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+
+    @staticmethod
+    def _from_db_datetime(value: Any) -> Optional[str]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc).isoformat()
+            return value.astimezone(timezone.utc).isoformat()
+        return str(value)
