@@ -7,3 +7,5 @@ PyMySQL
 pandas
 python-multipart
 openpyxl
+playwright
+playwright-stealth

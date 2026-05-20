@@ -11,6 +11,7 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from starlette.responses import StreamingResponse
 
 from app.core.config import Settings, get_settings
+from app.services.coupang_crawler import CoupangCrawlerService
 from app.services.keyword_sourcing import KeywordSourcingService
 
 router = APIRouter(prefix="/api/admin", tags=["keyword-sourcing"])
@@ -125,6 +126,43 @@ async def export_keyword_sourcing_excel(
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+@router.post("/keyword-sourcing/coupang-test")
+async def run_coupang_crawling_test(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    settings: Settings = Depends(get_settings),
+) -> Dict[str, Any]:
+    run_id = payload.get("run_id") if payload else None
+    limit = int(payload.get("limit") or 10) if payload else 10
+    state = KeywordSourcingService.get_status(run_id=run_id)
+
+    from app.api.routes_admin import build_keyword_summary_rows_data
+
+    rows = build_keyword_summary_rows_data(state)
+    keywords = []
+    for row in rows:
+        keyword = str(row.get("keyword") or "").strip()
+        if keyword and keyword not in keywords:
+            keywords.append(keyword)
+        if len(keywords) >= limit:
+            break
+
+    if not keywords:
+        return {
+            "status": "error",
+            "message": "크롤링할 키워드가 없습니다. 먼저 키워드 소싱 결과를 준비해주세요.",
+            "items": [],
+        }
+
+    crawler = CoupangCrawlerService(settings)
+    result = await crawler.crawl_keywords(keywords)
+    return {
+        "status": "ok",
+        "message": f"{len(keywords)}개 키워드 기준 쿠팡 테스트 크롤링을 완료했습니다.",
+        "keywords": keywords,
+        **result,
+    }
 
 
 @router.get("/keyword-sourcing/stream")
