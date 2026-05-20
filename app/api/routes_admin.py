@@ -826,6 +826,10 @@ ADMIN_HTML = """
                 })();
               </script>
               <form action="/api/admin/keyword-sourcing/start" method="post" id="keyword-sourcing-form">
+                <select class="select" id="keyword-sourcing-theme-id" name="theme_id">
+                  <option value="">전체 테마</option>
+                  __KEYWORD_THEME_OPTIONS__
+                </select>
                 <button class="action-btn primary" id="run-keyword-sourcing-btn" type="submit">키워드 소싱</button>
               </form>
               <button class="action-btn danger" id="stop-keyword-sourcing-btn" type="button">소싱 중지</button>
@@ -1119,6 +1123,7 @@ ADMIN_HTML = """
     const cidResetBtn = document.getElementById("cid-reset-btn");
     const cidTableBody = document.getElementById("cid-table-body");
     const keywordSourcingForm = document.getElementById("keyword-sourcing-form");
+    const keywordSourcingThemeId = document.getElementById("keyword-sourcing-theme-id");
     const runKeywordSourcingBtn = document.getElementById("run-keyword-sourcing-btn");
     const stopKeywordSourcingBtn = document.getElementById("stop-keyword-sourcing-btn");
     const keywordHistoryDateInput = document.getElementById("keyword-history-date");
@@ -1395,6 +1400,18 @@ ADMIN_HTML = """
       renderThemeOptions();
       renderThemes();
       renderCids();
+      if (keywordSourcingThemeId) {
+        const currentValue = keywordSourcingThemeId.value;
+        const optionHtml = ['<option value="">전체 테마</option>']
+          .concat(
+            themes.map((theme) => `<option value="${theme.id}">${theme.theme_name}</option>`)
+          )
+          .join("");
+        keywordSourcingThemeId.innerHTML = optionHtml;
+        if (currentValue && themes.some((theme) => String(theme.id) === currentValue)) {
+          keywordSourcingThemeId.value = currentValue;
+        }
+      }
       if (!editingCidId && themes.length > 0 && !cidThemeInput.value) {
         cidThemeInput.value = String(themes[0].id);
       }
@@ -1929,8 +1946,14 @@ ADMIN_HTML = """
           event.preventDefault();
           keywordHistoryMode = false;
           keywordDetailLoadedRunId = null;
+          const payload = {};
+          const selectedThemeId = keywordSourcingThemeId ? keywordSourcingThemeId.value : "";
+          if (selectedThemeId) {
+            payload.theme_id = Number(selectedThemeId);
+          }
           const result = await apiFetch("/api/admin/keyword-sourcing/test", {
-            method: "POST"
+            method: "POST",
+            body: JSON.stringify(payload)
           });
           keywordSourcingRunId = result.run_id || keywordSourcingRunId;
           startKeywordStatusPolling();
@@ -2181,6 +2204,7 @@ def render_admin_html(
     )
     html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status))
     html = html.replace("__KEYWORD_PAGE_TABS__", build_keyword_summary_page_tabs_html(keyword_status))
+    html = html.replace("__KEYWORD_THEME_OPTIONS__", build_theme_options_html(themes))
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
     html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)

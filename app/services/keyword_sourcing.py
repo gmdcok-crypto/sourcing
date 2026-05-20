@@ -172,7 +172,13 @@ class KeywordSourcingService:
         return state
 
     @classmethod
-    def start_background_run(cls, settings, *, display_per_cid: int = 30) -> Dict[str, Any]:
+    def start_background_run(
+        cls,
+        settings,
+        *,
+        display_per_cid: int = 30,
+        theme_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         current = cls.get_status()
         if current.get("status") == "running":
             active_task = cls._active_task
@@ -210,13 +216,18 @@ class KeywordSourcingService:
             "top100_count": 0,
             "searchad_count": 0,
             "group_counts": {},
+            "selected_theme_id": theme_id,
         }
         cls._runs[run_id] = state
         cls._latest_run_id = run_id
         cls._active_run_id = run_id
         service = cls(settings)
         cls._active_task = asyncio.create_task(
-            service._run_collection(run_id=run_id, display_per_cid=display_per_cid)
+            service._run_collection(
+                run_id=run_id,
+                display_per_cid=display_per_cid,
+                theme_id=theme_id,
+            )
         )
         return state
 
@@ -242,13 +253,19 @@ class KeywordSourcingService:
         cls._active_run_id = None
         return cls.get_status(run_id=active_run_id)
 
-    async def _run_collection(self, *, run_id: str, display_per_cid: int) -> None:
+    async def _run_collection(
+        self,
+        *,
+        run_id: str,
+        display_per_cid: int,
+        theme_id: Optional[int] = None,
+    ) -> None:
         state = self._runs[run_id]
         rows: List[Dict[str, Any]] = []
         keyword_pool: Dict[str, Dict[str, Any]] = {}
 
         try:
-            categories = self._load_theme_categories()
+            categories = self._load_theme_categories(theme_id=theme_id)
             state["theme_count"] = len({row["theme_id"] for row in categories})
             state["category_count"] = len(categories)
 
@@ -467,12 +484,11 @@ class KeywordSourcingService:
     def collect_all_themes(self, *, display_per_cid: int = 30) -> KeywordSourcingResult:
         raise NotImplementedError("Use start_background_run() for admin-triggered collection.")
 
-    def _load_theme_categories(self) -> List[Dict[str, Any]]:
+    def _load_theme_categories(self, *, theme_id: Optional[int] = None) -> List[Dict[str, Any]]:
         connection = get_mysql_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
+                query = """
                     SELECT
                         t.id AS theme_id,
                         t.theme_code,
@@ -486,9 +502,13 @@ class KeywordSourcingService:
                         ON tcm.theme_id = t.id
                     INNER JOIN naver_categories nc
                         ON tcm.category_id = nc.id
-                    ORDER BY t.id ASC, nc.id ASC
-                    """
-                )
+                """
+                params: List[Any] = []
+                if theme_id is not None:
+                    query += " WHERE t.id = %s"
+                    params.append(theme_id)
+                query += " ORDER BY t.id ASC, nc.id ASC"
+                cursor.execute(query, params)
                 return cursor.fetchall()
         finally:
             connection.close()

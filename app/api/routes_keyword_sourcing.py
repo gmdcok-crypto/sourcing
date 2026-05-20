@@ -3,7 +3,7 @@ import json
 from datetime import date
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends, Form
 from fastapi.responses import RedirectResponse
 from starlette.responses import StreamingResponse
 
@@ -15,9 +15,15 @@ router = APIRouter(prefix="/api/admin", tags=["keyword-sourcing"])
 
 @router.post("/keyword-sourcing/test")
 async def run_keyword_sourcing_test(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
     settings: Settings = Depends(get_settings),
 ) -> Dict[str, Any]:
-    state = KeywordSourcingService.start_background_run(settings, display_per_cid=30)
+    theme_id = payload.get("theme_id") if payload else None
+    state = KeywordSourcingService.start_background_run(
+        settings,
+        display_per_cid=30,
+        theme_id=theme_id,
+    )
     return state
 
 
@@ -73,7 +79,12 @@ async def stream_keyword_sourcing_status(run_id: Optional[str] = None) -> Stream
 
 @router.post("/keyword-sourcing/start")
 async def start_keyword_sourcing_via_form(
+    theme_id: Optional[int] = Form(default=None),
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
-    KeywordSourcingService.start_background_run(settings, display_per_cid=30)
+    KeywordSourcingService.start_background_run(
+        settings,
+        display_per_cid=30,
+        theme_id=theme_id,
+    )
     return RedirectResponse(url="/admin?tab=pipeline", status_code=303)
