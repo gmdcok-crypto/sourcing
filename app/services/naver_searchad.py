@@ -144,7 +144,7 @@ class NaverSearchAdService:
                 "competition_index": self._to_float(item.get("compIdx")),
                 "competition_level": self._to_competition_level(item.get("compIdx")),
                 "pl_avg_depth": self._to_float(item.get("plAvgDepth")),
-                "monthly_exposure_ads": self._to_int(item.get("monthlyAveDepth")),
+                "monthly_exposure_ads": self._to_int(item.get("plAvgDepth")),
             }
         return metrics
 
@@ -222,6 +222,9 @@ class NaverSearchAdService:
 
     @classmethod
     def _to_competition_level(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        if text in {"높음", "중간", "낮음"}:
+            return text
         score = cls._to_float(value)
         if score is None:
             return None
