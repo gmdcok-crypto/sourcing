@@ -7,12 +7,21 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Body, Depends, Form
 from fastapi.responses import RedirectResponse, Response
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from starlette.responses import StreamingResponse
 
 from app.core.config import Settings, get_settings
 from app.services.keyword_sourcing import KeywordSourcingService
 
 router = APIRouter(prefix="/api/admin", tags=["keyword-sourcing"])
+
+
+def _safe_excel_cell(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    return value
 
 
 @router.post("/keyword-sourcing/test")
@@ -91,16 +100,16 @@ async def export_keyword_sourcing_excel(
     for row in rows:
         worksheet.append(
             [
-                row.get("themeDetail", ""),
-                row.get("keyword", ""),
-                row.get("group", ""),
-                row.get("totalSearches", ""),
-                row.get("clickRate", ""),
-                row.get("competitionLevel", ""),
-                row.get("exposureAds", ""),
-                row.get("adEfficiency", ""),
-                row.get("season", ""),
-                row.get("productCount", ""),
+                _safe_excel_cell(row.get("themeDetail", "")),
+                _safe_excel_cell(row.get("keyword", "")),
+                _safe_excel_cell(row.get("group", "")),
+                _safe_excel_cell(row.get("totalSearches", "")),
+                _safe_excel_cell(row.get("clickRate", "")),
+                _safe_excel_cell(row.get("competitionLevel", "")),
+                _safe_excel_cell(row.get("exposureAds", "")),
+                _safe_excel_cell(row.get("adEfficiency", "")),
+                _safe_excel_cell(row.get("season", "")),
+                _safe_excel_cell(row.get("productCount", "")),
             ]
         )
 
