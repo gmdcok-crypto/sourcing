@@ -890,7 +890,7 @@ ADMIN_HTML = """
                 <p class="summary-value" id="keyword-top150-count">__KEYWORD_TOP150_COUNT__</p>
               </div>
               <div class="summary-card">
-                <p class="summary-label">Top100 확정</p>
+                <p class="summary-label">유효키워드 확정</p>
                 <p class="summary-value" id="keyword-top100-count">__KEYWORD_TOP100_COUNT__</p>
               </div>
               <div class="summary-card">
@@ -1134,6 +1134,7 @@ ADMIN_HTML = """
     let editingCidId = null;
     let themes = __INITIAL_THEMES_JSON__;
     let cidItems = __INITIAL_CATEGORIES_JSON__;
+    let initialKeywordRows = __INITIAL_KEYWORD_ROWS_JSON__;
 
     const themeCodeInput = document.getElementById("theme-code");
     const themeNameInput = document.getElementById("theme-name");
@@ -1185,7 +1186,7 @@ ADMIN_HTML = """
     const keywordPaginationPages = document.getElementById("keyword-pagination-pages");
     const keywordPaginationMeta = document.getElementById("keyword-pagination-meta");
     const keywordSummaryBody = document.getElementById("keyword-summary-body");
-    let keywordSummaryRows = [];
+    let keywordSummaryRows = Array.isArray(initialKeywordRows) ? initialKeywordRows : [];
     let keywordSummaryPageIndex = 0;
     let keywordSummaryPageSize = 15;
     let keywordSourcingRunId = null;
@@ -2178,6 +2179,7 @@ ADMIN_HTML = """
       themeTableBody.innerHTML = `<tr><td colspan="2" class="empty-state">${error.message}</td></tr>`;
       cidTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">${error.message}</td></tr>`;
     });
+    renderKeywordSummaryRows(keywordSummaryRows);
     refreshKeywordSourcingStatus().catch((error) => {
       if (keywordLogBox) {
         keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
@@ -2256,6 +2258,10 @@ def render_admin_html(
     html = html.replace(
         "__INITIAL_CATEGORIES_JSON__",
         json.dumps(taxonomy_data["categories"], ensure_ascii=False),
+    )
+    html = html.replace(
+        "__INITIAL_KEYWORD_ROWS_JSON__",
+        json.dumps(build_keyword_summary_rows_data(keyword_status), ensure_ascii=False),
     )
     html = html.replace("__KEYWORD_PROGRESS_LABEL__", escape(str(keyword_status["message"])))
     html = html.replace("__KEYWORD_PROGRESS_PERCENT__", str(keyword_status["progress_percent"]))
@@ -2442,13 +2448,66 @@ def build_category_rows_html(categories: List[Dict[str, Any]]) -> str:
 
 
 def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
+    first_page_rows = build_keyword_summary_rows_data(keyword_status)[:15]
+    rows: List[str] = []
+    for row in first_page_rows:
+        rows.append(
+            (
+                "<tr>"
+                f"<td>{escape(str(row['themeDetail']))}</td>"
+                f"<td class=\"keyword-col\">{escape(str(row['keyword']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['group']))}</td>"
+                f"<td class=\"metric-cell\">{escape(str(row['totalSearches']))}</td>"
+                f"<td class=\"metric-cell\">{escape(str(row['clickRate']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['competitionLevel']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['adEfficiency']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['productCount']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['season']))}</td>"
+                "<td class=\"metric-center\"><button class=\"action-btn\" type=\"button\" disabled>불러오기</button></td>"
+                "</tr>"
+            )
+        )
+
+    if not rows:
+        return '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
+
+    return "".join(rows)
+
+
+def build_keyword_summary_page_buttons_html(keyword_status: Dict[str, Any]) -> str:
+    total_rows = len(build_keyword_summary_rows_data(keyword_status))
+    if total_rows == 0:
+        return ""
+
+    tabs: List[str] = []
+    page_count = (total_rows + 14) // 15
+    tabs.append('<button class="action-btn" type="button" data-keyword-page-nav="prev" disabled>이전</button>')
+    for index in range(min(page_count, 5)):
+        classes = "action-btn primary" if index == 0 else "action-btn"
+        tabs.append(f'<button class="{classes}" type="button" data-keyword-page="{index}">{index + 1}</button>')
+    tabs.append(
+        '<button class="action-btn" type="button" data-keyword-page-nav="next" '
+        + ('disabled' if page_count <= 1 else '')
+        + '>다음</button>'
+    )
+    return "".join(tabs)
+
+
+def build_keyword_summary_page_meta_text(keyword_status: Dict[str, Any]) -> str:
+    total_rows = len(build_keyword_summary_rows_data(keyword_status))
+    if total_rows == 0:
+        return "총 0건"
+    end_row = min(15, total_rows)
+    return f"총 {total_rows:,}건 중 1-{end_row} 표시"
+
+
+def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict[str, Any]]:
     classified_keywords = keyword_status.get("classified_keywords") or []
     if not classified_keywords:
         classified_keywords = keyword_status.get("preview_rows") or []
 
-    first_page_rows = classified_keywords[:15]
-    rows: List[str] = []
-    for index, keyword_row in enumerate(first_page_rows, start=1):
+    rows: List[Dict[str, Any]] = []
+    for keyword_row in classified_keywords:
         keyword_text = (
             keyword_row.get("keyword")
             or keyword_row.get("query")
@@ -2472,57 +2531,19 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
         product_count = keyword_row.get("product_count")
         season_months = keyword_row.get("season_months") or "-"
         rows.append(
-            (
-                "<tr>"
-                f"<td>{escape(str(theme_detail))}</td>"
-                f"<td class=\"keyword-col\">{escape(str(keyword_text))}</td>"
-                f"<td class=\"metric-center\">{escape(str(keyword_row.get('group_name') or ('이전 저장본' if keyword_row.get('query') or keyword_row.get('seed_keyword') else '-')))}</td>"
-                f"<td class=\"metric-cell\">{escape(f'{int(total_searches):,}' if total_searches is not None else '-')}</td>"
-                f"<td class=\"metric-cell\">{escape(click_rate_text)}</td>"
-                f"<td class=\"metric-center\">{escape(competition_level)}</td>"
-                f"<td class=\"metric-center\">{escape(ad_efficiency)}</td>"
-                f"<td class=\"metric-center\">{escape(f'{int(product_count):,}' if product_count is not None else '-')}</td>"
-                f"<td class=\"metric-center\">{escape(str(season_months))}</td>"
-                "<td class=\"metric-center\"><button class=\"action-btn\" type=\"button\" disabled>불러오기</button></td>"
-                "</tr>"
-            )
+            {
+                "themeDetail": str(theme_detail),
+                "keyword": str(keyword_text),
+                "group": str(
+                    keyword_row.get("group_name")
+                    or ("이전 저장본" if keyword_row.get("query") or keyword_row.get("seed_keyword") else "-")
+                ),
+                "totalSearches": f"{int(total_searches):,}" if total_searches is not None else "-",
+                "clickRate": click_rate_text,
+                "competitionLevel": competition_level,
+                "adEfficiency": ad_efficiency,
+                "productCount": f"{int(product_count):,}" if product_count is not None else "-",
+                "season": str(season_months),
+            }
         )
-
-    if not rows:
-        return '<tr><td colspan="10" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
-
-    return "".join(rows)
-
-
-def build_keyword_summary_page_buttons_html(keyword_status: Dict[str, Any]) -> str:
-    classified_keywords = keyword_status.get("classified_keywords") or []
-    if not classified_keywords:
-        classified_keywords = keyword_status.get("preview_rows") or []
-
-    total_rows = len(classified_keywords)
-    if total_rows == 0:
-        return ""
-
-    tabs: List[str] = []
-    page_count = (total_rows + 14) // 15
-    tabs.append('<button class="action-btn" type="button" data-keyword-page-nav="prev" disabled>이전</button>')
-    for index in range(min(page_count, 5)):
-        classes = "action-btn primary" if index == 0 else "action-btn"
-        tabs.append(f'<button class="{classes}" type="button" data-keyword-page="{index}">{index + 1}</button>')
-    tabs.append(
-        '<button class="action-btn" type="button" data-keyword-page-nav="next" '
-        + ('disabled' if page_count <= 1 else '')
-        + '>다음</button>'
-    )
-    return "".join(tabs)
-
-
-def build_keyword_summary_page_meta_text(keyword_status: Dict[str, Any]) -> str:
-    classified_keywords = keyword_status.get("classified_keywords") or []
-    if not classified_keywords:
-        classified_keywords = keyword_status.get("preview_rows") or []
-    total_rows = len(classified_keywords)
-    if total_rows == 0:
-        return "총 0건"
-    end_row = min(15, total_rows)
-    return f"총 {total_rows:,}건 중 1-{end_row} 표시"
+    return rows

@@ -310,8 +310,7 @@ class KeywordSourcingService:
 
                     raw_keyword_list = [row["keyword"] for row in top_keywords]
                     valid_keywords, noise_keywords = filter_noise(raw_keyword_list)
-                    valid_top100 = valid_keywords[:100]
-                    state["top100_count"] += len(valid_top100)
+                    state["top100_count"] += len(valid_keywords)
 
                     for row in top_keywords:
                         keyword = row["keyword"]
@@ -330,7 +329,7 @@ class KeywordSourcingService:
                             "category_name": category["category_name"],
                             "full_path": category["full_path"],
                             "is_noise": keyword in noise_keywords,
-                            "is_valid": keyword in valid_top100,
+                            "is_valid": keyword in valid_keywords,
                             "source": "naver_shopping_insight",
                         }
                         if not existing or (row_payload["rank"] or 999999) < (existing.get("rank") or 999999):
@@ -339,7 +338,7 @@ class KeywordSourcingService:
                     state["success_count"] += 1
                     self._append_log(
                         state,
-                        f"[{index}/{len(categories)}] {category['category_name']} 완료 (top150 {len(top_keywords)}건 / 유효키워드 {len(valid_top100)}건)",
+                        f"[{index}/{len(categories)}] {category['category_name']} 완료 (top150 {len(top_keywords)}건 / 유효키워드 {len(valid_keywords)}건)",
                     )
                 except Exception as error:  # noqa: BLE001
                     state["failure_count"] += 1
@@ -444,8 +443,8 @@ class KeywordSourcingService:
             )
             state["r2_json_key"] = r2_json_key
             state["r2_parquet_key"] = r2_parquet_key
-            state["valid_keywords"] = valid_keywords[:100]
-            state["noise_keywords"] = noise_keywords[:100]
+            state["valid_keywords"] = valid_keywords
+            state["noise_keywords"] = noise_keywords
             state["top_keywords"] = top_keywords[:150]
             state["classified_keywords"] = classified_keywords
             self._append_log(state, f"실행 완료: 총 {len(top_keywords)}개 키워드 수집")
