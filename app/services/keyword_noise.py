@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import List, Tuple
 
 _NOISE_SUBSTRINGS = (
@@ -38,6 +39,10 @@ _NOISE_SUBSTRINGS = (
     "파양",
     "보호소",
     "업소용",
+    "다이소",
+    "무인양품",
+    "스타벅스",
+    "아트박스",
 )
 
 _REGION_TOKENS = (
@@ -77,7 +82,15 @@ _CATEGORY_TOKENS = (
 
 
 def is_noise_keyword(keyword: str) -> bool:
-    k_raw = str(keyword or "").strip().replace(" ", "")
+    normalized = unicodedata.normalize("NFKC", str(keyword or ""))
+    cleaned_chars = []
+    for char in normalized:
+        category = unicodedata.category(char)
+        if category in {"Cc", "Cf", "Cs", "Co", "Cn"}:
+            continue
+        cleaned_chars.append(char)
+
+    k_raw = "".join(cleaned_chars).strip().replace(" ", "")
     if not k_raw:
         return True
 

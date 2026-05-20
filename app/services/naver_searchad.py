@@ -212,7 +212,10 @@ class NaverSearchAdService:
         if value in (None, "", "< 0.1"):
             return 0.0 if value == "< 0.1" else None
         try:
-            return float(str(value).replace(",", ""))
+            text = str(value).replace(",", "").replace("%", "").strip()
+            if not text:
+                return None
+            return float(text)
         except (TypeError, ValueError):
             return None
 

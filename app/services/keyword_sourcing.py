@@ -546,10 +546,10 @@ class KeywordSourcingService:
             keyword = row["keyword"]
             metrics = metrics_map.get(keyword, {})
             product_info = product_info_map.get(keyword) or {}
-            monthly_mobile_searches = metrics.get("monthly_mobile_searches")
-            monthly_mobile_ctr = metrics.get("monthly_mobile_ctr")
+            monthly_mobile_searches = self._parse_int(metrics.get("monthly_mobile_searches"))
+            monthly_mobile_ctr = self._parse_ctr(metrics.get("monthly_mobile_ctr"))
             competition_level = metrics.get("competition_level")
-            product_count = int(product_info.get("product_count") or 0)
+            product_count = self._parse_int(product_info.get("product_count")) or 0
             shopping_category_path = str(product_info.get("category_path") or "")
             monthly_trends = monthly_trend_map.get(keyword) or []
             season_months = self._estimate_season_months(monthly_trends)
@@ -559,12 +559,16 @@ class KeywordSourcingService:
                 competition_level=competition_level,
                 product_count=product_count,
             )
+            if not group_name:
+                continue
 
             enriched = {
                 **row,
                 **metrics,
                 "total_searches": monthly_mobile_searches,
                 "avg_ctr": monthly_mobile_ctr,
+                "monthly_mobile_searches": monthly_mobile_searches,
+                "monthly_mobile_ctr": monthly_mobile_ctr,
                 "product_count": product_count,
                 "shopping_category_path": shopping_category_path,
                 "season_months": season_months,
@@ -575,7 +579,7 @@ class KeywordSourcingService:
 
         enriched_rows.sort(
             key=lambda item: (
-                {"고효율": 0, "중간성장": 1, "대형": 2, "미분류": 3}.get(item.get("group_name"), 9),
+                {"고효율": 0, "중간성장": 1, "대형": 2}.get(item.get("group_name"), 9),
                 -(item.get("monthly_mobile_searches") or 0),
                 item.get("rank") or 999999,
             )
@@ -589,35 +593,15 @@ class KeywordSourcingService:
         monthly_mobile_ctr: Any,
         competition_level: Any,
         product_count: Any,
-    ) -> str:
-        try:
-            searches = int(monthly_mobile_searches or 0)
-        except (TypeError, ValueError):
-            searches = 0
-
-        try:
-            ctr = float(monthly_mobile_ctr or 0)
-        except (TypeError, ValueError):
-            ctr = 0.0
-
-        try:
-            products = int(product_count or 0)
-        except (TypeError, ValueError):
-            products = 0
-
-        competition = str(competition_level or "")
-
-        if (
-            searches >= 13000
-            and ctr >= 1
-            and competition in {"낮음", "중간", "높음"}
-            and products >= 15000
-        ):
-            return "대형"
+    ) -> Optional[str]:
+        searches = KeywordSourcingService._parse_int(monthly_mobile_searches) or 0
+        ctr = KeywordSourcingService._parse_ctr(monthly_mobile_ctr) or 0.0
+        products = KeywordSourcingService._parse_int(product_count) or 0
+        competition = str(competition_level or "").strip()
 
         if (
             300 <= searches <= 5000
-            and ctr >= 3
+            and ctr >= 3.0
             and competition in {"중간", "낮음"}
             and 0 <= products <= 5000
         ):
@@ -625,13 +609,19 @@ class KeywordSourcingService:
 
         if (
             4000 <= searches <= 13000
-            and ctr >= 2
-            and competition in {"낮음", "중간", "높음"}
-            and 5000 <= products <= 15000
+            and ctr >= 2.0
+            and products <= 15000
         ):
             return "중간성장"
 
-        return "미분류"
+        if (
+            searches >= 13000
+            and ctr >= 1.0
+            and products >= 15000
+        ):
+            return "대형"
+
+        return None
 
     @staticmethod
     def _estimate_season_months(monthly_trends: List[Dict[str, Any]]) -> str:
@@ -706,6 +696,37 @@ class KeywordSourcingService:
             if group_name in counts:
                 counts[group_name] += 1
         return counts
+
+    @staticmethod
+    def _parse_int(value: Any) -> Optional[int]:
+        if value in (None, ""):
+            return None
+        text = str(value).strip().replace(",", "")
+        if not text:
+            return None
+        if text == "< 10":
+            return 0
+        try:
+            return int(float(text))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_ctr(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        text = str(value).strip().replace(",", "").replace("%", "")
+        if not text:
+            return None
+        if text == "< 0.1":
+            return 0.0
+        try:
+            numeric = float(text)
+        except ValueError:
+            return None
+        if 0 < numeric < 1:
+            return numeric * 100.0
+        return numeric
 
     @staticmethod
     def _safe_average(values: List[float | None]) -> float | None:
