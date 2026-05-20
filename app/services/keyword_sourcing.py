@@ -635,28 +635,40 @@ class KeywordSourcingService:
         exposure_ads = KeywordSourcingService._parse_int(monthly_exposure_ads)
         competition = str(competition_level or "").strip()
 
-        if (
-            100 <= searches < 6000
-            and ctr >= 2.5
-            and competition in {"중간", "낮음"}
-            and exposure_ads is not None
-            and exposure_ads <= 7
-        ):
-            return "고효율"
+        if 100 <= searches < 5000:
+            if (
+                ctr >= 2.5
+                and competition in {"낮음", "중간"}
+                and exposure_ads is not None
+                and exposure_ads <= 7
+            ):
+                return "고효율"
+            if (
+                ctr >= 3.0
+                and competition in {"중간", "높음"}
+                and exposure_ads is not None
+                and exposure_ads <= 9
+            ):
+                return "고효율"
+            return None
 
-        if (
-            6000 <= searches < 20000
-            and ctr >= 1.8
-            and competition in {"중간", "낮음"}
-            and exposure_ads is not None
-            and exposure_ads <= 8
-        ):
-            return "중간성장"
+        if 5000 <= searches < 20000:
+            if (
+                searches < 10000
+                and ctr >= 1.5
+                and competition in {"낮음", "중간"}
+                and exposure_ads is not None
+                and exposure_ads <= 9
+            ):
+                return "중간성장"
+            if (
+                ctr >= 1.8
+                and competition in {"중간", "높음"}
+            ):
+                return "중간성장"
+            return None
 
-        if (
-            searches >= 20000
-            and ctr >= 1.0
-        ):
+        if searches >= 20000 and ctr >= 1.0:
             return "대형"
 
         return None
