@@ -1538,6 +1538,27 @@ ADMIN_HTML = """
       return keywordSummaryRows.slice(startIndex, startIndex + keywordSummaryPageSize);
     }
 
+    function setKeywordSummaryPage(pageIndex) {
+      keywordSummaryPageIndex = Math.max(0, Number(pageIndex) || 0);
+      renderKeywordPagination();
+      renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
+    }
+
+    function moveKeywordSummaryPage(direction) {
+      const totalPages = getKeywordSummaryTotalPages();
+      if (direction === "prev" && keywordSummaryPageIndex > 0) {
+        keywordSummaryPageIndex -= 1;
+      }
+      if (direction === "next" && keywordSummaryPageIndex < totalPages - 1) {
+        keywordSummaryPageIndex += 1;
+      }
+      renderKeywordPagination();
+      renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
+    }
+
+    window.setKeywordSummaryPage = setKeywordSummaryPage;
+    window.moveKeywordSummaryPage = moveKeywordSummaryPage;
+
     function renderKeywordPagination() {
       if (!keywordPaginationPages || !keywordPaginationMeta) {
         return;
@@ -1558,21 +1579,21 @@ ADMIN_HTML = """
       const startPage = Math.max(0, keywordSummaryPageIndex - 2);
       const endPage = Math.min(totalPages, startPage + 5);
       pageButtons.push(
-        `<button class="action-btn" type="button" data-keyword-page-nav="prev" ${keywordSummaryPageIndex === 0 ? "disabled" : ""}>이전</button>`
+        `<button class="action-btn" type="button" onclick="moveKeywordSummaryPage('prev')" ${keywordSummaryPageIndex === 0 ? "disabled" : ""}>이전</button>`
       );
       for (let index = startPage; index < endPage; index += 1) {
         pageButtons.push(`
           <button
             class="action-btn ${index === keywordSummaryPageIndex ? "primary" : ""}"
             type="button"
-            data-keyword-page="${index}"
+            onclick="setKeywordSummaryPage(${index})"
           >
             ${index + 1}
           </button>
         `);
       }
       pageButtons.push(
-        `<button class="action-btn" type="button" data-keyword-page-nav="next" ${keywordSummaryPageIndex >= totalPages - 1 ? "disabled" : ""}>다음</button>`
+        `<button class="action-btn" type="button" onclick="moveKeywordSummaryPage('next')" ${keywordSummaryPageIndex >= totalPages - 1 ? "disabled" : ""}>다음</button>`
       );
       keywordPaginationPages.innerHTML = pageButtons.join("");
       keywordPaginationMeta.textContent = `총 ${totalRows.toLocaleString("ko-KR")}건 중 ${startRow}-${endRow} 표시`;
@@ -2056,39 +2077,11 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordPaginationPages) {
-      keywordPaginationPages.addEventListener("click", (event) => {
-        const navTarget = event.target.closest("[data-keyword-page-nav]");
-        if (navTarget) {
-          const direction = navTarget.dataset.keywordPageNav;
-          const totalPages = getKeywordSummaryTotalPages();
-          if (direction === "prev" && keywordSummaryPageIndex > 0) {
-            keywordSummaryPageIndex -= 1;
-          }
-          if (direction === "next" && keywordSummaryPageIndex < totalPages - 1) {
-            keywordSummaryPageIndex += 1;
-          }
-          renderKeywordPagination();
-          renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
-          return;
-        }
-        const target = event.target.closest("[data-keyword-page]");
-        if (!target) {
-          return;
-        }
-        keywordSummaryPageIndex = Number(target.dataset.keywordPage || 0);
-        renderKeywordPagination();
-        renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
-      });
-    }
-
     if (keywordPageSize) {
       keywordPageSize.value = String(keywordSummaryPageSize);
       keywordPageSize.addEventListener("change", () => {
         keywordSummaryPageSize = Number(keywordPageSize.value || 15);
-        keywordSummaryPageIndex = 0;
-        renderKeywordPagination();
-        renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
+        setKeywordSummaryPage(0);
       });
     }
 
@@ -2481,12 +2474,14 @@ def build_keyword_summary_page_buttons_html(keyword_status: Dict[str, Any]) -> s
 
     tabs: List[str] = []
     page_count = (total_rows + 14) // 15
-    tabs.append('<button class="action-btn" type="button" data-keyword-page-nav="prev" disabled>이전</button>')
+    tabs.append('<button class="action-btn" type="button" onclick="moveKeywordSummaryPage(\'prev\')" disabled>이전</button>')
     for index in range(min(page_count, 5)):
         classes = "action-btn primary" if index == 0 else "action-btn"
-        tabs.append(f'<button class="{classes}" type="button" data-keyword-page="{index}">{index + 1}</button>')
+        tabs.append(
+            f'<button class="{classes}" type="button" onclick="setKeywordSummaryPage({index})">{index + 1}</button>'
+        )
     tabs.append(
-        '<button class="action-btn" type="button" data-keyword-page-nav="next" '
+        '<button class="action-btn" type="button" onclick="moveKeywordSummaryPage(\'next\')" '
         + ('disabled' if page_count <= 1 else '')
         + '>다음</button>'
     )
