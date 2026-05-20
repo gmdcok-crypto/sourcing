@@ -1209,15 +1209,11 @@ ADMIN_HTML = """
     let keywordSummaryPageSize = Number(__INITIAL_KEYWORD_PAGE_SIZE__) || 15;
     let keywordSourcingRunId = null;
     let keywordStatusPoller = null;
-    let keywordStatusStream = null;
-    let keywordStreamRetryTimer = null;
     let keywordHistoryMode = false;
     let keywordCalendarViewDate = new Date();
     let keywordDetailLoadedRunId = null;
     let keywordStatusRefreshInFlight = false;
-    let keywordStatusPollingEnabled = false;
     let keywordStatusLastSuccessAt = Date.now();
-    let keywordStatusWatchdogTimer = null;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1648,80 +1644,37 @@ ADMIN_HTML = """
     }
 
     function startKeywordStatusPolling() {
-      if (keywordStatusPollingEnabled) {
-        return;
-      }
-      keywordStatusPollingEnabled = true;
-      startKeywordStatusWatchdog();
-      ensureKeywordStatusStream();
-      scheduleKeywordStatusPolling(0);
-    }
-
-    function scheduleKeywordStatusPolling(delay = 2000) {
-      if (!keywordStatusPollingEnabled) {
-        return;
-      }
       if (keywordStatusPoller) {
-        clearTimeout(keywordStatusPoller);
+        return;
       }
-      keywordStatusPoller = setTimeout(async () => {
-        keywordStatusPoller = null;
-        if (!keywordStatusPollingEnabled || keywordHistoryMode) {
+      keywordStatusPoller = setInterval(async () => {
+        if (keywordHistoryMode) {
           return;
         }
         if (keywordStatusRefreshInFlight) {
-          scheduleKeywordStatusPolling(1000);
           return;
         }
         keywordStatusRefreshInFlight = true;
         try {
           await refreshKeywordSourcingStatus();
         } catch (error) {
+          if (keywordProgressLabel) {
+            keywordProgressLabel.textContent = "진행 상태 재연결 중...";
+          }
+          if (keywordStatusText) {
+            keywordStatusText.textContent = "연결 재시도 중";
+          }
           console.error(error);
         } finally {
           keywordStatusRefreshInFlight = false;
-          if (!keywordHistoryMode) {
-            scheduleKeywordStatusPolling(2000);
-          }
         }
-      }, delay);
+      }, 2000);
     }
 
     function stopKeywordStatusPolling() {
-      keywordStatusPollingEnabled = false;
       if (keywordStatusPoller) {
-        clearTimeout(keywordStatusPoller);
+        clearInterval(keywordStatusPoller);
         keywordStatusPoller = null;
-      }
-      stopKeywordStatusWatchdog();
-    }
-
-    function startKeywordStatusWatchdog() {
-      if (keywordStatusWatchdogTimer) {
-        return;
-      }
-      keywordStatusWatchdogTimer = setInterval(() => {
-        if (!keywordStatusPollingEnabled || keywordHistoryMode) {
-          return;
-        }
-        const stalledForMs = Date.now() - keywordStatusLastSuccessAt;
-        if (stalledForMs < 10000) {
-          return;
-        }
-        if (keywordProgressLabel) {
-          keywordProgressLabel.textContent = "진행 상태 재연결 중...";
-        }
-        if (keywordStatusText) {
-          keywordStatusText.textContent = "연결 재시도 중";
-        }
-        scheduleKeywordStatusPolling(0);
-      }, 3000);
-    }
-
-    function stopKeywordStatusWatchdog() {
-      if (keywordStatusWatchdogTimer) {
-        clearInterval(keywordStatusWatchdogTimer);
-        keywordStatusWatchdogTimer = null;
       }
     }
 
@@ -1739,17 +1692,6 @@ ADMIN_HTML = """
       }, 1000);
     }
 
-    function closeKeywordStatusStream() {
-      if (keywordStatusStream) {
-        keywordStatusStream.close();
-        keywordStatusStream = null;
-      }
-      if (keywordStreamRetryTimer) {
-        clearTimeout(keywordStreamRetryTimer);
-        keywordStreamRetryTimer = null;
-      }
-    }
-
     async function loadKeywordSourcingHistoryByDate() {
       const selectedDate = keywordHistoryDateInput.value;
       if (!selectedDate) {
@@ -1759,84 +1701,12 @@ ADMIN_HTML = """
 
       keywordHistoryMode = true;
       stopKeywordStatusPolling();
-      closeKeywordStatusStream();
       const state = await apiFetch(`/api/admin/keyword-sourcing/history?date_value=${encodeURIComponent(selectedDate)}&_ts=${Date.now()}`);
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
       }
       markKeywordStatusHealthy();
       renderKeywordSourcingStatus(state);
-    }
-
-    function ensureKeywordStatusStream() {
-      if (keywordHistoryMode) {
-        closeKeywordStatusStream();
-        return;
-      }
-      if (typeof EventSource === "undefined") {
-        return;
-      }
-      if (keywordStatusStream) {
-        return;
-      }
-
-      const params = new URLSearchParams();
-      if (keywordSourcingRunId) {
-        params.set("run_id", keywordSourcingRunId);
-      }
-      params.set("_ts", String(Date.now()));
-      keywordStatusStream = new EventSource(`/api/admin/keyword-sourcing/stream?${params.toString()}`);
-
-      keywordStatusStream.onmessage = async (event) => {
-        if (keywordHistoryMode) {
-          return;
-        }
-        try {
-          const state = JSON.parse(event.data || "{}");
-          if (state.run_id) {
-            keywordSourcingRunId = state.run_id;
-          }
-          markKeywordStatusHealthy();
-          renderKeywordSourcingStatus(state);
-          if (state.status === "running") {
-            keywordDetailLoadedRunId = null;
-          } else if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
-            await loadKeywordSourcingDetail(state.run_id);
-          }
-
-          if (state.status === "running") {
-            runKeywordSourcingBtn.disabled = true;
-            runKeywordSourcingBtn.textContent = "수집 중...";
-            if (stopKeywordSourcingBtn) {
-              stopKeywordSourcingBtn.disabled = false;
-            }
-          } else {
-            runKeywordSourcingBtn.disabled = false;
-            runKeywordSourcingBtn.textContent = "키워드 소싱";
-            if (stopKeywordSourcingBtn) {
-              stopKeywordSourcingBtn.disabled = true;
-            }
-            closeKeywordStatusStream();
-          }
-        } catch (error) {
-          console.error(error);
-        }
-      };
-
-      keywordStatusStream.onerror = () => {
-        closeKeywordStatusStream();
-        if (keywordHistoryMode) {
-          return;
-        }
-        if (keywordStreamRetryTimer) {
-          clearTimeout(keywordStreamRetryTimer);
-        }
-        keywordStreamRetryTimer = setTimeout(() => {
-          keywordStreamRetryTimer = null;
-          ensureKeywordStatusStream();
-          scheduleKeywordStatusPolling(0);
-        }, 1500);
-      };
     }
 
     function editTheme(themeId) {
@@ -2052,7 +1922,6 @@ ADMIN_HTML = """
             body: JSON.stringify(payload)
           });
           keywordSourcingRunId = result.run_id || keywordSourcingRunId;
-          ensureKeywordStatusStream();
           startKeywordStatusPolling();
           await refreshKeywordSourcingStatus();
         } catch (error) {
@@ -2200,7 +2069,6 @@ ADMIN_HTML = """
       console.error(error);
     });
     startKeywordLastUpdatedTicker();
-    ensureKeywordStatusStream();
     if (keywordStatusText && keywordStatusText.textContent === "running") {
       startKeywordStatusPolling();
     }
