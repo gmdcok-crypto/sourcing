@@ -1711,7 +1711,7 @@ ADMIN_HTML = """
       renderKeywordSourcingStatus(state);
     }
 
-    function downloadKeywordExcel() {
+    async function downloadKeywordExcel() {
       const params = new URLSearchParams();
       if (keywordHistoryMode && keywordHistoryDateInput && keywordHistoryDateInput.value) {
         params.set("date_value", keywordHistoryDateInput.value);
@@ -1719,7 +1719,25 @@ ADMIN_HTML = """
         params.set("run_id", keywordSourcingRunId);
       }
       params.set("_ts", String(Date.now()));
-      window.location.href = `/api/admin/keyword-sourcing/export?${params.toString()}`;
+      const response = await fetch(`/api/admin/keyword-sourcing/export?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error("엑셀 파일 생성에 실패했습니다.");
+      }
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition") || "";
+      const filenameMatch = contentDisposition.match(/filename=\"?([^"]+)\"?/i);
+      const filename = filenameMatch ? filenameMatch[1] : "keyword-results.xlsx";
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
     }
 
     function editTheme(themeId) {
@@ -1976,8 +1994,12 @@ ADMIN_HTML = """
     }
 
     if (keywordExportBtn) {
-      keywordExportBtn.addEventListener("click", () => {
-        downloadKeywordExcel();
+      keywordExportBtn.addEventListener("click", async () => {
+        try {
+          await downloadKeywordExcel();
+        } catch (error) {
+          alert(`엑셀 저장 실패: ${error.message}`);
+        }
       });
     }
 
