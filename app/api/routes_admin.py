@@ -315,11 +315,29 @@ ADMIN_HTML = """
       background: rgba(255, 255, 255, 0.03);
       overflow-x: auto;
     }
-    .keyword-page-tabs {
+    .keyword-pagination {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
       margin-bottom: 14px;
+    }
+    .keyword-pagination-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .keyword-pagination-pages {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .keyword-pagination-meta {
+      color: var(--muted);
+      font-size: 12px;
     }
     .keyword-metrics-table { min-width: 1280px; }
     .keyword-metrics-table th {
@@ -892,7 +910,19 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div><h2>키워드 파이프라인 결과</h2></div>
               </div>
-              <div class="keyword-page-tabs" id="keyword-page-tabs">__KEYWORD_PAGE_TABS__</div>
+              <div class="keyword-pagination">
+                <div class="keyword-pagination-controls">
+                  <label for="keyword-page-size">페이지당 표시</label>
+                  <select class="select" id="keyword-page-size">
+                    <option value="15">15</option>
+                    <option value="30">30</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+                <div class="keyword-pagination-pages" id="keyword-pagination-pages">__KEYWORD_PAGE_BUTTONS__</div>
+                <div class="keyword-pagination-meta" id="keyword-pagination-meta">__KEYWORD_PAGE_META__</div>
+              </div>
               <table class="keyword-metrics-table">
                 <thead>
                   <tr>
@@ -1151,10 +1181,13 @@ ADMIN_HTML = """
     const keywordSearchadCount = document.getElementById("keyword-searchad-count");
     const keywordR2Status = document.getElementById("keyword-r2-status");
     const keywordGroupCounts = document.getElementById("keyword-group-counts");
-    const keywordPageTabs = document.getElementById("keyword-page-tabs");
+    const keywordPageSize = document.getElementById("keyword-page-size");
+    const keywordPaginationPages = document.getElementById("keyword-pagination-pages");
+    const keywordPaginationMeta = document.getElementById("keyword-pagination-meta");
     const keywordSummaryBody = document.getElementById("keyword-summary-body");
-    let keywordSummaryPages = [];
+    let keywordSummaryRows = [];
     let keywordSummaryPageIndex = 0;
+    let keywordSummaryPageSize = 15;
     let keywordSourcingRunId = null;
     let keywordStatusPoller = null;
     let keywordStatusStream = null;
@@ -1461,7 +1494,7 @@ ADMIN_HTML = """
       keywordGroupCounts.textContent = `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`;
     }
 
-    function buildKeywordSummaryPages(classifiedKeywords) {
+    function buildKeywordSummaryRows(classifiedKeywords) {
       const formatMetricValue = (value) => {
         if (value == null || value === "") {
           return "-";
@@ -1489,33 +1522,59 @@ ADMIN_HTML = """
           coupangAction: "불러오기",
         });
       });
-
-      const pages = [];
-      for (let index = 0; index < rows.length; index += 100) {
-        pages.push(rows.slice(index, index + 100));
-      }
-      return pages;
+      return rows;
     }
 
-    function renderKeywordPageTabs() {
-      if (!keywordPageTabs) {
+    function getKeywordSummaryTotalPages() {
+      if (keywordSummaryRows.length === 0) {
+        return 0;
+      }
+      return Math.ceil(keywordSummaryRows.length / keywordSummaryPageSize);
+    }
+
+    function getKeywordSummaryCurrentPageRows() {
+      const startIndex = keywordSummaryPageIndex * keywordSummaryPageSize;
+      return keywordSummaryRows.slice(startIndex, startIndex + keywordSummaryPageSize);
+    }
+
+    function renderKeywordPagination() {
+      if (!keywordPaginationPages || !keywordPaginationMeta) {
         return;
       }
-      if (keywordSummaryPages.length === 0) {
-        keywordPageTabs.innerHTML = "";
+      const totalRows = keywordSummaryRows.length;
+      const totalPages = getKeywordSummaryTotalPages();
+      if (totalRows === 0 || totalPages === 0) {
+        keywordPaginationPages.innerHTML = "";
+        keywordPaginationMeta.textContent = "총 0건";
         return;
       }
-      keywordPageTabs.innerHTML = keywordSummaryPages
-        .map((pageRows, index) => `
+      if (keywordSummaryPageIndex >= totalPages) {
+        keywordSummaryPageIndex = 0;
+      }
+      const startRow = keywordSummaryPageIndex * keywordSummaryPageSize + 1;
+      const endRow = Math.min(startRow + keywordSummaryPageSize - 1, totalRows);
+      const pageButtons = [];
+      const startPage = Math.max(0, keywordSummaryPageIndex - 2);
+      const endPage = Math.min(totalPages, startPage + 5);
+      pageButtons.push(
+        `<button class="action-btn" type="button" data-keyword-page-nav="prev" ${keywordSummaryPageIndex === 0 ? "disabled" : ""}>이전</button>`
+      );
+      for (let index = startPage; index < endPage; index += 1) {
+        pageButtons.push(`
           <button
             class="action-btn ${index === keywordSummaryPageIndex ? "primary" : ""}"
             type="button"
             data-keyword-page="${index}"
           >
-            ${index + 1}탭 (${pageRows.length})
+            ${index + 1}
           </button>
-        `)
-        .join("");
+        `);
+      }
+      pageButtons.push(
+        `<button class="action-btn" type="button" data-keyword-page-nav="next" ${keywordSummaryPageIndex >= totalPages - 1 ? "disabled" : ""}>다음</button>`
+      );
+      keywordPaginationPages.innerHTML = pageButtons.join("");
+      keywordPaginationMeta.textContent = `총 ${totalRows.toLocaleString("ko-KR")}건 중 ${startRow}-${endRow} 표시`;
     }
 
     function renderKeywordSummaryPageRows(pageRows) {
@@ -1542,20 +1601,20 @@ ADMIN_HTML = """
     }
 
     function renderKeywordSummaryRows(classifiedKeywords) {
-      keywordSummaryPages = buildKeywordSummaryPages(classifiedKeywords);
-      if (keywordSummaryPages.length === 0) {
+      keywordSummaryRows = buildKeywordSummaryRows(classifiedKeywords);
+      if (keywordSummaryRows.length === 0) {
         keywordSummaryPageIndex = 0;
-        renderKeywordPageTabs();
+        renderKeywordPagination();
         renderKeywordSummaryPageRows([]);
         return;
       }
 
-      if (keywordSummaryPageIndex >= keywordSummaryPages.length) {
+      if (keywordSummaryPageIndex >= getKeywordSummaryTotalPages()) {
         keywordSummaryPageIndex = 0;
       }
 
-      renderKeywordPageTabs();
-      renderKeywordSummaryPageRows(keywordSummaryPages[keywordSummaryPageIndex]);
+      renderKeywordPagination();
+      renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
     }
 
     async function loadKeywordSourcingDetail(runId) {
@@ -1996,15 +2055,39 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordPageTabs) {
-      keywordPageTabs.addEventListener("click", (event) => {
+    if (keywordPaginationPages) {
+      keywordPaginationPages.addEventListener("click", (event) => {
+        const navTarget = event.target.closest("[data-keyword-page-nav]");
+        if (navTarget) {
+          const direction = navTarget.dataset.keywordPageNav;
+          const totalPages = getKeywordSummaryTotalPages();
+          if (direction === "prev" && keywordSummaryPageIndex > 0) {
+            keywordSummaryPageIndex -= 1;
+          }
+          if (direction === "next" && keywordSummaryPageIndex < totalPages - 1) {
+            keywordSummaryPageIndex += 1;
+          }
+          renderKeywordPagination();
+          renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
+          return;
+        }
         const target = event.target.closest("[data-keyword-page]");
         if (!target) {
           return;
         }
         keywordSummaryPageIndex = Number(target.dataset.keywordPage || 0);
-        renderKeywordPageTabs();
-        renderKeywordSummaryPageRows(keywordSummaryPages[keywordSummaryPageIndex] || []);
+        renderKeywordPagination();
+        renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
+      });
+    }
+
+    if (keywordPageSize) {
+      keywordPageSize.value = String(keywordSummaryPageSize);
+      keywordPageSize.addEventListener("change", () => {
+        keywordSummaryPageSize = Number(keywordPageSize.value || 15);
+        keywordSummaryPageIndex = 0;
+        renderKeywordPagination();
+        renderKeywordSummaryPageRows(getKeywordSummaryCurrentPageRows());
       });
     }
 
@@ -2203,7 +2286,8 @@ def render_admin_html(
         ),
     )
     html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status))
-    html = html.replace("__KEYWORD_PAGE_TABS__", build_keyword_summary_page_tabs_html(keyword_status))
+    html = html.replace("__KEYWORD_PAGE_BUTTONS__", build_keyword_summary_page_buttons_html(keyword_status))
+    html = html.replace("__KEYWORD_PAGE_META__", build_keyword_summary_page_meta_text(keyword_status))
     html = html.replace("__KEYWORD_THEME_OPTIONS__", build_theme_options_html(themes))
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
@@ -2362,7 +2446,7 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
     if not classified_keywords:
         classified_keywords = keyword_status.get("preview_rows") or []
 
-    first_page_rows = classified_keywords[:100]
+    first_page_rows = classified_keywords[:15]
     rows: List[str] = []
     for index, keyword_row in enumerate(first_page_rows, start=1):
         keyword_text = (
@@ -2410,7 +2494,7 @@ def build_keyword_summary_rows_html(keyword_status: Dict[str, Any]) -> str:
     return "".join(rows)
 
 
-def build_keyword_summary_page_tabs_html(keyword_status: Dict[str, Any]) -> str:
+def build_keyword_summary_page_buttons_html(keyword_status: Dict[str, Any]) -> str:
     classified_keywords = keyword_status.get("classified_keywords") or []
     if not classified_keywords:
         classified_keywords = keyword_status.get("preview_rows") or []
@@ -2420,16 +2504,25 @@ def build_keyword_summary_page_tabs_html(keyword_status: Dict[str, Any]) -> str:
         return ""
 
     tabs: List[str] = []
-    page_count = (total_rows + 99) // 100
-    for index in range(page_count):
-        start = index * 100
-        end = min(start + 100, total_rows)
-        page_size = end - start
+    page_count = (total_rows + 14) // 15
+    tabs.append('<button class="action-btn" type="button" data-keyword-page-nav="prev" disabled>이전</button>')
+    for index in range(min(page_count, 5)):
         classes = "action-btn primary" if index == 0 else "action-btn"
-        tabs.append(
-            (
-                f'<button class="{classes}" type="button" '
-                f'data-keyword-page="{index}">{index + 1}탭 ({page_size})</button>'
-            )
-        )
+        tabs.append(f'<button class="{classes}" type="button" data-keyword-page="{index}">{index + 1}</button>')
+    tabs.append(
+        '<button class="action-btn" type="button" data-keyword-page-nav="next" '
+        + ('disabled' if page_count <= 1 else '')
+        + '>다음</button>'
+    )
     return "".join(tabs)
+
+
+def build_keyword_summary_page_meta_text(keyword_status: Dict[str, Any]) -> str:
+    classified_keywords = keyword_status.get("classified_keywords") or []
+    if not classified_keywords:
+        classified_keywords = keyword_status.get("preview_rows") or []
+    total_rows = len(classified_keywords)
+    if total_rows == 0:
+        return "총 0건"
+    end_row = min(15, total_rows)
+    return f"총 {total_rows:,}건 중 1-{end_row} 표시"
