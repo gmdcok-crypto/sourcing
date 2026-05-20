@@ -82,6 +82,16 @@ ADMIN_HTML = """
 
     .brand-title { font-size: 18px; font-weight: 700; margin: 0; }
     .brand-subtitle { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .build-marker {
+      margin: 0 0 16px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(124, 156, 255, 0.28);
+      background: rgba(124, 156, 255, 0.12);
+      color: #dce4ff;
+      font-size: 12px;
+      font-weight: 700;
+    }
 
     .nav-label {
       margin: 0 0 10px 12px;
@@ -665,6 +675,7 @@ ADMIN_HTML = """
     </aside>
 
     <main class="content">
+      <div class="build-marker">BUILD MARKER 2026-05-20 15:20 KST</div>
       <section id="dashboard" class="tab-panel __TAB_DASHBOARD_ACTIVE__">
         <div class="metrics">
           <article class="card metric-card"><div class="metric-label">키워드 풀</div><p class="metric-value">18,420</p><div class="metric-meta">지난 회차 대비 +12.8% / 활성 테마 23개</div></article>
