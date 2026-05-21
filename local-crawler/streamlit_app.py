@@ -118,18 +118,16 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
     for item in items:
         rows.append(
             {
-                "keyword": item.get("keyword"),
-                "rank": item.get("rank"),
-                "image_url": item.get("image_url"),
-                "title": item.get("title"),
-                "price": _to_display_int(item.get("price")),
-                "review_count": _to_display_int(item.get("review_count")),
-                "review_score": _to_display_int(item.get("review_score")),
-                "delivery_type": item.get("delivery_type"),
-                "shipping_fee": item.get("shipping_fee"),
-                "product_url": item.get("product_url"),
-                "reason_code": item.get("reason_code"),
-                "fetch_source": item.get("fetch_source"),
+                "키워드": item.get("keyword"),
+                "순위": item.get("rank"),
+                "이미지": item.get("image_url"),
+                "타이틀": item.get("title"),
+                "가격": _to_display_int(item.get("price")),
+                "리뷰수": _to_display_int(item.get("review_count")),
+                "리뷰점수": _to_display_int(item.get("review_score")),
+                "배송형태": item.get("delivery_type"),
+                "배송비": item.get("shipping_fee"),
+                "상세페이지": item.get("product_url"),
             }
         )
     return pd.DataFrame(rows)
