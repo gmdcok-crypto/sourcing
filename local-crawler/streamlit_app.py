@@ -104,6 +104,15 @@ def _logs_to_lines(logs: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _to_display_int(value: Any) -> Any:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return value
+
+
 def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for item in items:
@@ -113,9 +122,9 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "rank": item.get("rank"),
                 "image_url": item.get("image_url"),
                 "title": item.get("title"),
-                "price": item.get("price"),
-                "review_count": item.get("review_count"),
-                "review_score": item.get("review_score"),
+                "price": _to_display_int(item.get("price")),
+                "review_count": _to_display_int(item.get("review_count")),
+                "review_score": _to_display_int(item.get("review_score")),
                 "delivery_type": item.get("delivery_type"),
                 "shipping_fee": item.get("shipping_fee"),
                 "product_url": item.get("product_url"),
