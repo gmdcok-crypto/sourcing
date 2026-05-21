@@ -52,6 +52,30 @@ python ported_coupang.py
 
 결과는 `output/ported_last_result.json`에 저장됩니다.
 
+## 3-1. 로컬 운영 UI
+
+Streamlit UI 실행:
+
+```powershell
+cd d:\sourcing\local-crawler
+streamlit run streamlit_app.py
+```
+
+UI에서 할 수 있는 작업:
+
+- DB에 저장된 `final keywords` 배치 실행
+- 안전 중지
+- 실패 키워드 재실행
+- 현재 실행 키워드/진행률/성공/실패/마지막 에러 확인
+- 상품 결과 테이블 확인 (`image_url`, 가격, 리뷰수, 배송유형, 링크)
+- 실행 로그 확인
+
+주의:
+
+- 로컬 UI는 중앙 서버의 `/api/admin/keyword-sourcing/crawler-keywords` API를 사용합니다.
+- `date_value` 없이 호출할 때는 서버가 DB의 `keyword_sourcing_final_keywords` 테이블을 기준으로 배치 대상을 내려줍니다.
+- UI 결과 요약 파일은 `output/ui_state.json`, `output/ui_results.json`에 저장됩니다.
+
 ## 4. 준비/수동 확인 모드
 
 쿠팡 홈 열기:

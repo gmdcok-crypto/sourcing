@@ -87,6 +87,114 @@ class KeywordSourcingService:
         }
 
     @classmethod
+    def get_final_keyword_rows(
+        cls,
+        *,
+        run_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        capped_limit = max(1, min(int(limit or 10), 100))
+        selected_run_id = run_id
+
+        if not selected_run_id:
+            latest_state = cls._load_state_from_db()
+            if latest_state:
+                selected_run_id = latest_state.get("run_id")
+            elif cls._latest_run_id:
+                selected_run_id = cls._latest_run_id
+
+        if not selected_run_id:
+            return {
+                "status": "ok",
+                "run_id": None,
+                "keyword_count": 0,
+                "keywords": [],
+            }
+
+        connection = get_mysql_connection()
+        try:
+            cls._ensure_final_keyword_table(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        run_id,
+                        keyword,
+                        theme_id,
+                        theme_code,
+                        theme_name,
+                        category_id,
+                        cid,
+                        category_name,
+                        full_path,
+                        shopping_category_path,
+                        group_name,
+                        rank_order,
+                        ratio_value,
+                        monthly_mobile_searches,
+                        monthly_mobile_ctr,
+                        competition_level,
+                        monthly_exposure_ads,
+                        product_count,
+                        ad_efficiency,
+                        season_months_json,
+                        is_final_keyword,
+                        crawl_status,
+                        crawl_job_id,
+                        last_crawled_at,
+                        source_payload_json,
+                        updated_at
+                    FROM keyword_sourcing_final_keywords
+                    WHERE run_id = %s
+                    ORDER BY
+                        COALESCE(rank_order, 999999) ASC,
+                        COALESCE(monthly_mobile_searches, 0) DESC,
+                        keyword ASC
+                    LIMIT %s
+                    """,
+                    (selected_run_id, capped_limit),
+                )
+                rows = cursor.fetchall() or []
+        finally:
+            connection.close()
+
+        keywords: List[Dict[str, Any]] = []
+        for row in rows:
+            source_payload = cls._json_loads(row.get("source_payload_json"), {})
+            keywords.append(
+                {
+                    "run_id": row.get("run_id"),
+                    "keyword": str(row.get("keyword") or "").strip(),
+                    "group_name": row.get("group_name") or "-",
+                    "theme_name": row.get("theme_name") or "",
+                    "theme_id": cls._to_int(row.get("theme_id")),
+                    "theme_detail": row.get("shopping_category_path")
+                    or row.get("full_path")
+                    or row.get("category_name")
+                    or row.get("theme_name")
+                    or "-",
+                    "monthly_mobile_searches": cls._to_int(row.get("monthly_mobile_searches")),
+                    "monthly_mobile_ctr": cls._to_float(row.get("monthly_mobile_ctr")),
+                    "competition_level": row.get("competition_level"),
+                    "monthly_exposure_ads": cls._to_int(row.get("monthly_exposure_ads")),
+                    "product_count": cls._to_int(row.get("product_count")),
+                    "rank": cls._to_int(row.get("rank_order")),
+                    "crawl_status": row.get("crawl_status") or "pending",
+                    "crawl_job_id": row.get("crawl_job_id"),
+                    "last_crawled_at": cls._from_db_datetime(row.get("last_crawled_at")),
+                    "updated_at": cls._from_db_datetime(row.get("updated_at")),
+                    "source_payload": source_payload,
+                }
+            )
+
+        return {
+            "status": "ok",
+            "run_id": selected_run_id,
+            "keyword_count": len(keywords),
+            "keywords": keywords,
+        }
+
+    @classmethod
     def load_saved_result_for_date(cls, settings, *, target_date: date) -> Dict[str, Any]:
         service = cls(settings)
         key = service.r2_service.find_latest_json_key_for_date(target_date=target_date)
