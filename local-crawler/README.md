@@ -35,6 +35,11 @@ COUPANG_SMOKE_EXTRACT_DB=false
 - `BRIGHTDATA_REQUEST_ZONE`
 - `COUPANG_PLAYWRIGHT_CHANNEL`
 - `COUPANG_SMOKE_GOOGLE_QUERY`
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_BUCKET_NAME`
+- `R2_PUBLIC_BASE_URL`
 
 ## 3. 실행
 
@@ -75,6 +80,7 @@ UI에서 할 수 있는 작업:
 - 로컬 UI는 중앙 서버의 `/api/admin/keyword-sourcing/crawler-keywords` API를 사용합니다.
 - `date_value` 없이 호출할 때는 서버가 DB의 `keyword_sourcing_final_keywords` 테이블을 기준으로 배치 대상을 내려줍니다.
 - UI 결과 요약 파일은 `output/ui_state.json`, `output/ui_results.json`에 저장됩니다.
+- R2 설정이 채워져 있으면 배치 완료 후 결과 JSON을 `crawling/coupang/local-ui-results/` 전용 폴더 경로로 R2에도 업로드합니다.
 
 ## 4. 준비/수동 확인 모드
 

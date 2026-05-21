@@ -17,6 +17,11 @@ class LocalCrawlerSettings(BaseSettings):
     crawler_keywords_limit: int = Field(default=10, alias="CRAWLER_KEYWORDS_LIMIT")
     crawler_run_id: Optional[str] = Field(default=None, alias="CRAWLER_RUN_ID")
     crawler_date_value: Optional[str] = Field(default=None, alias="CRAWLER_DATE_VALUE")
+    r2_account_id: Optional[str] = Field(default=None, alias="R2_ACCOUNT_ID")
+    r2_access_key_id: Optional[str] = Field(default=None, alias="R2_ACCESS_KEY_ID")
+    r2_secret_access_key: Optional[str] = Field(default=None, alias="R2_SECRET_ACCESS_KEY")
+    r2_bucket_name: Optional[str] = Field(default=None, alias="R2_BUCKET_NAME")
+    r2_public_base_url: Optional[str] = Field(default=None, alias="R2_PUBLIC_BASE_URL")
 
     brightdata_proxy_host: str = Field(default="brd.superproxy.io", alias="BRIGHTDATA_PROXY_HOST")
     brightdata_proxy_port: int = Field(default=33335, alias="BRIGHTDATA_PROXY_PORT")

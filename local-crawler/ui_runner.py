@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
+
 from config import LocalCrawlerSettings, get_settings
 from railway_client import RailwayKeywordClient
 
@@ -45,6 +48,58 @@ def _read_json(path: Path, default: Any) -> Any:
 def _write_json(path: Path, payload: Any) -> None:
     _ensure_output_dir()
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _r2_is_configured(settings: LocalCrawlerSettings) -> bool:
+    return all(
+        [
+            settings.r2_account_id,
+            settings.r2_access_key_id,
+            settings.r2_secret_access_key,
+            settings.r2_bucket_name,
+        ]
+    )
+
+
+def _build_r2_client(settings: LocalCrawlerSettings):
+    endpoint_url = f"https://{settings.r2_account_id}.r2.cloudflarestorage.com"
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=settings.r2_access_key_id,
+        aws_secret_access_key=settings.r2_secret_access_key,
+        region_name="auto",
+    )
+
+
+def _build_r2_result_key(*, run_id: Optional[str], job_id: str) -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_run_id = str(run_id or "no-run-id").strip() or "no-run-id"
+    safe_job_id = str(job_id or "no-job-id").strip() or "no-job-id"
+    return f"crawling/coupang/local-ui-results/{safe_run_id}/{timestamp}-{safe_job_id}.json"
+
+
+def _upload_results_to_r2(
+    *,
+    settings: LocalCrawlerSettings,
+    run_id: Optional[str],
+    job_id: str,
+    payload: Dict[str, Any],
+) -> str:
+    if not _r2_is_configured(settings):
+        return ""
+    key = _build_r2_result_key(run_id=run_id, job_id=job_id)
+    client = _build_r2_client(settings)
+    try:
+        client.put_object(
+            Bucket=settings.r2_bucket_name,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+            ContentType="application/json",
+        )
+    except (BotoCoreError, ClientError):
+        return ""
+    return key
 
 
 def _default_state() -> Dict[str, Any]:
@@ -352,6 +407,21 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
         state["status"] = "completed"
         state["message"] = "배치 완료"
         state["finished_at"] = _now_iso()
+        results_payload = get_ui_results()
+        r2_key = _upload_results_to_r2(
+            settings=settings,
+            run_id=run_id,
+            job_id=job_id,
+            payload=results_payload,
+        )
+        state["result_locations"] = {
+            "local_file": str(RESULTS_PATH),
+            "r2_key": r2_key,
+        }
+        if r2_key:
+            _append_log(state, f"R2 업로드 완료: {r2_key}", level="success")
+        else:
+            _append_log(state, "R2 업로드를 건너뛰었거나 실패했습니다.", level="warning")
         _append_log(state, "배치 실행이 완료되었습니다.", level="success")
         _write_json(STATE_PATH, state)
     except Exception as exc:
