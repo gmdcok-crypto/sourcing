@@ -143,7 +143,7 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "배송정책": item.get("delivery_type"),
                 "배송비": _normalize_shipping_fee_display(item.get("shipping_fee")),
                 "리뷰수": _to_display_int(item.get("review_count")),
-                "리뷰별점": item.get("review_score"),
+                "리뷰별점": _to_display_int(item.get("review_score")),
                 "상품링크": item.get("product_url"),
                 "대표이미지": item.get("image_url"),
                 "쿠팡상품번호": item.get("product_id"),
@@ -152,11 +152,9 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
             }
         )
     df = pd.DataFrame(rows)
-    for column in ("판매가격", "배송비", "리뷰수"):
+    for column in ("판매가격", "배송비", "리뷰수", "리뷰별점"):
         if column in df.columns:
             df[column] = pd.array(df[column], dtype="Int64")
-    if "리뷰별점" in df.columns:
-        df["리뷰별점"] = pd.to_numeric(df["리뷰별점"], errors="coerce")
     return df
 
 
