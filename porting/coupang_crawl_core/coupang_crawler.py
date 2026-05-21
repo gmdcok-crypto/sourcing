@@ -185,6 +185,8 @@ class CoupangCrawler:
         }
         self._last_error: Dict[str, str] = {}
         self._last_fetch_source = "unknown"
+        self._last_bright_request_debug: Dict[str, Any] = {}
+        self._last_detail_fetch_debug: Dict[str, Any] = {}
         self._playwright: Optional[Playwright] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
@@ -1077,6 +1079,170 @@ class CoupangCrawler:
             }
             return None
 
+    def _requests_html_with_browser_session(
+        self, page: Page, target_url: str, *, referer: str = ""
+    ) -> Optional[str]:
+        if self._context is None:
+            return None
+        try:
+            storage = self._context.storage_state()
+            cookies = storage.get("cookies", []) if isinstance(storage, dict) else []
+            jar = requests.cookies.RequestsCookieJar()
+            for c in cookies:
+                jar.set(
+                    str(c.get("name", "")),
+                    str(c.get("value", "")),
+                    domain=str(c.get("domain", "")).lstrip("."),
+                    path=str(c.get("path", "/")),
+                )
+            headers = self._session_headers_from_page(page)
+            ref = str(referer or page.url or "https://www.coupang.com/").strip()
+            headers["Referer"] = ref
+            headers["Sec-Fetch-Site"] = "same-origin" if "coupang.com" in ref.lower() else "none"
+            res = requests.get(target_url, headers=headers, cookies=jar, timeout=15, allow_redirects=True)
+            text = (res.text or "").strip()
+            content_type = str(res.headers.get("content-type", "") or "").strip()
+            preview = re.sub(r"\s+", " ", text[:300]).strip()
+            self._last_detail_fetch_debug = {
+                "method": "requests_browser_session",
+                "url": str(target_url or "").strip(),
+                "referer": ref,
+                "status_code": int(res.status_code),
+                "content_type": content_type,
+                "body_len": len(text),
+                "preview": preview,
+            }
+            if res.status_code != 200:
+                self._last_detail_fetch_debug["error_code"] = f"HTTP_{int(res.status_code)}"
+                safe_print(
+                    f"[DETAIL][requests] status={res.status_code} url={target_url} "
+                    f"content_type={content_type or '-'} body_len={len(text)} preview={preview[:120]}"
+                )
+                return None
+            if not text:
+                self._last_detail_fetch_debug["error_code"] = "EMPTY_BODY"
+                safe_print(f"[DETAIL][requests] empty body url={target_url}")
+                return None
+            if self._is_blocked(text, ""):
+                self._last_detail_fetch_debug["error_code"] = "BLOCKED_HTML"
+                safe_print(f"[DETAIL][requests] blocked-like html url={target_url}")
+                return None
+            if "<" not in text:
+                self._last_detail_fetch_debug["error_code"] = "NON_HTML_BODY"
+                safe_print(
+                    f"[DETAIL][requests] non-html url={target_url} "
+                    f"content_type={content_type or '-'} body_len={len(text)} preview={preview[:120]}"
+                )
+                return None
+            self._last_detail_fetch_debug["stage"] = "html_ok"
+            return text
+        except Exception as e:
+            self._last_detail_fetch_debug = {
+                "method": "requests_browser_session",
+                "url": str(target_url or "").strip(),
+                "referer": str(referer or page.url or "").strip(),
+                "error_code": type(e).__name__,
+                "message": repr(e),
+            }
+            safe_print(f"[DETAIL][requests] exception url={target_url} error={type(e).__name__}")
+            return None
+
+    def fetch_detail_page_html(self, target_url: str, *, referer: str = "") -> Optional[str]:
+        url = str(target_url or "").strip()
+        if not url:
+            self._last_detail_fetch_debug = {
+                "method": "detail_fetch",
+                "url": "",
+                "error_code": "EMPTY_URL",
+            }
+            return None
+        with self._io_lock:
+            page = self._get_page()
+            if page is None:
+                self._last_detail_fetch_debug = {
+                    "method": "detail_fetch",
+                    "url": url,
+                    "error_code": "PLAYWRIGHT_INIT_FAILED",
+                    "message": str((self._last_error or {}).get("message", "")),
+                }
+                return None
+
+            try:
+                cur_url = str(page.url or "").strip()
+            except Exception:
+                cur_url = ""
+
+            if "coupang.com" not in cur_url.lower():
+                try:
+                    page.goto("https://www.coupang.com", wait_until="domcontentloaded")
+                    if self._is_blocked(page.content(), page.title()):
+                        self._last_detail_fetch_debug = {
+                            "method": "playwright_prewarm",
+                            "url": url,
+                            "error_code": "BLOCKED_HOME",
+                            "page_url": str(page.url or ""),
+                            "page_title": (page.title() or "")[:120],
+                        }
+                        safe_print("[DETAIL][playwright] prewarm blocked by WAF/CAPTCHA")
+                        return None
+                    self._simulate_human_actions(page)
+                except Exception as e:
+                    self._last_detail_fetch_debug = {
+                        "method": "playwright_prewarm",
+                        "url": url,
+                        "error_code": type(e).__name__,
+                        "message": repr(e),
+                    }
+
+            ref = str(referer or page.url or "https://www.coupang.com/").strip()
+            html = self._requests_html_with_browser_session(page, url, referer=ref)
+            if html:
+                return html
+
+            try:
+                page.goto(url, wait_until="domcontentloaded")
+                page.wait_for_timeout(random.randint(700, 1300))
+                self._simulate_human_actions(page)
+                html = page.content()
+                title = (page.title() or "")[:120]
+                preview = re.sub(r"\s+", " ", (html or "")[:300]).strip()
+                self._last_detail_fetch_debug = {
+                    "method": "playwright",
+                    "url": url,
+                    "page_url": str(page.url or "").strip(),
+                    "page_title": title,
+                    "body_len": len(str(html or "")),
+                    "preview": preview,
+                }
+                if not html.strip():
+                    self._last_detail_fetch_debug["error_code"] = "EMPTY_BODY"
+                    safe_print(f"[DETAIL][playwright] empty body url={url}")
+                    return None
+                if self._is_blocked(html, title):
+                    self._last_detail_fetch_debug["error_code"] = "BLOCKED_HTML"
+                    safe_print(f"[DETAIL][playwright] blocked-like html url={url}")
+                    return None
+                self._last_detail_fetch_debug["stage"] = "html_ok"
+                return html
+            except TimeoutError as e:
+                self._last_detail_fetch_debug = {
+                    "method": "playwright",
+                    "url": url,
+                    "error_code": "TIMEOUT",
+                    "message": str(e),
+                }
+                safe_print(f"[DETAIL][playwright] timeout url={url}")
+                return None
+            except Exception as e:
+                self._last_detail_fetch_debug = {
+                    "method": "playwright",
+                    "url": url,
+                    "error_code": type(e).__name__,
+                    "message": repr(e),
+                }
+                safe_print(f"[DETAIL][playwright] exception url={url} error={type(e).__name__}")
+                return None
+
     def bootstrap_login_session(self, wait_seconds: int = 120) -> bool:
         with self._io_lock:
             if self._page is not None:
@@ -1315,6 +1481,12 @@ class CoupangCrawler:
         token = (os.environ.get("BRIGHTDATA_API_TOKEN") or "").strip()
         zone = (os.environ.get("BRIGHTDATA_REQUEST_ZONE") or "").strip()
         if not token or not zone:
+            self._last_bright_request_debug = {
+                "stage": "precheck",
+                "url": str(url or "").strip(),
+                "error_code": "MISSING_BRIGHT_ENV",
+                "message": "token or zone missing",
+            }
             return None
         try:
             to = int(float(os.environ.get("BRIGHTDATA_REQUEST_TIMEOUT_SEC", "35")))
@@ -1343,22 +1515,48 @@ class CoupangCrawler:
                     timeout=float(to),
                 )
             except Exception as ex:
+                self._last_bright_request_debug = {
+                    "stage": "request_exception",
+                    "url": str(url or "").strip(),
+                    "attempt": attempt + 1,
+                    "attempts": attempts,
+                    "error_code": type(ex).__name__,
+                    "message": repr(ex),
+                }
                 if attempt + 1 < attempts:
                     continue
                 self._stats["bright_error"] += 1
                 safe_print(f"[BRIGHT] request exception {type(ex).__name__}")
                 return None
+            content_type = str(r.headers.get("content-type", "") or "").strip()
+            text = (r.text or "").strip()
+            preview = re.sub(r"\s+", " ", text[:300]).strip()
+            self._last_bright_request_debug = {
+                "stage": "response",
+                "url": str(url or "").strip(),
+                "attempt": attempt + 1,
+                "attempts": attempts,
+                "status_code": int(r.status_code),
+                "content_type": content_type,
+                "body_len": len(text),
+                "preview": preview,
+            }
             if r.status_code != 200:
                 retryable = r.status_code >= 500 or r.status_code == 429
                 if retryable and attempt + 1 < attempts:
                     safe_print(f"[BRIGHT] HTTP {r.status_code} → retry {attempt + 1}/{attempts}")
                     continue
                 self._stats["bright_error"] += 1
-                safe_print(f"[BRIGHT] HTTP {r.status_code}")
+                self._last_bright_request_debug["error_code"] = f"HTTP_{r.status_code}"
+                safe_print(
+                    f"[BRIGHT][DETAIL] status={r.status_code} url={str(url or '').strip()} "
+                    f"content_type={content_type or '-'} body_len={len(text)} preview={preview[:120]}"
+                )
                 return None
-            text = (r.text or "").strip()
             if not text:
                 self._stats["bright_error"] += 1
+                self._last_bright_request_debug["error_code"] = "EMPTY_BODY"
+                safe_print(f"[BRIGHT][DETAIL] empty body url={str(url or '').strip()} status=200")
                 return None
             if text.lstrip().startswith("{"):
                 try:
@@ -1373,7 +1571,18 @@ class CoupangCrawler:
                     pass
             if "<" not in text:
                 self._stats["bright_error"] += 1
+                self._last_bright_request_debug["error_code"] = "NON_HTML_BODY"
+                self._last_bright_request_debug["body_len"] = len(text)
+                self._last_bright_request_debug["preview"] = re.sub(r"\s+", " ", text[:300]).strip()
+                safe_print(
+                    f"[BRIGHT][DETAIL] non-html url={str(url or '').strip()} "
+                    f"content_type={content_type or '-'} body_len={len(text)} "
+                    f"preview={self._last_bright_request_debug['preview'][:120]}"
+                )
                 return None
+            self._last_bright_request_debug["stage"] = "html_ok"
+            self._last_bright_request_debug["body_len"] = len(text)
+            self._last_bright_request_debug["preview"] = re.sub(r"\s+", " ", text[:300]).strip()
             return text
 
     def crawl_coupang(self, keyword: str) -> Dict[str, Any]:
@@ -2445,6 +2654,12 @@ class CoupangCrawler:
 
     def get_last_error(self) -> Dict[str, str]:
         return dict(self._last_error)
+
+    def get_last_bright_request_debug(self) -> Dict[str, Any]:
+        return dict(self._last_bright_request_debug)
+
+    def get_last_detail_fetch_debug(self) -> Dict[str, Any]:
+        return dict(self._last_detail_fetch_debug)
 
     def close(self) -> None:
         try:

@@ -414,12 +414,34 @@ def _extract_detail_fields(html: str, item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_detail_parse_debug(item: Dict[str, Any], detail_fields: Dict[str, Any], html: str) -> Dict[str, Any]:
+    filled_fields = [
+        key
+        for key in ("category", "seller_info", "option_count", "origin_country", "model_name", "delivery_type")
+        if detail_fields.get(key) not in (None, "", [])
+    ]
+    return {
+        "product_id": detail_fields.get("product_id") or _extract_product_id_from_url(item.get("url") or item.get("product_url")),
+        "product_url": item.get("url") or item.get("product_url") or "",
+        "html_len": len(str(html or "")),
+        "filled_fields": filled_fields,
+        "filled_count": len(filled_fields),
+        "category_found": bool(detail_fields.get("category")),
+        "seller_found": bool(detail_fields.get("seller_info")),
+        "option_found": detail_fields.get("option_count") is not None,
+        "origin_found": bool(detail_fields.get("origin_country")),
+        "model_found": bool(detail_fields.get("model_name")),
+        "delivery_found": bool(detail_fields.get("delivery_type")),
+    }
+
+
 def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) -> Dict[str, Any]:
     items = list(result_data.get("top10_items") or [])
     if not items:
         return result_data
 
     enriched_items = []
+    detail_debug_rows: List[Dict[str, Any]] = []
     for item in items:
         url = _normalize_space(item.get("url") or item.get("product_url"))
         enriched = dict(item)
@@ -434,19 +456,74 @@ def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) 
         enriched.setdefault("option_count", None)
         enriched.setdefault("origin_country", "")
         enriched.setdefault("model_name", "")
+        enriched.setdefault("detail_fetch_ok", False)
+        enriched.setdefault("detail_parse_filled_count", 0)
 
-        if url and hasattr(crawler, "_bright_request_fetch_html"):
+        if url:
             try:
-                html = crawler._bright_request_fetch_html(url)
+                if hasattr(crawler, "fetch_detail_page_html"):
+                    html = crawler.fetch_detail_page_html(url)
+                elif hasattr(crawler, "_bright_request_fetch_html"):
+                    html = crawler._bright_request_fetch_html(url)
+                else:
+                    html = None
             except Exception:
                 html = None
             if html:
-                enriched.update(_extract_detail_fields(html, enriched))
+                detail_fields = _extract_detail_fields(html, enriched)
+                parse_debug = _build_detail_parse_debug(enriched, detail_fields, html)
+                enriched.update(detail_fields)
+                enriched["detail_fetch_ok"] = True
+                enriched["detail_parse_filled_count"] = parse_debug.get("filled_count", 0)
+                detail_debug_rows.append(
+                    {
+                        "product_id": parse_debug.get("product_id") or enriched.get("product_id"),
+                        "product_url": url,
+                        "fetch_ok": True,
+                        "fetch_debug": (
+                            getattr(crawler, "get_last_detail_fetch_debug", lambda: {})()
+                            or getattr(crawler, "get_last_bright_request_debug", lambda: {})()
+                        ),
+                        "parse_debug": parse_debug,
+                    }
+                )
+                print(
+                    "[DETAIL_PARSE] "
+                    f"product_id={parse_debug.get('product_id') or '-'} "
+                    f"html_len={parse_debug.get('html_len')} "
+                    f"filled={parse_debug.get('filled_count')} "
+                    f"fields={','.join(parse_debug.get('filled_fields') or []) or '-'}"
+                )
+            else:
+                fetch_debug = (
+                    getattr(crawler, "get_last_detail_fetch_debug", lambda: {})()
+                    or getattr(crawler, "get_last_bright_request_debug", lambda: {})()
+                )
+                enriched["detail_fetch_ok"] = False
+                enriched["detail_parse_filled_count"] = 0
+                detail_debug_rows.append(
+                    {
+                        "product_id": enriched.get("product_id") or _extract_product_id_from_url(url),
+                        "product_url": url,
+                        "fetch_ok": False,
+                        "fetch_debug": fetch_debug,
+                        "parse_debug": {},
+                    }
+                )
+                print(
+                    "[DETAIL_FETCH_FAIL] "
+                    f"product_id={enriched.get('product_id') or '-'} "
+                    f"status={fetch_debug.get('status_code', '-')} "
+                    f"error={fetch_debug.get('error_code', '-')} "
+                    f"body_len={fetch_debug.get('body_len', '-')} "
+                    f"content_type={fetch_debug.get('content_type', '-')}"
+                )
 
         enriched_items.append(enriched)
 
     updated = dict(result_data)
     updated["top10_items"] = enriched_items
+    updated["detail_debug"] = detail_debug_rows
     return updated
 
 
@@ -541,6 +618,8 @@ def main() -> None:
             "stats": crawler.get_stats(),
             "last_fetch_source": crawler.get_last_fetch_source(),
             "last_error": crawler.get_last_error(),
+            "last_detail_fetch_debug": getattr(crawler, "get_last_detail_fetch_debug", lambda: {})(),
+            "last_bright_request_debug": getattr(crawler, "get_last_bright_request_debug", lambda: {})(),
         }
     )
     if result_data:
