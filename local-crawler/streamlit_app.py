@@ -128,6 +128,8 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "배송형태": item.get("delivery_type"),
                 "배송비": item.get("shipping_fee"),
                 "상세페이지": item.get("product_url"),
+                "상태코드": item.get("reason_code"),
+                "수집방식": item.get("fetch_source"),
             }
         )
     return pd.DataFrame(rows)
