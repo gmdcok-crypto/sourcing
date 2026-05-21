@@ -125,7 +125,7 @@ class R2StorageService:
             return None
 
         client = self._build_client()
-        prefix = "search-results/raw/"
+        prefix = "keywords/raw/"
         continuation_token = None
         matching_keys = []
         date_token = target_date.strftime("%Y%m%d")
@@ -161,7 +161,7 @@ class R2StorageService:
     def _build_key(self, *, query: str) -> str:
         safe_query = "-".join(query.strip().lower().split()) or "empty-query"
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        return f"search-results/{safe_query}/{timestamp}.json"
+        return f"keywords/search/{safe_query}/{timestamp}.json"
 
     def _build_client(self):
         endpoint_url = f"https://{self.settings.r2_account_id}.r2.cloudflarestorage.com"

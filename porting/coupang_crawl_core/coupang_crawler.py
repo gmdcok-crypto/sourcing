@@ -523,6 +523,38 @@ class CoupangCrawler:
         return self._pick_shipping_keywords_from_text(li.get_text(" ", strip=True))
 
     @staticmethod
+    def _absolutize_coupang_url(url: str) -> str:
+        raw = str(url or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith("//"):
+            return f"https:{raw}"
+        if raw.startswith("/"):
+            return f"https://www.coupang.com{raw}"
+        return raw
+
+    def _pick_image_url_from_li(self, li: BeautifulSoup) -> str:
+        """검색 결과 카드에서 대표 이미지 URL만 추출한다."""
+        image_node = li.select_one(
+            "img[src], img[data-src], img[data-img-src], img[data-image-src], img[srcset]"
+        )
+        if image_node is None:
+            return ""
+
+        for attr in ("src", "data-src", "data-img-src", "data-image-src"):
+            value = str(image_node.get(attr, "")).strip()
+            if value and not value.startswith("data:"):
+                return self._absolutize_coupang_url(value)
+
+        srcset = str(image_node.get("srcset", "")).strip()
+        if srcset:
+            first_item = srcset.split(",")[0].strip()
+            first_url = first_item.split(" ")[0].strip()
+            if first_url and not first_url.startswith("data:"):
+                return self._absolutize_coupang_url(first_url)
+        return ""
+
+    @staticmethod
     def _pick_shipping_keywords_from_text(blob: str) -> str:
         """로켓/무료배송/출발·도착 등 검색 결과 카드에 자주 노출되는 배송 문구만 모은다."""
         if not blob:
@@ -661,6 +693,7 @@ class CoupangCrawler:
                 review_score_node.get("aria-label", "") or review_score_node.get_text(strip=True) or ""
             )
         shipping_fee_raw = self._pick_shipping_from_li(li)
+        image_url = self._pick_image_url_from_li(li)
         price_num = self._parse_int(price_raw)
         review_num = self._parse_int(self._normalize_review_count_display(review_count_raw))
         review_score = self._parse_float(review_score_raw)
@@ -681,6 +714,7 @@ class CoupangCrawler:
             "review_score": float(review_score) if review_score is not None else None,
             "shipping_fee": shipping_fee_raw or None,
             "url": url,
+            "image_url": image_url,
         }
 
     def _li_is_ad_card(self, li: Any) -> bool:

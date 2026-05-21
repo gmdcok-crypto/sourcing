@@ -541,8 +541,8 @@ class KeywordSourcingService:
             "top_keywords": top_keywords,
             "classified_keywords": classified_keywords,
         }
-        json_key = f"search-results/raw/{run_id}.json"
-        parquet_key = f"search-results/dataframe/{run_id}.parquet"
+        json_key = f"keywords/raw/{run_id}.json"
+        parquet_key = f"keywords/dataframe/{run_id}.parquet"
 
         saved_json_key = self.r2_service.save_json_bytes(key=json_key, payload=payload)
         saved_parquet_key = self.r2_service.save_dataframe_parquet(

@@ -46,7 +46,7 @@ class CoupangCrawlerService:
             "keywords": keyword_results,
         }
         key = self.r2_service.save_json_bytes(
-            key=f"coupang/test/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json",
+            key=f"crawling/coupang/test/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json",
             payload=payload,
         )
         return {
