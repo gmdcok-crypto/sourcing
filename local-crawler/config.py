@@ -34,7 +34,6 @@ class LocalCrawlerSettings(BaseSettings):
     coupang_bright_request: str = Field(default="off", alias="COUPANG_BRIGHT_REQUEST")
 
     crawler_headless: bool = Field(default=True, alias="CRAWLER_HEADLESS")
-    crawler_show_browser: bool = Field(default=True, alias="CRAWLER_SHOW_BROWSER")
     crawler_navigation_timeout_ms: int = Field(default=90000, alias="CRAWLER_NAVIGATION_TIMEOUT_MS")
     crawler_action_timeout_ms: int = Field(default=30000, alias="CRAWLER_ACTION_TIMEOUT_MS")
     crawler_result_limit: int = Field(default=10, alias="CRAWLER_RESULT_LIMIT")

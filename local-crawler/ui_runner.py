@@ -201,10 +201,7 @@ def request_stop() -> Dict[str, Any]:
 
 def _build_process_env(keyword: str) -> Dict[str, str]:
     env = os.environ.copy()
-    settings = get_settings()
     env["MANUAL_KEYWORD"] = keyword
-    show_browser = bool(settings.crawler_show_browser)
-    env["COUPANG_HEADLESS"] = "0" if show_browser else "1"
     return env
 
 
