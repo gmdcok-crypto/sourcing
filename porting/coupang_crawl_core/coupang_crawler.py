@@ -1221,6 +1221,34 @@ class CoupangCrawler:
         page.wait_for_timeout(random.randint(700, 1200))
         self._scroll_coupang_search_results_page(page, max_wheel_batches=8)
 
+    def _open_search_results_page_via_ui(self, page: Page, keyword: str) -> str:
+        kw = str(keyword or "").strip()
+        page.goto("https://www.coupang.com", wait_until="domcontentloaded")
+        if self._is_blocked(page.content(), page.title()):
+            raise RuntimeError("BLOCKED_HOME")
+
+        search_input = page.locator("input[name='q'], input[placeholder*='검색']").first
+        search_input.wait_for(state="visible", timeout=15000)
+        page.wait_for_timeout(random.randint(500, 1100))
+        self._simulate_human_actions(page)
+        search_input.click(timeout=3000)
+        page.wait_for_timeout(random.randint(250, 700))
+        try:
+            search_input.fill("")
+        except Exception:
+            pass
+
+        for ch in kw:
+            page.keyboard.type(ch, delay=random.randint(60, 160))
+        page.wait_for_timeout(random.randint(250, 600))
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            page.keyboard.press("Enter")
+
+        page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=15000)
+        page.wait_for_timeout(random.randint(800, 1400))
+        self._scroll_coupang_search_results_page(page, max_wheel_batches=10)
+        return str(page.url or "").strip()
+
     def fetch_detail_pages_via_search(
         self,
         keyword: str,
@@ -1260,7 +1288,7 @@ class CoupangCrawler:
                 return {}
 
             try:
-                page.goto(search_url, wait_until="domcontentloaded")
+                search_url = self._open_search_results_page_via_ui(page, kw)
                 if self._is_blocked(page.content(), page.title()):
                     self._last_detail_fetch_debug = {
                         "method": "search_click",
@@ -1270,10 +1298,6 @@ class CoupangCrawler:
                     }
                     safe_print("[DETAIL][search_click] search page blocked")
                     return {}
-                page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=12000)
-                page.wait_for_timeout(random.randint(700, 1200))
-                self._simulate_human_actions(page)
-                self._scroll_coupang_search_results_page(page, max_wheel_batches=10)
 
                 for product_id, meta in targets.items():
                     target_url = str(meta.get("target_url") or "")
@@ -1306,8 +1330,8 @@ class CoupangCrawler:
                     page.wait_for_timeout(random.randint(350, 800))
 
                     try:
-                        anchor.click(timeout=5000)
-                        page.wait_for_load_state("domcontentloaded")
+                        with page.expect_navigation(wait_until="domcontentloaded", timeout=12000):
+                            anchor.click(timeout=5000)
                         page.wait_for_timeout(random.randint(900, 1600))
                         self._simulate_human_actions(page)
                         html = page.content()
@@ -1363,13 +1387,14 @@ class CoupangCrawler:
                             pass
                 return results
             except Exception as e:
+                err_code = "BLOCKED_SEARCH" if str(e) == "BLOCKED_HOME" else type(e).__name__
                 self._last_detail_fetch_debug = {
                     "method": "search_click",
                     "search_url": search_url,
-                    "error_code": type(e).__name__,
+                    "error_code": err_code,
                     "message": repr(e),
                 }
-                safe_print(f"[DETAIL][search_click] search flow exception error={type(e).__name__}")
+                safe_print(f"[DETAIL][search_click] search flow exception error={err_code}")
                 return results
 
     def fetch_detail_page_html(self, target_url: str, *, referer: str = "") -> Optional[str]:
