@@ -122,22 +122,31 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
             {
                 "키워드": item.get("keyword"),
                 "순위": item.get("rank"),
-                "이미지": item.get("image_url"),
-                "타이틀": item.get("title"),
-                "가격": _to_display_int(item.get("price")),
-                "리뷰수": _to_display_int(item.get("review_count")),
-                "리뷰점수": _to_display_int(item.get("review_score")),
-                "배송형태": item.get("delivery_type"),
+                "상품명": item.get("title"),
+                "판매가격": _to_display_int(item.get("price")),
+                "쿠폰적용": "Y" if item.get("coupon_applied") else "N",
+                "배송정책": item.get("delivery_type"),
                 "배송비": item.get("shipping_fee"),
-                "상세페이지": item.get("product_url"),
+                "리뷰수": _to_display_int(item.get("review_count")),
+                "리뷰별점": item.get("review_score"),
+                "상품링크": item.get("product_url"),
+                "대표이미지": item.get("image_url"),
+                "카테고리": item.get("category"),
+                "판매자정보": item.get("seller_info"),
+                "쿠팡상품번호": item.get("product_id"),
+                "옵션수량": _to_display_int(item.get("option_count")),
+                "제조국(원산지)": item.get("origin_country"),
+                "모델명": item.get("model_name"),
                 "상태코드": item.get("reason_code"),
                 "수집방식": item.get("fetch_source"),
             }
         )
     df = pd.DataFrame(rows)
-    for column in ("가격", "리뷰수", "리뷰점수"):
+    for column in ("판매가격", "리뷰수", "옵션수량"):
         if column in df.columns:
             df[column] = pd.array(df[column], dtype="Int64")
+    if "리뷰별점" in df.columns:
+        df["리뷰별점"] = pd.to_numeric(df["리뷰별점"], errors="coerce")
     return df
 
 

@@ -118,6 +118,123 @@ def _extract_json_ld_breadcrumb(blocks: List[Any]) -> List[str]:
     return []
 
 
+def _extract_product_id_from_url(url: Any) -> str:
+    raw = _normalize_space(url)
+    if not raw:
+        return ""
+    patterns = (
+        r"/vp/products/(\d+)",
+        r"/products/(\d+)",
+        r"[?&]productId=(\d+)",
+        r"[?&]itemId=(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _parse_optional_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    text = _normalize_space(value)
+    digits = re.sub(r"[^\d]", "", text)
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _extract_json_ld_offer(product_json: Dict[str, Any]) -> Dict[str, Any]:
+    offers = product_json.get("offers")
+    if isinstance(offers, dict):
+        return offers
+    if isinstance(offers, list):
+        for offer in offers:
+            if isinstance(offer, dict):
+                return offer
+    return {}
+
+
+def _extract_labeled_value(soup: BeautifulSoup, labels: Iterable[str]) -> str:
+    label_list = [_normalize_space(label) for label in labels if _normalize_space(label)]
+    if not label_list:
+        return ""
+
+    row_selectors = (
+        "table tr",
+        "tbody tr",
+        "dl",
+        "ul li",
+        "ol li",
+        "[class*='spec'] li",
+        "[class*='spec'] tr",
+        "[class*='item'] li",
+    )
+    for selector in row_selectors:
+        for row in soup.select(selector):
+            row_text = _normalize_space(row.get_text(" ", strip=True))
+            if not row_text or len(row_text) > 250:
+                continue
+
+            header_nodes = row.select("th, dt, strong, b, em, span")
+            header_text = _normalize_space(" ".join(node.get_text(" ", strip=True) for node in header_nodes))
+            value_nodes = row.select("td, dd")
+            value_text = _normalize_space(" ".join(node.get_text(" ", strip=True) for node in value_nodes))
+
+            for label in label_list:
+                if label in header_text and value_text:
+                    return value_text
+                if row_text.startswith(label):
+                    stripped = _normalize_space(re.sub(rf"^{re.escape(label)}\s*[:：]?\s*", "", row_text, count=1))
+                    if stripped and stripped != row_text:
+                        return stripped
+
+    full_text = _normalize_space(soup.get_text("\n", strip=True))
+    for label in label_list:
+        match = re.search(rf"{re.escape(label)}\s*[:：]?\s*([^\n\r]+)", full_text)
+        if match:
+            value = _normalize_space(match.group(1))
+            if value and value != label:
+                return value
+    return ""
+
+
+def _extract_option_count(soup: BeautifulSoup, full_text: str) -> Optional[int]:
+    match = re.search(r"옵션\s*(?:총)?\s*(\d+)\s*개", full_text)
+    if match:
+        return _parse_optional_int(match.group(1))
+
+    select_counts: List[int] = []
+    for select in soup.select("select"):
+        texts = []
+        for option in select.select("option"):
+            text = _normalize_space(option.get_text(" ", strip=True))
+            if not text:
+                continue
+            if any(token in text for token in ("선택", "품절", "옵션")):
+                continue
+            texts.append(text)
+        if texts:
+            select_counts.append(len(texts))
+
+    button_like = soup.select(
+        "[class*='option'] button, [class*='option'] li, [class*='Option'] button, [class*='Option'] li"
+    )
+    visible_option_texts = {
+        _normalize_space(node.get_text(" ", strip=True))
+        for node in button_like
+        if _normalize_space(node.get_text(" ", strip=True))
+    }
+    if visible_option_texts:
+        select_counts.append(len(visible_option_texts))
+
+    return max(select_counts) if select_counts else None
+
+
 def _detect_coupon_applied(text: str) -> bool:
     normalized = _normalize_space(text)
     coupon_keywords = (
@@ -187,6 +304,7 @@ def _extract_detail_fields(html: str, item: Dict[str, Any]) -> Dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     blocks = _parse_json_ld_blocks(soup)
     product_json = _extract_json_ld_product(blocks)
+    offer_json = _extract_json_ld_offer(product_json)
     full_text = _normalize_space(soup.get_text(" ", strip=True))
 
     image_url = (
@@ -211,6 +329,36 @@ def _extract_detail_fields(html: str, item: Dict[str, Any]) -> Dict[str, Any]:
 
     category = _extract_category_text(soup, blocks)
     coupon_applied = _detect_coupon_applied(full_text)
+    product_url = item.get("url") or item.get("product_url") or ""
+    product_id = (
+        _extract_product_id_from_url(product_url)
+        or _normalize_space(product_json.get("productID"))
+        or _normalize_space(product_json.get("sku"))
+        or _extract_labeled_value(soup, ["쿠팡상품번호", "상품번호", "상품코드"])
+    )
+
+    title = (
+        item.get("title")
+        or _normalize_space(product_json.get("name"))
+        or _first_text(soup, ["h1", ".prod-buy-header__title", "[class*='title']"])
+    )
+
+    offer_price = _normalize_space(offer_json.get("price"))
+    price = item.get("price")
+    if price in (None, "") and offer_price:
+        price = _parse_optional_int(offer_price)
+
+    aggregate_rating = product_json.get("aggregateRating") if isinstance(product_json.get("aggregateRating"), dict) else {}
+    review_count = item.get("review_count")
+    if review_count in (None, ""):
+        review_count = _parse_optional_int(aggregate_rating.get("reviewCount"))
+    review_score = item.get("review_score")
+    if review_score in (None, ""):
+        raw_score = _normalize_space(aggregate_rating.get("ratingValue"))
+        try:
+            review_score = float(raw_score) if raw_score else None
+        except ValueError:
+            review_score = None
 
     delivery_blob = " ".join(
         part
@@ -232,15 +380,37 @@ def _extract_detail_fields(html: str, item: Dict[str, Any]) -> Dict[str, Any]:
     )
     delivery_type = _detect_delivery_type(delivery_blob)
     has_shipping_fee, shipping_fee_text = _detect_shipping_fee(delivery_blob)
+    seller_info = _extract_labeled_value(
+        soup,
+        [
+            "판매자",
+            "판매자 정보",
+            "상호/대표자",
+            "상호명 및 대표자",
+            "판매자명",
+        ],
+    )
+    origin_country = _extract_labeled_value(soup, ["제조국", "원산지", "제조국(원산지)"])
+    model_name = _extract_labeled_value(soup, ["모델명", "품명 및 모델명"])
+    option_count = _extract_option_count(soup, full_text)
 
     return {
-        "product_url": item.get("url") or item.get("product_url") or "",
+        "title": title or "",
+        "price": price,
+        "review_count": review_count,
+        "review_score": review_score,
+        "product_url": product_url,
         "image_url": image_url or "",
         "category": category,
         "coupon_applied": coupon_applied,
         "delivery_type": delivery_type,
         "has_shipping_fee": has_shipping_fee,
         "shipping_fee": shipping_fee_text or item.get("shipping_fee"),
+        "seller_info": seller_info,
+        "product_id": product_id,
+        "option_count": option_count,
+        "origin_country": origin_country,
+        "model_name": model_name,
     }
 
 
@@ -259,6 +429,11 @@ def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) 
         enriched.setdefault("coupon_applied", False)
         enriched.setdefault("delivery_type", "")
         enriched.setdefault("has_shipping_fee", None)
+        enriched.setdefault("seller_info", "")
+        enriched.setdefault("product_id", _extract_product_id_from_url(url))
+        enriched.setdefault("option_count", None)
+        enriched.setdefault("origin_country", "")
+        enriched.setdefault("model_name", "")
 
         if url and hasattr(crawler, "_bright_request_fetch_html"):
             try:
