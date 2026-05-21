@@ -597,6 +597,42 @@ class CoupangCrawler:
                 seen.append(kw)
         return " / ".join(seen)
 
+    @staticmethod
+    def _extract_delivery_type_from_badges(li: Any) -> str:
+        badge_ids = {
+            str(node.get("data-badge-id", "")).strip().upper()
+            for node in li.select("[data-badge-id]")
+            if str(node.get("data-badge-id", "")).strip()
+        }
+        if "ROCKET_MERCHANT" in badge_ids:
+            return "판매자로켓"
+        if "ROCKET" in badge_ids:
+            return "로켓배송"
+        if "ROCKET_GROWTH" in badge_ids:
+            return "로켓그로스"
+        if "FRESH" in badge_ids or "ROCKET_FRESH" in badge_ids:
+            return "로켓프레시"
+
+        badge_blob = " ".join(
+            x.get_text(" ", strip=True)
+            for x in li.select(
+                "[class*='Badge'], [class*='badge'], [class*='Delivery'], "
+                "[class*='delivery'], [class*='Rocket'], [class*='rocket'], [data-testid='wp-ui-biz-badge']"
+            )
+        )
+        for keyword, label in (
+            ("판매자로켓", "판매자로켓"),
+            ("로켓그로스", "로켓그로스"),
+            ("로켓프레시", "로켓프레시"),
+            ("로켓배송", "로켓배송"),
+            ("판매자배송", "일반배송"),
+            ("판매자 배송", "일반배송"),
+            ("일반배송", "일반배송"),
+        ):
+            if keyword in badge_blob:
+                return label
+        return ""
+
     def _normalize_review_count_display(self, raw: str) -> str:
         m = re.search(r"\(\s*([\d,]+)\s*\)", str(raw or ""))
         if m:
@@ -711,6 +747,7 @@ class CoupangCrawler:
                 review_score_node.get("aria-label", "") or review_score_node.get_text(strip=True) or ""
             )
         shipping_fee_raw = self._pick_shipping_from_li(li)
+        delivery_type = self._extract_delivery_type_from_badges(li)
         image_url = self._pick_image_url_from_li(li)
         price_num = self._parse_int(price_raw)
         review_num = self._parse_int(self._normalize_review_count_display(review_count_raw))
@@ -730,6 +767,7 @@ class CoupangCrawler:
             "price": float(price_num),
             "review_count": float(review_num) if review_num is not None else None,
             "review_score": float(review_score) if review_score is not None else None,
+            "delivery_type": delivery_type or None,
             "shipping_fee": shipping_fee_raw or None,
             "url": url,
             "image_url": image_url,
