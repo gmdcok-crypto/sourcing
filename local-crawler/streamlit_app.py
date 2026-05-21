@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from config import get_settings
 from ui_runner import (
@@ -126,11 +126,28 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _auto_refresh_when_active(status: str, refresh_seconds: int) -> None:
+    if status not in {"starting", "running"}:
+        return
+    delay_ms = max(1, int(refresh_seconds or 5)) * 1000
+    components.html(
+        f"""
+        <script>
+        setTimeout(function() {{
+            window.parent.location.reload();
+        }}, {delay_ms});
+        </script>
+        """,
+        height=0,
+    )
+
+
 def main() -> None:
     settings = get_settings()
     state = get_ui_state()
     results = get_ui_results()
     _apply_dark_theme()
+    _auto_refresh_when_active(str(state.get("status") or ""), int(settings.ui_refresh_seconds))
 
     st.title("Local Crawler Console")
     st.caption("로컬 PC에서 final keywords 배치를 실행하고 상태, 로그, 상품 결과를 확인합니다.")
