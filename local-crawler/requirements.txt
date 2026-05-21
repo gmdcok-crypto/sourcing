@@ -1,0 +1,9 @@
+httpx
+pydantic-settings
+playwright
+playwright-stealth
+requests
+beautifulsoup4
+pymysql
+pandas
+pytest

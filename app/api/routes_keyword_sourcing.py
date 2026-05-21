@@ -165,6 +165,69 @@ async def run_coupang_crawling_test(
     }
 
 
+@router.get("/keyword-sourcing/crawler-keywords")
+async def get_crawler_keywords(
+    run_id: Optional[str] = None,
+    date_value: Optional[date] = None,
+    limit: int = 10,
+    settings: Settings = Depends(get_settings),
+) -> Dict[str, Any]:
+    if date_value is not None:
+        state = KeywordSourcingService.load_saved_result_for_date(
+            settings,
+            target_date=date_value,
+        )
+    else:
+        state = KeywordSourcingService.get_status(run_id=run_id)
+
+    classified_keywords = state.get("classified_keywords") or []
+    if not classified_keywords:
+        classified_keywords = state.get("preview_rows") or []
+
+    keywords = []
+    seen_keywords = set()
+    capped_limit = max(1, min(int(limit or 10), 100))
+
+    for row in classified_keywords:
+        keyword = str(
+            row.get("keyword")
+            or row.get("query")
+            or row.get("seed_keyword")
+            or ""
+        ).strip()
+        if not keyword or keyword in seen_keywords:
+            continue
+        seen_keywords.add(keyword)
+        keywords.append(
+            {
+                "keyword": keyword,
+                "group_name": row.get("group_name") or "-",
+                "theme_name": row.get("theme_name") or "",
+                "theme_detail": row.get("shopping_category_path")
+                or row.get("full_path")
+                or row.get("category_name")
+                or row.get("theme_name")
+                or "-",
+                "monthly_mobile_searches": row.get("monthly_mobile_searches")
+                or row.get("total_searches"),
+                "monthly_mobile_ctr": row.get("monthly_mobile_ctr"),
+                "competition_level": row.get("competition_level"),
+                "monthly_exposure_ads": row.get("monthly_exposure_ads"),
+                "product_count": row.get("product_count"),
+            }
+        )
+        if len(keywords) >= capped_limit:
+            break
+
+    return {
+        "status": "ok",
+        "run_id": state.get("run_id"),
+        "selected_date": date_value.isoformat() if date_value else None,
+        "keyword_count": len(keywords),
+        "keywords": keywords,
+    }
+
+
 @router.get("/keyword-sourcing/stream")
 async def stream_keyword_sourcing_status(run_id: Optional[str] = None) -> StreamingResponse:
     async def event_generator():

@@ -425,6 +425,10 @@ class KeywordSourcingService:
                 top_keywords=top_keywords,
                 classified_keywords=classified_keywords,
             )
+            self._persist_final_keywords(
+                run_id=run_id,
+                classified_keywords=classified_keywords,
+            )
 
             state["status"] = "completed"
             state["message"] = "키워드 소싱이 완료되었습니다."
@@ -940,6 +944,7 @@ class KeywordSourcingService:
         connection = get_mysql_connection()
         try:
             cls._ensure_run_table(connection)
+            cls._ensure_final_keyword_table(connection)
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
@@ -1046,6 +1051,97 @@ class KeywordSourcingService:
             connection.close()
 
     @classmethod
+    def _persist_final_keywords(
+        cls,
+        *,
+        run_id: str,
+        classified_keywords: List[Dict[str, Any]],
+    ) -> None:
+        if not run_id:
+            return
+
+        connection = get_mysql_connection()
+        try:
+            cls._ensure_run_table(connection)
+            cls._ensure_final_keyword_table(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM keyword_sourcing_final_keywords
+                    WHERE run_id = %s
+                    """,
+                    (run_id,),
+                )
+
+                if classified_keywords:
+                    sql = """
+                        INSERT INTO keyword_sourcing_final_keywords (
+                            run_id,
+                            keyword,
+                            theme_id,
+                            theme_code,
+                            theme_name,
+                            category_id,
+                            cid,
+                            category_name,
+                            full_path,
+                            shopping_category_path,
+                            group_name,
+                            rank_order,
+                            ratio_value,
+                            monthly_mobile_searches,
+                            monthly_mobile_ctr,
+                            competition_level,
+                            monthly_exposure_ads,
+                            product_count,
+                            ad_efficiency,
+                            season_months_json,
+                            is_final_keyword,
+                            crawl_status,
+                            source_payload_json
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                    """
+                    values = []
+                    for row in classified_keywords:
+                        keyword = str(row.get("keyword") or "").strip()
+                        if not keyword:
+                            continue
+                        values.append(
+                            (
+                                run_id,
+                                keyword,
+                                cls._to_int(row.get("theme_id")),
+                                cls._to_optional_str(row.get("theme_code")),
+                                cls._to_optional_str(row.get("theme_name")),
+                                cls._to_int(row.get("category_id")),
+                                cls._to_optional_str(row.get("cid")),
+                                cls._to_optional_str(row.get("category_name")),
+                                cls._to_optional_str(row.get("full_path")),
+                                cls._to_optional_str(row.get("shopping_category_path")),
+                                cls._to_optional_str(row.get("group_name")),
+                                cls._to_int(row.get("rank")),
+                                cls._to_float(row.get("ratio")),
+                                cls._to_int(row.get("monthly_mobile_searches")),
+                                cls._to_float(row.get("monthly_mobile_ctr")),
+                                cls._to_optional_str(row.get("competition_level")),
+                                cls._to_int(row.get("monthly_exposure_ads")),
+                                cls._to_int(row.get("product_count")),
+                                cls._to_optional_str(row.get("ad_efficiency")),
+                                cls._json_dumps(row.get("season_months") or []),
+                                1,
+                                "pending",
+                                cls._json_dumps(row),
+                            )
+                        )
+                    if values:
+                        cursor.executemany(sql, values)
+            connection.commit()
+        finally:
+            connection.close()
+
+    @classmethod
     def _ensure_run_table(cls, connection) -> None:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -1085,6 +1181,52 @@ class KeywordSourcingService:
                     PRIMARY KEY (run_id),
                     KEY idx_keyword_sourcing_runs_updated_at (updated_at),
                     KEY idx_keyword_sourcing_runs_status_updated_at (status, updated_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        connection.commit()
+
+    @classmethod
+    def _ensure_final_keyword_table(cls, connection) -> None:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS keyword_sourcing_final_keywords (
+                    id BIGINT NOT NULL AUTO_INCREMENT,
+                    run_id VARCHAR(32) NOT NULL,
+                    keyword VARCHAR(255) NOT NULL,
+                    theme_id BIGINT NULL,
+                    theme_code VARCHAR(100) NULL,
+                    theme_name VARCHAR(255) NULL,
+                    category_id BIGINT NULL,
+                    cid VARCHAR(50) NULL,
+                    category_name VARCHAR(255) NULL,
+                    full_path VARCHAR(500) NULL,
+                    shopping_category_path VARCHAR(500) NULL,
+                    group_name VARCHAR(50) NULL,
+                    rank_order INT NULL,
+                    ratio_value DECIMAL(12, 6) NULL,
+                    monthly_mobile_searches INT NULL,
+                    monthly_mobile_ctr DECIMAL(12, 6) NULL,
+                    competition_level VARCHAR(50) NULL,
+                    monthly_exposure_ads INT NULL,
+                    product_count INT NULL,
+                    ad_efficiency VARCHAR(50) NULL,
+                    season_months_json LONGTEXT NULL,
+                    is_final_keyword TINYINT(1) NOT NULL DEFAULT 1,
+                    crawl_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                    crawl_job_id VARCHAR(64) NULL,
+                    last_crawled_at DATETIME NULL,
+                    source_payload_json LONGTEXT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uq_keyword_sourcing_final_keywords_run_keyword (run_id, keyword),
+                    KEY idx_keyword_sourcing_final_keywords_run_id (run_id),
+                    KEY idx_keyword_sourcing_final_keywords_crawl_status (crawl_status),
+                    KEY idx_keyword_sourcing_final_keywords_theme_id (theme_id),
+                    KEY idx_keyword_sourcing_final_keywords_group_name (group_name),
+                    KEY idx_keyword_sourcing_final_keywords_is_final_keyword (is_final_keyword)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
@@ -1146,6 +1288,15 @@ class KeywordSourcingService:
         if value in (None, ""):
             return None
         return str(value)
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _to_db_datetime(value: Any) -> Optional[datetime]:
