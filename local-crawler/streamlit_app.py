@@ -6,6 +6,8 @@ from typing import Any, Dict, List
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 from config import get_settings
 from ui_runner import (
@@ -297,6 +299,31 @@ def _render_env_badge(label: str, is_ok: bool, detail: str) -> None:
     )
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _check_r2_connection(
+    account_id: str,
+    access_key_id: str,
+    secret_access_key: str,
+    bucket_name: str,
+) -> Dict[str, str]:
+    if not all([account_id, access_key_id, secret_access_key, bucket_name]):
+        return {"ok": "false", "detail": "R2 환경변수가 아직 모두 채워지지 않았습니다."}
+
+    endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        region_name="auto",
+    )
+    try:
+        client.head_bucket(Bucket=bucket_name)
+        return {"ok": "true", "detail": f"{bucket_name} 버킷 연결 확인됨"}
+    except (BotoCoreError, ClientError) as exc:
+        return {"ok": "false", "detail": str(exc)}
+
+
 def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     bright_request_on = bool(state.get("bright_data_enabled"))
     result_locations = state.get("result_locations") or {}
@@ -310,6 +337,14 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
             str(settings.r2_bucket_name or "").strip(),
         ]
     )
+    r2_connection = _check_r2_connection(
+        str(settings.r2_account_id or "").strip(),
+        str(settings.r2_access_key_id or "").strip(),
+        str(settings.r2_secret_access_key or "").strip(),
+        str(settings.r2_bucket_name or "").strip(),
+    )
+    r2_connected = r2_connection.get("ok") == "true"
+    r2_connection_detail = r2_connection.get("detail") or ""
 
     st.subheader("Environment")
     col_a, col_b = st.columns(2)
@@ -342,9 +377,14 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
         local_result_file,
     )
     _render_env_badge(
+        "R2 Connection",
+        r2_connected,
+        r2_connection_detail or ("연결 확인 전" if r2_ready else "R2 설정 필요"),
+    )
+    _render_env_badge(
         "R2 Key",
         bool(r2_key),
-        r2_key or ("R2 설정은 준비되었지만 아직 업로드된 결과가 없습니다." if r2_ready else "현재는 로컬 파일 저장만 사용 중"),
+        r2_key or ("연결은 준비되었지만 아직 업로드된 결과가 없습니다." if r2_ready else "현재는 로컬 파일 저장만 사용 중"),
     )
 
 
