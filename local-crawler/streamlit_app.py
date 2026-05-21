@@ -135,6 +135,25 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _preview_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
+    rows = []
+    for item in items:
+        rows.append(
+            {
+                "키워드": item.get("keyword"),
+                "그룹명": item.get("group_name"),
+                "테마명": item.get("theme_name"),
+                "경로": item.get("theme_detail"),
+                "조회수": _to_display_int(item.get("monthly_mobile_searches")),
+                "클릭율": _to_display_int(item.get("monthly_mobile_ctr")),
+                "경쟁률": item.get("competition_level"),
+                "광고노출": _to_display_int(item.get("monthly_exposure_ads")),
+                "상품수": _to_display_int(item.get("product_count")),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _style_dark_dataframe(df: pd.DataFrame) -> Any:
     return (
         df.style.set_properties(
@@ -383,7 +402,7 @@ def main() -> None:
         keyword_payload = fetch_batch_keywords(limit=int(keyword_limit))
         preview_rows = keyword_payload.get("keywords") or []
         if preview_rows:
-            preview_df = pd.DataFrame(preview_rows)
+            preview_df = _preview_dataframe(preview_rows)
             st.dataframe(
                 _style_dark_dataframe(preview_df),
                 use_container_width=True,
