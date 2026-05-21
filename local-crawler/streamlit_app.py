@@ -126,6 +126,80 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _render_env_badge(label: str, is_ok: bool, detail: str) -> None:
+    tone = "#16a34a" if is_ok else "#dc2626"
+    background = "rgba(22, 163, 74, 0.14)" if is_ok else "rgba(220, 38, 38, 0.14)"
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid #2b3243;
+            background: #171b26;
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+        ">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span style="
+                    display:inline-block;
+                    padding:2px 8px;
+                    border-radius:999px;
+                    background:{background};
+                    color:{tone};
+                    font-size:12px;
+                    font-weight:700;
+                ">{'READY' if is_ok else 'CHECK'}</span>
+                <span style="font-size:14px; font-weight:700; color:#f3f4f6;">{label}</span>
+            </div>
+            <div style="font-size:12px; color:#9ca3af; word-break:break-all;">{detail}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
+    bright_request_on = bool(state.get("bright_data_enabled"))
+    result_locations = state.get("result_locations") or {}
+    local_result_file = str(result_locations.get("local_file") or "-")
+    r2_key = str(result_locations.get("r2_key") or "").strip()
+
+    st.subheader("Environment")
+    col_a, col_b = st.columns(2)
+    col_a.metric("실행 모드", "Bright Request" if bright_request_on else "Playwright")
+    col_b.metric("결과 저장", "R2 + Local" if r2_key else "Local")
+
+    _render_env_badge(
+        "Railway API",
+        bool(str(settings.railway_api_base_url or "").strip()),
+        str(settings.railway_api_base_url or "설정 필요"),
+    )
+    _render_env_badge(
+        "Crawler Endpoint",
+        bool(str(settings.crawler_keywords_endpoint or "").strip()),
+        str(settings.crawler_keywords_endpoint or "설정 필요"),
+    )
+    _render_env_badge(
+        "Bright Data Token",
+        bool(str(settings.brightdata_api_token or "").strip()),
+        "토큰 설정됨" if str(settings.brightdata_api_token or "").strip() else "BRIGHTDATA_API_TOKEN 필요",
+    )
+    _render_env_badge(
+        "Bright Data Zone",
+        bool(str(settings.brightdata_request_zone or "").strip()),
+        str(settings.brightdata_request_zone or "BRIGHTDATA_REQUEST_ZONE 필요"),
+    )
+    _render_env_badge(
+        "Local Result File",
+        bool(local_result_file and local_result_file != "-"),
+        local_result_file,
+    )
+    _render_env_badge(
+        "R2 Key",
+        bool(r2_key),
+        r2_key or "현재는 로컬 파일 저장만 사용 중",
+    )
+
+
 def _auto_refresh_when_active(status: str, refresh_seconds: int) -> None:
     if status not in {"starting", "running"}:
         return
@@ -172,10 +246,7 @@ def main() -> None:
             st.rerun()
 
         st.divider()
-        st.subheader("Environment")
-        st.write(f"Railway API: `{settings.railway_api_base_url}`")
-        st.write(f"Bright Data Request: `{'on' if state.get('bright_data_enabled') else 'off'}`")
-        st.write(f"결과 파일: `{state.get('result_locations', {}).get('local_file') or '-'}`")
+        _render_environment_panel(settings, state)
 
         if st.button("새로고침", use_container_width=True):
             st.rerun()
