@@ -132,7 +132,11 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "수집방식": item.get("fetch_source"),
             }
         )
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    for column in ("가격", "리뷰수", "리뷰점수"):
+        if column in df.columns:
+            df[column] = pd.array(df[column], dtype="Int64")
+    return df
 
 
 def _preview_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -151,7 +155,11 @@ def _preview_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "상품수": _to_display_int(item.get("product_count")),
             }
         )
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    for column in ("조회수", "클릭율", "광고노출", "상품수"):
+        if column in df.columns:
+            df[column] = pd.array(df[column], dtype="Int64")
+    return df
 
 
 def _style_dark_dataframe(df: pd.DataFrame) -> Any:
