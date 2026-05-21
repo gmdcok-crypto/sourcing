@@ -432,6 +432,7 @@ def main() -> None:
             value=int(settings.crawler_keywords_limit),
             step=1,
         )
+        st.caption("배치 실행은 headless로 동작합니다. 브라우저 확인은 준비 모드를 사용하세요.")
         if st.button("배치 시작", use_container_width=True, type="primary"):
             start_batch_run(limit=int(keyword_limit))
             st.rerun()
