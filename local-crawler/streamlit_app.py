@@ -126,6 +126,110 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _style_dark_dataframe(df: pd.DataFrame) -> Any:
+    return (
+        df.style.set_properties(
+            **{
+                "background-color": "#111827",
+                "color": "#f3f4f6",
+                "border-color": "#2b3243",
+            }
+        )
+        .set_table_styles(
+            [
+                {
+                    "selector": "th",
+                    "props": [
+                        ("background-color", "#1f2937"),
+                        ("color", "#f9fafb"),
+                        ("border", "1px solid #374151"),
+                        ("font-weight", "700"),
+                    ],
+                },
+                {
+                    "selector": "td",
+                    "props": [
+                        ("border", "1px solid #2b3243"),
+                    ],
+                },
+                {
+                    "selector": "table",
+                    "props": [
+                        ("background-color", "#111827"),
+                        ("color", "#f3f4f6"),
+                        ("border-collapse", "collapse"),
+                    ],
+                },
+            ]
+        )
+    )
+
+
+def _render_status_panel(state: Dict[str, Any]) -> None:
+    status = str(state.get("status") or "idle").upper()
+    status_color = {
+        "COMPLETED": "#16a34a",
+        "RUNNING": "#2563eb",
+        "STARTING": "#d97706",
+        "FAILED": "#dc2626",
+        "STOPPED": "#eab308",
+        "IDLE": "#6b7280",
+    }.get(status, "#6b7280")
+    status_background = {
+        "COMPLETED": "rgba(22, 163, 74, 0.14)",
+        "RUNNING": "rgba(37, 99, 235, 0.14)",
+        "STARTING": "rgba(217, 119, 6, 0.14)",
+        "FAILED": "rgba(220, 38, 38, 0.14)",
+        "STOPPED": "rgba(234, 179, 8, 0.14)",
+        "IDLE": "rgba(107, 114, 128, 0.14)",
+    }.get(status, "rgba(107, 114, 128, 0.14)")
+
+    st.markdown("### 실행 상태")
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid #2b3243;
+            background: #171b26;
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 14px;
+        ">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                <span style="
+                    display:inline-block;
+                    padding:4px 10px;
+                    border-radius:999px;
+                    background:{status_background};
+                    color:{status_color};
+                    font-size:12px;
+                    font-weight:700;
+                ">{status}</span>
+                <span style="font-size:18px; font-weight:700; color:#f9fafb;">{state.get('message') or '-'}</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <div style="background:#111827; border:1px solid #2b3243; border-radius:10px; padding:12px;">
+                    <div style="font-size:12px; color:#9ca3af;">현재 키워드</div>
+                    <div style="font-size:15px; color:#f3f4f6; font-weight:600;">{state.get('current_keyword') or '-'}</div>
+                </div>
+                <div style="background:#111827; border:1px solid #2b3243; border-radius:10px; padding:12px;">
+                    <div style="font-size:12px; color:#9ca3af;">마지막 에러</div>
+                    <div style="font-size:15px; color:#f3f4f6; font-weight:600;">{state.get('last_error') or '-'}</div>
+                </div>
+                <div style="background:#111827; border:1px solid #2b3243; border-radius:10px; padding:12px;">
+                    <div style="font-size:12px; color:#9ca3af;">시작 시각</div>
+                    <div style="font-size:15px; color:#f3f4f6; font-weight:600;">{_format_timestamp(state.get('started_at'))}</div>
+                </div>
+                <div style="background:#111827; border:1px solid #2b3243; border-radius:10px; padding:12px;">
+                    <div style="font-size:12px; color:#9ca3af;">종료 시각</div>
+                    <div style="font-size:15px; color:#f3f4f6; font-weight:600;">{_format_timestamp(state.get('finished_at'))}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_env_badge(label: str, is_ok: bool, detail: str) -> None:
     tone = "#16a34a" if is_ok else "#dc2626"
     background = "rgba(22, 163, 74, 0.14)" if is_ok else "rgba(220, 38, 38, 0.14)"
@@ -263,18 +367,19 @@ def main() -> None:
     col7.metric("Bright Data", "ON" if state.get("bright_data_enabled") else "OFF")
     col8.metric("결과 저장", "R2 / Local" if state.get("result_locations", {}).get("r2_key") else "Local")
 
-    st.markdown("### 실행 상태")
-    st.write(f"메시지: `{state.get('message') or '-'}`")
-    st.write(f"마지막 에러: `{state.get('last_error') or '-'}`")
-    st.write(f"시작 시각: `{_format_timestamp(state.get('started_at'))}`")
-    st.write(f"종료 시각: `{_format_timestamp(state.get('finished_at'))}`")
+    _render_status_panel(state)
 
     st.markdown("### 배치 대상 미리보기")
     try:
         keyword_payload = fetch_batch_keywords(limit=int(keyword_limit))
         preview_rows = keyword_payload.get("keywords") or []
         if preview_rows:
-            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+            preview_df = pd.DataFrame(preview_rows)
+            st.dataframe(
+                _style_dark_dataframe(preview_df),
+                use_container_width=True,
+                hide_index=True,
+            )
         else:
             st.info("불러올 final keywords가 없습니다.")
     except Exception as exc:
@@ -284,7 +389,11 @@ def main() -> None:
     result_items = list(results.get("items") or [])
     if result_items:
         df = _result_dataframe(result_items)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(
+            _style_dark_dataframe(df),
+            use_container_width=True,
+            hide_index=True,
+        )
         csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
             "CSV 다운로드",
