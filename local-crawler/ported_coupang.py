@@ -267,6 +267,23 @@ def _detect_delivery_type(text: str) -> str:
     return ""
 
 
+def _detect_delivery_type_from_dom(soup: BeautifulSoup, text: str) -> str:
+    badge_ids = {
+        _normalize_space(node.get("data-badge-id", "")).upper()
+        for node in soup.select("[data-badge-id]")
+        if _normalize_space(node.get("data-badge-id", ""))
+    }
+    if "ROCKET_MERCHANT" in badge_ids:
+        return "판매자로켓"
+    if "ROCKET" in badge_ids:
+        return "로켓배송"
+    if "ROCKET_GROWTH" in badge_ids:
+        return "로켓그로스"
+    if "FRESH" in badge_ids or "ROCKET_FRESH" in badge_ids:
+        return "로켓프레시"
+    return _detect_delivery_type(text)
+
+
 def _detect_shipping_fee(text: str) -> tuple[Optional[bool], str]:
     normalized = _normalize_space(text)
     if not normalized:
@@ -280,6 +297,19 @@ def _detect_shipping_fee(text: str) -> tuple[Optional[bool], str]:
     if "배송비" in normalized:
         return True, "배송비 있음"
     return None, ""
+
+
+def _detect_shipping_fee_from_dom(soup: BeautifulSoup, text: str) -> tuple[Optional[bool], str]:
+    fee_badge_text = _first_text(
+        soup,
+        [
+            '[data-badge-type="feePrice"]',
+            '.TextBadge_feePrice__n_gta',
+        ],
+    )
+    if fee_badge_text:
+        return _detect_shipping_fee(fee_badge_text)
+    return _detect_shipping_fee(text)
 
 
 def _extract_category_text(soup: BeautifulSoup, blocks: List[Any]) -> str:
@@ -321,11 +351,22 @@ def _extract_detail_fields(html: str, item: Dict[str, Any]) -> Dict[str, Any]:
             [
                 'meta[property="og:image"]',
                 'meta[name="og:image"]',
+                'img.fw-aspect-square.fw-object-contain',
+                'img[decoding="async"][data-nimg="1"]',
                 "img.prod-image__detail",
                 "img[src]",
             ],
             "content",
-        ) or _first_attr(soup, ["img.prod-image__detail", "img[src]"], "src")
+        ) or _first_attr(
+            soup,
+            [
+                'img.fw-aspect-square.fw-object-contain',
+                'img[decoding="async"][data-nimg="1"]',
+                "img.prod-image__detail",
+                "img[src]",
+            ],
+            "src",
+        )
 
     category = _extract_category_text(soup, blocks)
     coupon_applied = _detect_coupon_applied(full_text)
@@ -367,6 +408,19 @@ def _extract_detail_fields(html: str, item: Dict[str, Any]) -> Dict[str, Any]:
             _first_text(
                 soup,
                 [
+                    '[data-badge-id="ROCKET_MERCHANT"]',
+                    '[data-badge-id="ROCKET"]',
+                    '[data-badge-id="ROCKET_GROWTH"]',
+                    '[data-badge-id="FRESH"]',
+                    '[data-badge-id="ROCKET_FRESH"]',
+                    '[data-testid="wp-ui-biz-badge"]',
+                ],
+            ),
+            _first_text(
+                soup,
+                [
+                    '[data-badge-type="feePrice"]',
+                    '.TextBadge_feePrice__n_gta',
                     ".prod-shipping-fee-message",
                     ".shipping-fee-title",
                     ".delivery-fee",
@@ -378,8 +432,8 @@ def _extract_detail_fields(html: str, item: Dict[str, Any]) -> Dict[str, Any]:
         ]
         if part
     )
-    delivery_type = _detect_delivery_type(delivery_blob)
-    has_shipping_fee, shipping_fee_text = _detect_shipping_fee(delivery_blob)
+    delivery_type = _detect_delivery_type_from_dom(soup, delivery_blob)
+    has_shipping_fee, shipping_fee_text = _detect_shipping_fee_from_dom(soup, delivery_blob)
     seller_info = _extract_labeled_value(
         soup,
         [
@@ -618,8 +672,8 @@ def main() -> None:
             raise SystemExit("keyword is required. Pass --keyword or set MANUAL_KEYWORD in .env")
         os.environ.setdefault("COUPANG_SMOKE_COUPANG_QUERY", keyword)
         result_data = crawler.crawl_coupang(keyword)
-        if result_data and str(result_data.get("reason_code") or "") == "OK":
-            result_data = _enrich_result_with_detail_pages(crawler, result_data, keyword=keyword)
+        if result_data and isinstance(result_data, dict):
+            result_data.setdefault("detail_debug", [])
 
     _dump_result(
         {
@@ -627,8 +681,6 @@ def main() -> None:
             "stats": crawler.get_stats(),
             "last_fetch_source": crawler.get_last_fetch_source(),
             "last_error": crawler.get_last_error(),
-            "last_detail_fetch_debug": getattr(crawler, "get_last_detail_fetch_debug", lambda: {})(),
-            "last_bright_request_debug": getattr(crawler, "get_last_bright_request_debug", lambda: {})(),
         }
     )
     if result_data:

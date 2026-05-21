@@ -131,18 +131,13 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "리뷰별점": item.get("review_score"),
                 "상품링크": item.get("product_url"),
                 "대표이미지": item.get("image_url"),
-                "카테고리": item.get("category"),
-                "판매자정보": item.get("seller_info"),
                 "쿠팡상품번호": item.get("product_id"),
-                "옵션수량": _to_display_int(item.get("option_count")),
-                "제조국(원산지)": item.get("origin_country"),
-                "모델명": item.get("model_name"),
                 "상태코드": item.get("reason_code"),
                 "수집방식": item.get("fetch_source"),
             }
         )
     df = pd.DataFrame(rows)
-    for column in ("판매가격", "리뷰수", "옵션수량"):
+    for column in ("판매가격", "리뷰수"):
         if column in df.columns:
             df[column] = pd.array(df[column], dtype="Int64")
     if "리뷰별점" in df.columns:
