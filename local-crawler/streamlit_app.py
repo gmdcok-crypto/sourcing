@@ -434,7 +434,11 @@ def main() -> None:
         )
         st.caption(
             "실행 브라우저: "
-            + ("표시됨 (실제 크롤링 창)" if bool(settings.crawler_show_browser) else "숨김 (headless)")
+            + (
+                "표시됨 (검색 단계부터 실제 크롤링 창)"
+                if bool(settings.crawler_show_browser)
+                else "숨김 (headless)"
+            )
         )
         if st.button("배치 시작", use_container_width=True, type="primary"):
             start_batch_run(limit=int(keyword_limit))

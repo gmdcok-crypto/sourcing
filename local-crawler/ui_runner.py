@@ -205,6 +205,8 @@ def _build_process_env(keyword: str) -> Dict[str, str]:
     env["MANUAL_KEYWORD"] = keyword
     show_browser = bool(settings.crawler_show_browser)
     env["COUPANG_HEADLESS"] = "0" if show_browser else "1"
+    if show_browser:
+        env["COUPANG_BRIGHT_REQUEST"] = "off"
     return env
 
 
