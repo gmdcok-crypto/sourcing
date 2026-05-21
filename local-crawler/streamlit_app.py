@@ -302,11 +302,19 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     result_locations = state.get("result_locations") or {}
     local_result_file = str(result_locations.get("local_file") or "-")
     r2_key = str(result_locations.get("r2_key") or "").strip()
+    r2_ready = all(
+        [
+            str(settings.r2_account_id or "").strip(),
+            str(settings.r2_access_key_id or "").strip(),
+            str(settings.r2_secret_access_key or "").strip(),
+            str(settings.r2_bucket_name or "").strip(),
+        ]
+    )
 
     st.subheader("Environment")
     col_a, col_b = st.columns(2)
     col_a.metric("실행 모드", "Bright Request" if bright_request_on else "Playwright")
-    col_b.metric("결과 저장", "R2 + Local" if r2_key else "Local")
+    col_b.metric("결과 저장", "R2 + Local" if r2_key else ("R2 Ready + Local" if r2_ready else "Local"))
 
     _render_env_badge(
         "Railway API",
@@ -336,7 +344,7 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     _render_env_badge(
         "R2 Key",
         bool(r2_key),
-        r2_key or "현재는 로컬 파일 저장만 사용 중",
+        r2_key or ("R2 설정은 준비되었지만 아직 업로드된 결과가 없습니다." if r2_ready else "현재는 로컬 파일 저장만 사용 중"),
     )
 
 
@@ -388,8 +396,7 @@ def main() -> None:
         st.divider()
         _render_environment_panel(settings, state)
 
-        if st.button("새로고침", use_container_width=True):
-            st.rerun()
+        st.caption("실행 중에는 화면이 자동 새로고침됩니다.")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("실행 상태", str(state.get("status") or "idle"))
