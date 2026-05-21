@@ -435,13 +435,19 @@ def _build_detail_parse_debug(item: Dict[str, Any], detail_fields: Dict[str, Any
     }
 
 
-def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any], *, keyword: str = "") -> Dict[str, Any]:
     items = list(result_data.get("top10_items") or [])
     if not items:
         return result_data
 
     enriched_items = []
     detail_debug_rows: List[Dict[str, Any]] = []
+    detail_html_by_product_id: Dict[str, Dict[str, Any]] = {}
+    if keyword and hasattr(crawler, "fetch_detail_pages_via_search"):
+        try:
+            detail_html_by_product_id = crawler.fetch_detail_pages_via_search(keyword, items) or {}
+        except Exception:
+            detail_html_by_product_id = {}
     for item in items:
         url = _normalize_space(item.get("url") or item.get("product_url"))
         enriched = dict(item)
@@ -458,8 +464,12 @@ def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) 
         enriched.setdefault("model_name", "")
         enriched.setdefault("detail_fetch_ok", False)
         enriched.setdefault("detail_parse_filled_count", 0)
+        product_id = enriched.get("product_id") or _extract_product_id_from_url(url)
+        html_bundle = detail_html_by_product_id.get(str(product_id or ""))
+        html = html_bundle.get("html") if isinstance(html_bundle, dict) else None
+        fetch_debug = html_bundle.get("fetch_debug") if isinstance(html_bundle, dict) else {}
 
-        if url:
+        if html is None and url:
             try:
                 if hasattr(crawler, "fetch_detail_page_html"):
                     html = crawler.fetch_detail_page_html(url)
@@ -469,6 +479,12 @@ def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) 
                     html = None
             except Exception:
                 html = None
+            fetch_debug = (
+                getattr(crawler, "get_last_detail_fetch_debug", lambda: {})()
+                or getattr(crawler, "get_last_bright_request_debug", lambda: {})()
+            )
+
+        if url:
             if html:
                 detail_fields = _extract_detail_fields(html, enriched)
                 parse_debug = _build_detail_parse_debug(enriched, detail_fields, html)
@@ -480,10 +496,7 @@ def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) 
                         "product_id": parse_debug.get("product_id") or enriched.get("product_id"),
                         "product_url": url,
                         "fetch_ok": True,
-                        "fetch_debug": (
-                            getattr(crawler, "get_last_detail_fetch_debug", lambda: {})()
-                            or getattr(crawler, "get_last_bright_request_debug", lambda: {})()
-                        ),
+                        "fetch_debug": fetch_debug,
                         "parse_debug": parse_debug,
                     }
                 )
@@ -495,10 +508,6 @@ def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any]) 
                     f"fields={','.join(parse_debug.get('filled_fields') or []) or '-'}"
                 )
             else:
-                fetch_debug = (
-                    getattr(crawler, "get_last_detail_fetch_debug", lambda: {})()
-                    or getattr(crawler, "get_last_bright_request_debug", lambda: {})()
-                )
                 enriched["detail_fetch_ok"] = False
                 enriched["detail_parse_filled_count"] = 0
                 detail_debug_rows.append(
@@ -610,7 +619,7 @@ def main() -> None:
         os.environ.setdefault("COUPANG_SMOKE_COUPANG_QUERY", keyword)
         result_data = crawler.crawl_coupang(keyword)
         if result_data and str(result_data.get("reason_code") or "") == "OK":
-            result_data = _enrich_result_with_detail_pages(crawler, result_data)
+            result_data = _enrich_result_with_detail_pages(crawler, result_data, keyword=keyword)
 
     _dump_result(
         {

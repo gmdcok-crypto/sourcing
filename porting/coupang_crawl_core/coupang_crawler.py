@@ -535,6 +535,22 @@ class CoupangCrawler:
             return f"https://www.coupang.com{raw}"
         return raw
 
+    @staticmethod
+    def _extract_product_id_from_url(url: str) -> str:
+        raw = str(url or "").strip()
+        if not raw:
+            return ""
+        for pattern in (
+            r"/vp/products/(\d+)",
+            r"/products/(\d+)",
+            r"[?&]productId=(\d+)",
+            r"[?&]itemId=(\d+)",
+        ):
+            match = re.search(pattern, raw)
+            if match:
+                return match.group(1)
+        return ""
+
     def _pick_image_url_from_li(self, li: BeautifulSoup) -> str:
         """검색 결과 카드에서 대표 이미지 URL만 추출한다."""
         image_node = li.select_one(
@@ -1146,6 +1162,215 @@ class CoupangCrawler:
             }
             safe_print(f"[DETAIL][requests] exception url={target_url} error={type(e).__name__}")
             return None
+
+    def _find_search_result_anchor(
+        self,
+        page: Page,
+        *,
+        product_id: str,
+        target_url: str,
+    ) -> Optional[Any]:
+        target_abs = self._absolutize_coupang_url(target_url)
+        target_item_id = ""
+        try:
+            target_item_id = str(dict(parse_qsl(urlparse(target_abs).query, keep_blank_values=True)).get("itemId", "") or "")
+        except Exception:
+            target_item_id = ""
+
+        selectors = (
+            "a[href*='vp/products']",
+            "a[href*='/products/']",
+            "a[href*='www.coupang.com/vp/']",
+        )
+        handles: List[Any] = []
+        for selector in selectors:
+            try:
+                handles.extend(page.query_selector_all(selector))
+            except Exception:
+                continue
+
+        for handle in handles:
+            try:
+                href = self._absolutize_coupang_url(str(handle.get_attribute("href") or "").strip())
+            except Exception:
+                continue
+            if not href:
+                continue
+            if product_id and product_id != self._extract_product_id_from_url(href):
+                continue
+            if target_item_id:
+                try:
+                    item_id = str(dict(parse_qsl(urlparse(href).query, keep_blank_values=True)).get("itemId", "") or "")
+                except Exception:
+                    item_id = ""
+                if item_id and item_id != target_item_id:
+                    continue
+            return handle
+        return None
+
+    def _restore_search_results_page(self, page: Page, search_url: str) -> None:
+        try:
+            page.go_back(wait_until="domcontentloaded")
+            page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=10000)
+            page.wait_for_timeout(random.randint(500, 900))
+            return
+        except Exception:
+            pass
+        page.goto(search_url, wait_until="domcontentloaded")
+        page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=10000)
+        page.wait_for_timeout(random.randint(700, 1200))
+        self._scroll_coupang_search_results_page(page, max_wheel_batches=8)
+
+    def fetch_detail_pages_via_search(
+        self,
+        keyword: str,
+        items: List[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        kw = str(keyword or "").strip()
+        if not kw:
+            self._last_detail_fetch_debug = {
+                "method": "search_click",
+                "error_code": "EMPTY_KEYWORD",
+            }
+            return {}
+
+        targets: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            url = self._absolutize_coupang_url(str(item.get("url") or item.get("product_url") or "").strip())
+            product_id = self._extract_product_id_from_url(url)
+            if not product_id or product_id in targets:
+                continue
+            targets[product_id] = {
+                "product_id": product_id,
+                "target_url": url,
+            }
+        if not targets:
+            return {}
+
+        results: Dict[str, Dict[str, Any]] = {}
+        search_url = self._build_search_url(kw)
+        with self._io_lock:
+            page = self._get_page()
+            if page is None:
+                self._last_detail_fetch_debug = {
+                    "method": "search_click",
+                    "error_code": "PLAYWRIGHT_INIT_FAILED",
+                    "search_url": search_url,
+                }
+                return {}
+
+            try:
+                page.goto(search_url, wait_until="domcontentloaded")
+                if self._is_blocked(page.content(), page.title()):
+                    self._last_detail_fetch_debug = {
+                        "method": "search_click",
+                        "error_code": "BLOCKED_SEARCH",
+                        "search_url": search_url,
+                        "page_title": (page.title() or "")[:120],
+                    }
+                    safe_print("[DETAIL][search_click] search page blocked")
+                    return {}
+                page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=12000)
+                page.wait_for_timeout(random.randint(700, 1200))
+                self._simulate_human_actions(page)
+                self._scroll_coupang_search_results_page(page, max_wheel_batches=10)
+
+                for product_id, meta in targets.items():
+                    target_url = str(meta.get("target_url") or "")
+                    debug: Dict[str, Any] = {
+                        "method": "search_click",
+                        "search_url": search_url,
+                        "product_id": product_id,
+                        "url": target_url,
+                    }
+                    html: Optional[str] = None
+                    anchor = self._find_search_result_anchor(page, product_id=product_id, target_url=target_url)
+                    if anchor is None:
+                        self._scroll_coupang_search_results_page(page, max_wheel_batches=6)
+                        anchor = self._find_search_result_anchor(page, product_id=product_id, target_url=target_url)
+                    if anchor is None:
+                        debug["error_code"] = "SEARCH_RESULT_LINK_NOT_FOUND"
+                        self._last_detail_fetch_debug = dict(debug)
+                        safe_print(f"[DETAIL][search_click] link not found product_id={product_id}")
+                        results[product_id] = {"html": None, "fetch_debug": dict(debug)}
+                        continue
+
+                    try:
+                        anchor.scroll_into_view_if_needed()
+                    except Exception:
+                        pass
+                    try:
+                        anchor.hover(timeout=2500)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(random.randint(350, 800))
+
+                    try:
+                        anchor.click(timeout=5000)
+                        page.wait_for_load_state("domcontentloaded")
+                        page.wait_for_timeout(random.randint(900, 1600))
+                        self._simulate_human_actions(page)
+                        html = page.content()
+                        title = (page.title() or "")[:120]
+                        preview = re.sub(r"\s+", " ", (html or "")[:300]).strip()
+                        debug.update(
+                            {
+                                "page_url": str(page.url or "").strip(),
+                                "page_title": title,
+                                "body_len": len(str(html or "")),
+                                "preview": preview,
+                            }
+                        )
+                        if not str(html or "").strip():
+                            debug["error_code"] = "EMPTY_BODY"
+                            html = None
+                            safe_print(f"[DETAIL][search_click] empty body product_id={product_id}")
+                        elif self._is_blocked(html, title):
+                            debug["error_code"] = "BLOCKED_HTML"
+                            html = None
+                            safe_print(
+                                f"[DETAIL][search_click] blocked product_id={product_id} "
+                                f"title={title or '-'}"
+                            )
+                        else:
+                            debug["stage"] = "html_ok"
+                            safe_print(
+                                f"[DETAIL][search_click] ok product_id={product_id} "
+                                f"page_title={title or '-'} body_len={len(str(html or ''))}"
+                            )
+                    except TimeoutError as e:
+                        debug["error_code"] = "TIMEOUT"
+                        debug["message"] = str(e)
+                        html = None
+                        safe_print(f"[DETAIL][search_click] timeout product_id={product_id}")
+                    except Exception as e:
+                        debug["error_code"] = type(e).__name__
+                        debug["message"] = repr(e)
+                        html = None
+                        safe_print(
+                            f"[DETAIL][search_click] exception product_id={product_id} "
+                            f"error={type(e).__name__}"
+                        )
+                    finally:
+                        self._last_detail_fetch_debug = dict(debug)
+                        results[product_id] = {
+                            "html": html,
+                            "fetch_debug": dict(debug),
+                        }
+                        try:
+                            self._restore_search_results_page(page, search_url)
+                        except Exception:
+                            pass
+                return results
+            except Exception as e:
+                self._last_detail_fetch_debug = {
+                    "method": "search_click",
+                    "search_url": search_url,
+                    "error_code": type(e).__name__,
+                    "message": repr(e),
+                }
+                safe_print(f"[DETAIL][search_click] search flow exception error={type(e).__name__}")
+                return results
 
     def fetch_detail_page_html(self, target_url: str, *, referer: str = "") -> Optional[str]:
         url = str(target_url or "").strip()
