@@ -20,19 +20,6 @@ class UserPwaFeedService:
         image_map = cls._load_local_image_map()
         try:
             run_id = cls._latest_run_id()
-            if not run_id:
-                fallback_themes = cls._build_local_only_themes()
-                return {
-                    "status": "ok",
-                    "run_id": None,
-                    "themes": fallback_themes,
-                }
-
-            keyword_rows = cls._load_final_keywords(run_id)
-            keyword_map = cls._group_keywords_by_theme(keyword_rows)
-            snapshot_map = cls._load_latest_coupang_rows_for_keywords(
-                [row["keyword"] for rows in keyword_map.values() for row in rows]
-            )
         except Exception:
             fallback_themes = cls._build_local_only_themes()
             return {
@@ -40,6 +27,32 @@ class UserPwaFeedService:
                 "run_id": None,
                 "themes": fallback_themes,
             }
+
+        if not run_id:
+            fallback_themes = cls._build_local_only_themes()
+            return {
+                "status": "ok",
+                "run_id": None,
+                "themes": fallback_themes,
+            }
+
+        try:
+            keyword_rows = cls._load_final_keywords(run_id)
+            keyword_map = cls._group_keywords_by_theme(keyword_rows)
+        except Exception:
+            fallback_themes = cls._build_local_only_themes()
+            return {
+                "status": "ok",
+                "run_id": run_id,
+                "themes": fallback_themes,
+            }
+
+        try:
+            snapshot_map = cls._load_latest_coupang_rows_for_keywords(
+                [row["keyword"] for rows in keyword_map.values() for row in rows]
+            )
+        except Exception:
+            snapshot_map = {}
 
         themes: List[Dict[str, Any]] = []
         for theme_name, rows in keyword_map.items():
