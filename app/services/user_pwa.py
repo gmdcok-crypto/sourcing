@@ -7,6 +7,8 @@ from statistics import median
 from typing import Any, Dict, List, Optional
 
 from app.services.db import get_mysql_connection
+from app.core.config import get_settings
+from app.services.r2_storage import R2StorageService
 
 
 class UserPwaFeedService:
@@ -18,7 +20,7 @@ class UserPwaFeedService:
     @classmethod
     def build_feed(cls) -> Dict[str, Any]:
         try:
-            crawled_rows = cls._load_crawled_keywords()
+            crawled_rows = cls._load_latest_crawled_rows()
         except Exception:
             fallback_themes = cls._build_local_only_themes()
             return {
@@ -92,7 +94,25 @@ class UserPwaFeedService:
         return str(row.get("run_id") or "").strip() or None
 
     @classmethod
-    def _load_crawled_keywords(cls) -> List[Dict[str, Any]]:
+    def _load_latest_crawled_rows(cls) -> List[Dict[str, Any]]:
+        r2_rows = cls._load_r2_crawled_rows()
+        if r2_rows:
+            return r2_rows
+        return cls._load_crawled_keywords_from_db()
+
+    @classmethod
+    def _load_r2_crawled_rows(cls) -> List[Dict[str, Any]]:
+        settings = get_settings()
+        service = R2StorageService(settings)
+        key = service.find_latest_local_crawler_result_key()
+        if not key:
+            return []
+        payload = service.read_json(key=key) or {}
+        items = payload.get("items") or []
+        return [item for item in items if isinstance(item, dict)]
+
+    @classmethod
+    def _load_crawled_keywords_from_db(cls) -> List[Dict[str, Any]]:
         connection = get_mysql_connection()
         try:
             with connection.cursor() as cursor:
@@ -131,15 +151,6 @@ class UserPwaFeedService:
 
     @classmethod
     def _group_crawled_rows_by_theme(cls, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        image_map = cls._load_local_image_map()
-        snapshot_map = {}
-        try:
-            snapshot_map = cls._load_latest_coupang_rows_for_keywords(
-                [str(row.get("keyword") or "").strip() for row in rows]
-            )
-        except Exception:
-            snapshot_map = {}
-
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         seen_keywords: Dict[str, set[str]] = defaultdict(set)
         for row in rows:
@@ -153,15 +164,21 @@ class UserPwaFeedService:
             if len(grouped[theme_name]) >= cls.THEME_KEYWORD_LIMIT:
                 continue
             grouped[theme_name].append(
-                cls._build_keyword_card(
+                cls._build_local_card(
                     {
                         "keyword": keyword,
                         "theme_name": theme_name,
                         "theme_detail": row.get("theme_detail") or theme_name,
                         "group_name": row.get("group_name") or "-",
-                    },
-                    snapshot_map.get(keyword, []),
-                    image_map.get(keyword, ""),
+                        "title": row.get("title") or row.get("top_product_title") or "",
+                        "product_url": row.get("product_url") or row.get("top_product_url") or "",
+                        "price": row.get("price") or row.get("top_product_price"),
+                        "image_url": row.get("image_url") or "",
+                        "review_count": row.get("review_count"),
+                        "avg_reviews": row.get("avg_reviews"),
+                        "delivery_type": row.get("delivery_type") or "",
+                        "shipping_fee": row.get("shipping_fee"),
+                    }
                 )
             )
             seen_keywords[theme_name].add(keyword)

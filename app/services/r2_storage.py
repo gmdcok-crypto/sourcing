@@ -158,6 +158,42 @@ class R2StorageService:
         matching_keys.sort(reverse=True)
         return matching_keys[0]
 
+    def find_latest_local_crawler_result_key(self) -> Optional[str]:
+        if not self.is_configured():
+            return None
+
+        client = self._build_client()
+        prefix = "crawling/coupang/local-ui-results/"
+        continuation_token = None
+        matching_keys = []
+
+        try:
+            while True:
+                kwargs = {
+                    "Bucket": self.settings.r2_bucket_name,
+                    "Prefix": prefix,
+                    "MaxKeys": 1000,
+                }
+                if continuation_token:
+                    kwargs["ContinuationToken"] = continuation_token
+                response = client.list_objects_v2(**kwargs)
+
+                for item in response.get("Contents", []):
+                    key = item.get("Key") or ""
+                    if key.endswith(".json"):
+                        matching_keys.append(key)
+
+                if not response.get("IsTruncated"):
+                    break
+                continuation_token = response.get("NextContinuationToken")
+        except (BotoCoreError, ClientError):
+            return None
+
+        if not matching_keys:
+            return None
+        matching_keys.sort(reverse=True)
+        return matching_keys[0]
+
     def _build_key(self, *, query: str) -> str:
         safe_query = "-".join(query.strip().lower().split()) or "empty-query"
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
