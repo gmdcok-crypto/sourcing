@@ -53,103 +53,6 @@ USER_PWA_HTML = """
       margin: 0 auto;
     }
 
-    .hero {
-      display: grid;
-      grid-template-columns: 1.2fr 0.8fr;
-      gap: 20px;
-      align-items: stretch;
-      margin-bottom: 36px;
-    }
-
-    .hero-main, .hero-side {
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(18, 26, 47, 0.95), rgba(10, 15, 29, 0.96));
-      border-radius: 28px;
-      box-shadow: var(--shadow);
-    }
-
-    .hero-main {
-      padding: 28px;
-      min-height: 260px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-    }
-
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      color: #ffd7df;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 14px;
-    }
-
-    .title {
-      margin: 0;
-      font-size: 46px;
-      line-height: 1.06;
-      letter-spacing: -0.03em;
-    }
-
-    .subtitle {
-      margin: 14px 0 0;
-      max-width: 760px;
-      font-size: 16px;
-      line-height: 1.7;
-      color: var(--muted);
-    }
-
-    .hero-meta {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-top: 28px;
-    }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.04);
-      color: #dce4ff;
-      border-radius: 999px;
-      padding: 10px 14px;
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .hero-side {
-      padding: 24px;
-      display: grid;
-      gap: 14px;
-      align-content: start;
-    }
-
-    .stat-card {
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.03);
-      border-radius: 20px;
-      padding: 16px 18px;
-    }
-
-    .stat-label {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-
-    .stat-value {
-      font-size: 28px;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-    }
-
     .theme-section {
       margin-bottom: 34px;
     }
@@ -390,9 +293,6 @@ USER_PWA_HTML = """
       .row-track {
         grid-template-columns: repeat(5, 260px);
       }
-      .hero {
-        grid-template-columns: 1fr;
-      }
     }
 
     @media (max-width: 980px) {
@@ -407,38 +307,6 @@ USER_PWA_HTML = """
 </head>
 <body>
   <div class="shell">
-    <section class="hero">
-      <div class="hero-main">
-        <div>
-          <div class="eyebrow">PC First User PWA</div>
-          <h1 class="title">테마별 키워드를 넷플릭스형 카드로 보여주는 사용자 화면</h1>
-          <p class="subtitle">
-            테마별로 상위 키워드 5개를 한 줄에 배치하고, 카드 호버 시 리뷰평가, 배송평가, 티어를 한 번에 확인할 수 있도록 구성했습니다.
-            이후 로그인과 사용자별 URL 매핑을 얹기 쉬운 구조로 설계되어 있습니다.
-          </p>
-        </div>
-        <div class="hero-meta">
-          <span class="pill">한 줄 = 한 테마</span>
-          <span class="pill">카드당 1개 키워드</span>
-          <span class="pill">PC 우선 레이아웃</span>
-        </div>
-      </div>
-      <aside class="hero-side">
-        <div class="stat-card">
-          <div class="stat-label">최근 소싱 Run</div>
-          <div class="stat-value">__RUN_ID__</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">테마 수</div>
-          <div class="stat-value">__THEME_COUNT__</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">키워드 카드 수</div>
-          <div class="stat-value">__CARD_COUNT__</div>
-        </div>
-      </aside>
-    </section>
-
     <main id="app">__THEME_ROWS__</main>
   </div>
 </body>
@@ -549,11 +417,6 @@ async def get_user_feed() -> Dict[str, Any]:
 @router.get("/user", response_class=HTMLResponse)
 async def user_console() -> HTMLResponse:
     payload = UserPwaFeedService.build_feed()
-    theme_count = len(payload.get("themes") or [])
-    card_count = sum(len(theme.get("cards") or []) for theme in payload.get("themes") or [])
     html = USER_PWA_HTML
-    html = html.replace("__RUN_ID__", escape(str(payload.get("run_id") or "-")))
-    html = html.replace("__THEME_COUNT__", escape(str(theme_count)))
-    html = html.replace("__CARD_COUNT__", escape(str(card_count)))
     html = html.replace("__THEME_ROWS__", _render_theme_rows(payload))
     return HTMLResponse(content=html)
