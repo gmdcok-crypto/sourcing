@@ -974,22 +974,91 @@ class CoupangCrawler:
         except Exception:
             return
 
+    @staticmethod
+    def _human_sleep(min_seconds: float = 0.25, max_seconds: float = 0.9) -> None:
+        try:
+            lo = float(min_seconds)
+            hi = float(max_seconds)
+            if hi < lo:
+                lo, hi = hi, lo
+            time.sleep(random.uniform(max(0.05, lo), max(0.05, hi)))
+        except Exception:
+            time.sleep(0.25)
+
+    def _linger_on_results_page(self, page: Page, *, passes: int = 2) -> None:
+        """
+        검색 결과 화면에서 즉시 파싱하지 않고 사람이 상품 목록을 훑는 듯한 짧은 체류를 만든다.
+        """
+        try:
+            page.wait_for_timeout(random.randint(450, 1100))
+            self._human_sleep(0.2, 0.7)
+            for idx in range(max(1, int(passes))):
+                try:
+                    page.mouse.move(
+                        random.randint(180, 1100),
+                        random.randint(220, 900),
+                        steps=random.randint(12, 35),
+                    )
+                    page.wait_for_timeout(random.randint(180, 520))
+                    wheel_delta = random.randint(260, 980)
+                    if idx % 3 == 2:
+                        wheel_delta *= -1
+                    page.mouse.wheel(0, wheel_delta)
+                    page.wait_for_timeout(random.randint(280, 760))
+                    self._human_sleep(0.18, 0.55)
+                except Exception:
+                    continue
+        except Exception:
+            return
+
+    def _hover_random_product_cards(self, page: Page, *, attempts: int = 2) -> None:
+        """
+        일부 상품 카드 근처로 마우스를 옮겨 실제 사용자가 목록을 읽는 흐름을 흉내 낸다.
+        """
+        try:
+            cards = page.locator(_PRODUCT_LIST_SELECTOR)
+            count = min(cards.count(), 8)
+            if count <= 0:
+                return
+            order = list(range(count))
+            random.shuffle(order)
+            for idx in order[: max(1, int(attempts))]:
+                try:
+                    card = cards.nth(idx)
+                    box = card.bounding_box()
+                    if not box:
+                        continue
+                    target_x = int(box["x"] + min(max(20, box["width"] * 0.35), max(24, box["width"] - 20)))
+                    target_y = int(box["y"] + min(max(20, box["height"] * 0.3), max(24, box["height"] - 20)))
+                    page.mouse.move(target_x, target_y, steps=random.randint(16, 42))
+                    page.wait_for_timeout(random.randint(260, 900))
+                    if random.random() < 0.45:
+                        page.mouse.wheel(0, random.randint(120, 420))
+                        page.wait_for_timeout(random.randint(160, 420))
+                except Exception:
+                    continue
+        except Exception:
+            return
+
     def _scroll_coupang_search_results_page(self, page: Page, *, max_wheel_batches: int = 14) -> None:
         """
         검색 결과 상품 카드가 지연 로드되므로 마우스 휠과 페이지 하단 스크롤로 DOM을 채운 뒤 1~10위 추출을 한다.
         스모크 probe와 동일한 패턴을 공유한다.
         """
         try:
-            page.wait_for_timeout(300)
+            page.wait_for_timeout(random.randint(220, 520))
             for i in range(max(1, int(max_wheel_batches))):
-                page.mouse.wheel(0, 1600)
-                page.wait_for_timeout(220)
+                wheel_amount = random.randint(950, 1850)
+                page.mouse.wheel(0, wheel_amount)
+                page.wait_for_timeout(random.randint(170, 420))
                 if i % 4 == 3:
                     try:
                         page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-                        page.wait_for_timeout(350)
+                        page.wait_for_timeout(random.randint(260, 620))
                     except Exception:
                         pass
+                if i in {1, 4, 7}:
+                    self._hover_random_product_cards(page, attempts=1)
         except Exception as ex:
             safe_print(f"[Crawler] 검색 결과 스크롤 생략: {ex!r}")
 
@@ -1049,6 +1118,13 @@ class CoupangCrawler:
         except Exception as e:
             safe_print(f"[SMOKE] Google 동의 팝업 처리 중 예외(무시): {e!r}")
 
+    @staticmethod
+    def _search_engine_referer(keyword: str = "") -> str:
+        kw = str(keyword or "").strip()
+        if kw:
+            return f"https://www.google.com/search?q={quote(kw)}"
+        return "https://www.google.com/"
+
     def _session_headers_from_page(self, page: Page) -> Dict[str, str]:
         try:
             ua = str(page.evaluate("() => navigator.userAgent"))
@@ -1067,6 +1143,7 @@ class CoupangCrawler:
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
             "Sec-Fetch-User": "?1",
+            "Referer": self._search_engine_referer(),
         }
         return headers
 
@@ -1085,6 +1162,10 @@ class CoupangCrawler:
                     path=str(c.get("path", "/")),
                 )
             headers = self._session_headers_from_page(page)
+            headers["Referer"] = self._search_engine_referer(
+                dict(parse_qsl(urlparse(search_url).query, keep_blank_values=True)).get("q", "")
+            )
+            headers["Sec-Fetch-Site"] = "cross-site"
             parsed = urlparse(search_url)
             q = dict(parse_qsl(parsed.query, keep_blank_values=True))
             q["component"] = q.get("component", "")
@@ -1254,14 +1335,24 @@ class CoupangCrawler:
             return
         except Exception:
             pass
-        page.goto(search_url, wait_until="domcontentloaded")
+        page.goto(
+            search_url,
+            wait_until="domcontentloaded",
+            referer=self._search_engine_referer(
+                dict(parse_qsl(urlparse(search_url).query, keep_blank_values=True)).get("q", "")
+            ),
+        )
         page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=10000)
         page.wait_for_timeout(random.randint(700, 1200))
         self._scroll_coupang_search_results_page(page, max_wheel_batches=8)
 
     def _open_search_results_page_via_ui(self, page: Page, keyword: str) -> str:
         kw = str(keyword or "").strip()
-        page.goto("https://www.coupang.com", wait_until="domcontentloaded")
+        page.goto(
+            "https://www.coupang.com",
+            wait_until="domcontentloaded",
+            referer=self._search_engine_referer(kw),
+        )
         if self._is_blocked(page.content(), page.title()):
             raise RuntimeError("BLOCKED_HOME")
 
@@ -1286,6 +1377,75 @@ class CoupangCrawler:
         page.wait_for_timeout(random.randint(800, 1400))
         self._scroll_coupang_search_results_page(page, max_wheel_batches=10)
         return str(page.url or "").strip()
+
+    def _open_search_results_via_google(self, page: Page, keyword: str) -> str:
+        kw = str(keyword or "").strip()
+        if not kw:
+            raise RuntimeError("EMPTY_KEYWORD")
+
+        google_url = "https://www.google.com/ncr"
+        page.goto(google_url, wait_until="domcontentloaded")
+        self._accept_google_consent_if_present(page)
+        self._human_sleep(0.25, 0.7)
+
+        search_box = page.locator("textarea[name='q'], input[name='q']:not([type='hidden'])").first
+        search_box.wait_for(state="visible", timeout=15000)
+        search_box.click(timeout=5000)
+        page.wait_for_timeout(random.randint(180, 420))
+        try:
+            search_box.fill("")
+        except Exception:
+            pass
+        page.keyboard.type(f"{kw} 쿠팡", delay=random.randint(70, 140))
+        page.wait_for_timeout(random.randint(260, 650))
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=20000):
+            page.keyboard.press("Enter")
+        page.wait_for_load_state("domcontentloaded")
+        self._linger_on_results_page(page, passes=random.randint(1, 2))
+
+        coupang_locators = [
+            page.locator('a[href*="www.coupang.com/np/search"]').first,
+            page.locator('a[href*="coupang.com/np/search"]').first,
+            page.locator('a[href^="https://www.coupang.com"]').first,
+            page.locator('a[href*="coupang.com"]').first,
+        ]
+
+        clicked = False
+        last_err: Optional[Exception] = None
+        for loc in coupang_locators:
+            try:
+                loc.wait_for(state="visible", timeout=4000)
+                loc.scroll_into_view_if_needed(timeout=4000)
+                self._human_sleep(0.15, 0.5)
+                ctx = page.context
+                before_pages = len(ctx.pages)
+                loc.click(timeout=10000)
+                page.wait_for_timeout(random.randint(250, 700))
+                if len(ctx.pages) > before_pages:
+                    page = ctx.pages[-1]
+                page.wait_for_load_state("domcontentloaded", timeout=25000)
+                clicked = True
+                break
+            except Exception as ex:
+                last_err = ex
+                continue
+
+        if not clicked:
+            if last_err is not None:
+                raise last_err
+            raise RuntimeError("GOOGLE_TO_COUPANG_CLICK_FAILED")
+
+        cur_url = str(page.url or "").strip()
+        if "coupang.com/np/search" in cur_url:
+            page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=15000)
+            page.wait_for_timeout(random.randint(700, 1400))
+            self._scroll_coupang_search_results_page(page, max_wheel_batches=8)
+            return cur_url
+
+        if "coupang.com" not in cur_url.lower():
+            raise RuntimeError("GOOGLE_TO_COUPANG_NAVIGATION_FAILED")
+
+        return self._open_search_results_page_via_ui(page, kw)
 
     def fetch_detail_pages_via_search(
         self,
@@ -1668,7 +1828,15 @@ class CoupangCrawler:
                 return None
             try:
                 url = self._build_search_url(keyword)
-                page.goto(url, wait_until="domcontentloaded")
+                try:
+                    opened_url = self._open_search_results_via_google(page, keyword)
+                    safe_print(f"[Crawler][playwright] google entry ok keyword={keyword} url={opened_url}")
+                except Exception as google_ex:
+                    safe_print(
+                        f"[Crawler][playwright] google entry fallback keyword={keyword} "
+                        f"error={type(google_ex).__name__}"
+                    )
+                    page.goto(url, wait_until="domcontentloaded")
                 if self._is_blocked(page.content(), page.title()):
                     safe_print("[WAF_BLOCK][playwright] initial load blocked by WAF/CAPTCHA")
                     self._stats["blocked"] += 1
@@ -1678,6 +1846,9 @@ class CoupangCrawler:
                     }
                     return None
                 self._simulate_human_actions(page)
+                self._linger_on_results_page(page, passes=random.randint(2, 4))
+                self._hover_random_product_cards(page, attempts=random.randint(1, 2))
+                self._human_sleep(0.25, 0.8)
 
                 req_result = self._requests_with_browser_session(page, url)
                 req_n = len((req_result or {}).get("top10_items") or [])
@@ -1690,11 +1861,14 @@ class CoupangCrawler:
 
                 page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=12000)
                 page.wait_for_timeout(random.randint(900, 1600))
+                self._linger_on_results_page(page, passes=random.randint(2, 3))
                 safe_print(
                     f"[Crawler][playwright] ready keyword={keyword} "
                     f"title={page.title()[:80]} url={page.url}"
                 )
                 self._scroll_coupang_search_results_page(page)
+                self._hover_random_product_cards(page, attempts=random.randint(1, 3))
+                self._human_sleep(0.2, 0.65)
                 html = page.content()
                 if self._is_blocked(html, page.title()):
                     safe_print("[WAF_BLOCK][playwright] blocked signal detected before parsing")
@@ -1706,8 +1880,10 @@ class CoupangCrawler:
                     f"product_count={product_count} top10_items={len(items)} (after scroll)"
                 )
                 if len(items) < 10:
+                    self._linger_on_results_page(page, passes=2)
                     self._scroll_coupang_search_results_page(page, max_wheel_batches=12)
                     page.wait_for_timeout(random.randint(400, 900))
+                    self._hover_random_product_cards(page, attempts=1)
                     html2 = page.content()
                     if not self._is_blocked(html2, page.title()):
                         pc2, items2 = self._parse_top10_from_html(html2)
@@ -1787,7 +1963,17 @@ class CoupangCrawler:
         except Exception:
             extra = 1
         attempts = 1 + extra
-        payload = {"zone": zone, "url": str(url or "").strip(), "format": "raw"}
+        parsed_url = urlparse(str(url or "").strip())
+        ref_q = dict(parse_qsl(parsed_url.query, keep_blank_values=True)).get("q", "")
+        payload = {
+            "zone": zone,
+            "url": str(url or "").strip(),
+            "format": "raw",
+            "headers": {
+                "Referer": self._search_engine_referer(ref_q),
+                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            },
+        }
         for attempt in range(attempts):
             if attempt > 0:
                 time.sleep(0.55)

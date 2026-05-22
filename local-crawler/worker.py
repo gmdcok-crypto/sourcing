@@ -340,11 +340,6 @@ async def run_worker() -> Dict[str, Any]:
                 "--disable-features=IsolateOrigins,site-per-process",
                 "--lang=ko-KR",
             ],
-            proxy={
-                "server": f"http://{settings.brightdata_proxy_host}:{settings.brightdata_proxy_port}",
-                "username": settings.brightdata_proxy_username,
-                "password": settings.brightdata_proxy_password,
-            },
         )
         results = []
         try:

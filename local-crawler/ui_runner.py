@@ -266,8 +266,8 @@ def request_stop() -> Dict[str, Any]:
 def _build_process_env(keyword: str) -> Dict[str, str]:
     env = os.environ.copy()
     env["MANUAL_KEYWORD"] = keyword
-    # Batch runs should stay headless so blocked detail pages do not pop open a browser window.
-    env["COUPANG_HEADLESS"] = "1"
+    # Keep the browser visible during batch runs to reduce detection versus strict headless mode.
+    env["COUPANG_HEADLESS"] = "0"
     return env
 
 

@@ -17,11 +17,6 @@ async def main() -> None:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(
             headless=settings.crawler_headless,
-            proxy={
-                "server": f"http://{settings.brightdata_proxy_host}:{settings.brightdata_proxy_port}",
-                "username": settings.brightdata_proxy_username,
-                "password": settings.brightdata_proxy_password,
-            },
         )
         context = await browser.new_context(
             locale="ko-KR",

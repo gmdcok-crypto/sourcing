@@ -26,12 +26,6 @@ class LocalCrawlerSettings(BaseSettings):
     r2_bucket_name: Optional[str] = Field(default=None, alias="R2_BUCKET_NAME")
     r2_public_base_url: Optional[str] = Field(default=None, alias="R2_PUBLIC_BASE_URL")
 
-    brightdata_proxy_host: str = Field(default="brd.superproxy.io", alias="BRIGHTDATA_PROXY_HOST")
-    brightdata_proxy_port: int = Field(default=33335, alias="BRIGHTDATA_PROXY_PORT")
-    brightdata_proxy_username: Optional[str] = Field(default=None, alias="BRIGHTDATA_PROXY_USERNAME")
-    brightdata_proxy_password: Optional[str] = Field(default=None, alias="BRIGHTDATA_PROXY_PASSWORD")
-    brightdata_proxy_country: str = Field(default="kr", alias="BRIGHTDATA_PROXY_COUNTRY")
-    brightdata_proxy_session_prefix: str = Field(default="local-crawler", alias="BRIGHTDATA_PROXY_SESSION_PREFIX")
     brightdata_api_token: Optional[str] = Field(default=None, alias="BRIGHTDATA_API_TOKEN")
     brightdata_request_zone: Optional[str] = Field(default=None, alias="BRIGHTDATA_REQUEST_ZONE")
     coupang_bright_request: str = Field(default="off", alias="COUPANG_BRIGHT_REQUEST")
