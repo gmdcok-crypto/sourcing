@@ -724,7 +724,11 @@ ADMIN_HTML = """
                 </div>
                 <button class="action-btn" id="keyword-history-load-btn" type="submit">조회</button>
               </form>
-              <button class="action-btn" id="keyword-export-btn" type="button">엑셀 저장</button>
+              <form class="history-toolbar" id="keyword-export-form" action="/api/admin/keyword-sourcing/export" method="get">
+                <input type="hidden" name="run_id" value="__EXPORT_RUN_ID__" />
+                <input type="hidden" name="date_value" value="__DEFAULT_HISTORY_DATE__" />
+                <button class="action-btn" id="keyword-export-btn" type="submit">엑셀 저장</button>
+              </form>
               <script>
                 (() => {
                   const displayInput = document.getElementById("keyword-history-date");
@@ -1185,6 +1189,7 @@ ADMIN_HTML = """
     const keywordHistoryNextMonthBtn = document.getElementById("keyword-history-next-month");
     const keywordHistoryLoadBtn = document.getElementById("keyword-history-load-btn");
     const keywordExportBtn = document.getElementById("keyword-export-btn");
+    const keywordExportForm = document.getElementById("keyword-export-form");
     const keywordProgressLabel = document.getElementById("keyword-progress-label");
     const keywordProgressFill = document.getElementById("keyword-progress-fill");
     const keywordProgressValue = document.getElementById("keyword-progress-value");
@@ -1618,6 +1623,7 @@ ADMIN_HTML = """
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
       }
+      syncKeywordExportForm();
       markKeywordStatusHealthy();
       renderKeywordSourcingStatus(state);
       if (state.status === "running") {
@@ -1707,20 +1713,27 @@ ADMIN_HTML = """
       if (state.run_id) {
         keywordSourcingRunId = state.run_id;
       }
+      syncKeywordExportForm();
       markKeywordStatusHealthy();
       renderKeywordSourcingStatus(state);
     }
 
-    async function downloadKeywordExcel() {
-      const params = new URLSearchParams();
-      if (keywordHistoryMode && keywordHistoryDateInput && keywordHistoryDateInput.value) {
-        params.set("date_value", keywordHistoryDateInput.value);
-      } else if (keywordSourcingRunId) {
-        params.set("run_id", keywordSourcingRunId);
+    function syncKeywordExportForm() {
+      if (!keywordExportForm) {
+        return;
       }
-      params.set("_ts", String(Date.now()));
-      window.location.href = `/api/admin/keyword-sourcing/export?${params.toString()}`;
+      const runIdInput = keywordExportForm.querySelector('input[name="run_id"]');
+      const dateValueInput = keywordExportForm.querySelector('input[name="date_value"]');
+      if (runIdInput) {
+        runIdInput.value = keywordHistoryMode ? "" : (keywordSourcingRunId || "");
+      }
+      if (dateValueInput) {
+        dateValueInput.value = keywordHistoryDateInput && keywordHistoryDateInput.value
+          ? keywordHistoryDateInput.value
+          : "";
+      }
     }
+    syncKeywordExportForm();
 
     function editTheme(themeId) {
       const theme = getThemeById(themeId);
@@ -1975,13 +1988,9 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordExportBtn) {
-      keywordExportBtn.addEventListener("click", async () => {
-        try {
-          await downloadKeywordExcel();
-        } catch (error) {
-          alert(`엑셀 저장 실패: ${error.message}`);
-        }
+    if (keywordExportForm) {
+      keywordExportForm.addEventListener("submit", () => {
+        syncKeywordExportForm();
       });
     }
 
