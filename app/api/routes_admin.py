@@ -1719,14 +1719,7 @@ ADMIN_HTML = """
         params.set("run_id", keywordSourcingRunId);
       }
       params.set("_ts", String(Date.now()));
-      const link = document.createElement("a");
-      link.href = `/api/admin/keyword-sourcing/export?${params.toString()}`;
-      link.download = "keyword-results.xlsx";
-      link.rel = "noopener";
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      window.location.href = `/api/admin/keyword-sourcing/export?${params.toString()}`;
     }
 
     function editTheme(themeId) {
