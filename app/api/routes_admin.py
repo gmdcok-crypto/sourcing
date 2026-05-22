@@ -726,7 +726,6 @@ ADMIN_HTML = """
               </form>
               <form class="history-toolbar" id="keyword-export-form" action="/api/admin/keyword-sourcing/export" method="get">
                 <input type="hidden" name="run_id" value="__EXPORT_RUN_ID__" />
-                <input type="hidden" name="date_value" value="__DEFAULT_HISTORY_DATE__" />
                 <button class="action-btn" id="keyword-export-btn" type="submit">엑셀 저장</button>
               </form>
               <script>
@@ -1723,14 +1722,8 @@ ADMIN_HTML = """
         return;
       }
       const runIdInput = keywordExportForm.querySelector('input[name="run_id"]');
-      const dateValueInput = keywordExportForm.querySelector('input[name="date_value"]');
       if (runIdInput) {
-        runIdInput.value = keywordHistoryMode ? "" : (keywordSourcingRunId || "");
-      }
-      if (dateValueInput) {
-        dateValueInput.value = keywordHistoryMode && keywordHistoryDateInput && keywordHistoryDateInput.value
-          ? keywordHistoryDateInput.value
-          : "";
+        runIdInput.value = keywordSourcingRunId || "";
       }
     }
     syncKeywordExportForm();

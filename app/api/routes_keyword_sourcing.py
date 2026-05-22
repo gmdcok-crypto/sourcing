@@ -72,15 +72,7 @@ async def export_keyword_sourcing_excel(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     selected_run_id = str(run_id or "").strip() or None
-    if selected_run_id is not None:
-        state = KeywordSourcingService.get_status(run_id=selected_run_id)
-    elif date_value is not None:
-        state = KeywordSourcingService.load_saved_result_for_date(
-            settings,
-            target_date=date_value,
-        )
-    else:
-        state = KeywordSourcingService.get_status(run_id=selected_run_id)
+    state = KeywordSourcingService.get_status(run_id=selected_run_id)
 
     from app.api.routes_admin import build_keyword_summary_rows_data
 
