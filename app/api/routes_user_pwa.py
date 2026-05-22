@@ -224,8 +224,10 @@ USER_PWA_HTML = """
     .media img {
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
+      object-position: center;
       display: block;
+      padding: 10px;
       transition: transform 0.28s ease, filter 0.28s ease;
     }
 
