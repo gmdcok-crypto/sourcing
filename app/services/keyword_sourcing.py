@@ -38,6 +38,9 @@ class KeywordSourcingService:
     CATEGORY_DELAY_SECONDS = 0.5
     VALID_KEYWORD_LIMIT = 100
     UNSOURCEABLE_PRODUCT_COUNT_MAX = 200
+    UNSOURCEABLE_CTR_MIN = 9.9
+    MONOPOLY_SUSPECT_PRODUCT_COUNT_MIN = 201
+    MONOPOLY_SUSPECT_PRODUCT_COUNT_MAX = 1000
     UNSOURCEABLE_KEYWORD_TOKENS = {
         "코르딕스루프캐리어",
         "뽀로로뮤직하우스",
@@ -200,6 +203,11 @@ class KeywordSourcingService:
                     "competition_level": row.get("competition_level"),
                     "monthly_exposure_ads": cls._to_int(row.get("monthly_exposure_ads")),
                     "product_count": cls._to_int(row.get("product_count")),
+                    "monopoly_suspect": str(
+                        source_payload.get("monopoly_suspect")
+                        or cls._monopoly_suspect_label(cls._to_int(row.get("product_count")) or 0)
+                        or ""
+                    ),
                     "rank": cls._to_int(row.get("rank_order")),
                     "crawl_status": row.get("crawl_status") or "pending",
                     "crawl_job_id": row.get("crawl_job_id"),
@@ -712,7 +720,11 @@ class KeywordSourcingService:
             shopping_category_path = str(product_info.get("category_path") or "")
             monthly_trends = monthly_trend_map.get(keyword) or []
             season_months = self._estimate_season_months(monthly_trends)
-            if self._is_unsourceable_keyword(keyword=keyword, product_count=product_count):
+            if self._is_unsourceable_keyword(
+                keyword=keyword,
+                product_count=product_count,
+                monthly_mobile_ctr=monthly_mobile_ctr,
+            ):
                 continue
             group_name = self._classify_group(
                 monthly_mobile_searches=monthly_mobile_searches,
@@ -732,6 +744,7 @@ class KeywordSourcingService:
                 "monthly_mobile_ctr": monthly_mobile_ctr,
                 "monthly_exposure_ads": monthly_exposure_ads,
                 "product_count": product_count,
+                "monopoly_suspect": self._monopoly_suspect_label(product_count),
                 "shopping_category_path": shopping_category_path,
                 "season_months": season_months,
                 "ad_efficiency": self._to_ad_efficiency_label(metrics.get("pl_avg_depth")),
@@ -749,16 +762,36 @@ class KeywordSourcingService:
         return enriched_rows
 
     @classmethod
-    def _is_unsourceable_keyword(cls, *, keyword: str, product_count: int) -> bool:
+    def _is_unsourceable_keyword(
+        cls,
+        *,
+        keyword: str,
+        product_count: int,
+        monthly_mobile_ctr: Any = None,
+    ) -> bool:
         normalized_keyword = str(keyword or "").strip().lower().replace(" ", "")
         if not normalized_keyword:
             return True
-        if 0 <= int(product_count or 0) <= cls.UNSOURCEABLE_PRODUCT_COUNT_MAX:
+
+        count = int(product_count or 0)
+        if 1 <= count <= cls.UNSOURCEABLE_PRODUCT_COUNT_MAX:
             return True
+
+        ctr = cls._parse_ctr(monthly_mobile_ctr)
+        if ctr is not None and ctr >= cls.UNSOURCEABLE_CTR_MIN:
+            return True
+
         return any(
             token.lower().replace(" ", "") in normalized_keyword
             for token in cls.UNSOURCEABLE_KEYWORD_TOKENS
         )
+
+    @classmethod
+    def _monopoly_suspect_label(cls, product_count: int) -> str:
+        count = int(product_count or 0)
+        if cls.MONOPOLY_SUSPECT_PRODUCT_COUNT_MIN <= count <= cls.MONOPOLY_SUSPECT_PRODUCT_COUNT_MAX:
+            return "독점의심"
+        return ""
 
     @staticmethod
     def _classify_group(

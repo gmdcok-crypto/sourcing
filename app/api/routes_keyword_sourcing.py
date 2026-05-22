@@ -91,6 +91,7 @@ async def export_keyword_sourcing_excel(
         "광고효율",
         "시즌",
         "등록상품수",
+        "독점의심",
     ]
     worksheet.append(headers)
     for row in rows:
@@ -106,6 +107,7 @@ async def export_keyword_sourcing_excel(
                 _safe_excel_cell(row.get("adEfficiency", "")),
                 _safe_excel_cell(row.get("season", "")),
                 _safe_excel_cell(row.get("productCount", "")),
+                _safe_excel_cell(row.get("monopolySuspect", "")),
             ]
         )
 
