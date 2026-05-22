@@ -1851,10 +1851,27 @@ class CoupangCrawler:
                 return None
             try:
                 url = self._build_search_url(keyword)
+                force_google_entry = str(os.environ.get("COUPANG_FORCE_GOOGLE_ENTRY", "")).strip().lower() in {
+                    "1",
+                    "true",
+                    "y",
+                    "yes",
+                    "on",
+                }
                 try:
                     opened_url = self._open_search_results_via_google(page, keyword)
                     safe_print(f"[Crawler][playwright] google entry ok keyword={keyword} url={opened_url}")
                 except Exception as google_ex:
+                    if force_google_entry:
+                        safe_print(
+                            f"[Crawler][playwright] google entry required keyword={keyword} "
+                            f"error={type(google_ex).__name__}"
+                        )
+                        self._last_error = {
+                            "code": "GOOGLE_ENTRY_FAILED",
+                            "message": repr(google_ex),
+                        }
+                        return None
                     safe_print(
                         f"[Crawler][playwright] google entry fallback keyword={keyword} "
                         f"error={type(google_ex).__name__}"
@@ -2164,6 +2181,8 @@ class CoupangCrawler:
             return self._result_with_reason("REQUESTS_EXCEPTION")
         if code == "PLAYWRIGHT_EXCEPTION":
             return self._result_with_reason("PLAYWRIGHT_EXCEPTION")
+        if code == "GOOGLE_ENTRY_FAILED":
+            return self._result_with_reason("GOOGLE_ENTRY_FAILED")
         if code == "PLAYWRIGHT_BLOCKED_BY_WAF_INITIAL":
             return self._result_with_reason("BLOCKED_BY_WAF_INITIAL")
         return self._result_with_reason("CRAWL_FAILED")

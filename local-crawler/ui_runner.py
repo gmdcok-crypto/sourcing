@@ -268,6 +268,10 @@ def _build_process_env(keyword: str) -> Dict[str, str]:
     env["MANUAL_KEYWORD"] = keyword
     # Keep the browser visible during batch runs to reduce detection versus strict headless mode.
     env["COUPANG_HEADLESS"] = "0"
+    # Use the BlueOcean-style path: require Google -> Coupang entry before parsing.
+    env["COUPANG_FORCE_GOOGLE_ENTRY"] = "1"
+    # Keep the local crawler focused on the Google-entry Playwright path instead of Bright-first shortcuts.
+    env["COUPANG_BRIGHT_REQUEST"] = "off"
     return env
 
 

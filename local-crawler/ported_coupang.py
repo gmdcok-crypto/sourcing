@@ -35,6 +35,8 @@ def _load_env_file(path: Path) -> None:
 def _prepare_environment() -> None:
     _load_env_file(ENV_PATH)
     os.environ.setdefault("COUPANG_SMOKE_EXTRACT_DB", "false")
+    os.environ.setdefault("COUPANG_FORCE_GOOGLE_ENTRY", "1")
+    os.environ.setdefault("COUPANG_BRIGHT_REQUEST", "off")
     if str(PORTING_ROOT) not in sys.path:
         sys.path.insert(0, str(PORTING_ROOT))
 
