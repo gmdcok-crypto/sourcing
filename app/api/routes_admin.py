@@ -1602,6 +1602,7 @@ ADMIN_HTML = """
         keywordSourcingRunId = state.run_id;
       }
       keywordDetailLoadedRunId = state.run_id || runId || null;
+      syncKeywordExportForm();
       const classifiedKeywords = Array.isArray(state.classified_keywords) ? state.classified_keywords : [];
       const previewRows = Array.isArray(state.preview_rows) ? state.preview_rows : [];
       const fallbackRows = classifiedKeywords.length > 0 ? classifiedKeywords : previewRows;
@@ -2222,6 +2223,7 @@ def render_admin_html(
     html = html.replace("__KEYWORD_PAGE_META__", paginated_keyword_data["meta_text"])
     html = html.replace("__KEYWORD_THEME_OPTIONS__", build_theme_options_html(taxonomy_data["themes"]))
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
+    html = html.replace("__EXPORT_RUN_ID__", escape(str(keyword_status.get("run_id") or "")))
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
     html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)
     return html
@@ -2275,10 +2277,11 @@ def load_admin_taxonomy_data() -> Dict[str, List[Dict[str, Any]]]:
 def load_keyword_status_data() -> Dict[str, Any]:
     from app.services.keyword_sourcing import KeywordSourcingService
 
-    state = KeywordSourcingService.get_status()
+    state = KeywordSourcingService.get_export_state()
     logs = state.get("logs") or ["실행 대기중입니다."]
 
     return {
+        "run_id": state.get("run_id"),
         "message": state.get("message") or "대기중",
         "progress_percent": int(state.get("progress_percent") or 0),
         "status": state.get("status") or "idle",
@@ -2300,6 +2303,7 @@ def load_keyword_status_data() -> Dict[str, Any]:
         "searchad_count": int(state.get("searchad_count") or 0),
         "group_counts": state.get("group_counts") or {},
         "classified_keywords": state.get("classified_keywords") or [],
+        "preview_rows": state.get("preview_rows") or [],
     }
 
 

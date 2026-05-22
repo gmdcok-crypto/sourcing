@@ -72,16 +72,76 @@ class KeywordSourcingService:
         self.r2_service = R2StorageService(settings)
 
     @classmethod
+    def _normalize_run_id(cls, run_id: Optional[str]) -> Optional[str]:
+        normalized = str(run_id or "").strip()
+        if not normalized or normalized == "__EXPORT_RUN_ID__":
+            return None
+        return normalized
+
+    @classmethod
     def get_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
-        state = cls._load_state_from_db(run_id=run_id)
+        selected_run_id = cls._normalize_run_id(run_id)
+        state = cls._load_state_from_db(run_id=selected_run_id)
         if state:
             cls._sync_runtime_state(state)
             return state
 
-        target_run_id = run_id or cls._active_run_id or cls._latest_run_id
+        target_run_id = selected_run_id or cls._active_run_id or cls._latest_run_id
         if target_run_id and target_run_id in cls._runs:
             return cls._runs[target_run_id]
         return cls._empty_state()
+
+    @classmethod
+    def get_export_state(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
+        state = cls.get_status(run_id=run_id)
+        classified_keywords = list(state.get("classified_keywords") or [])
+        if classified_keywords:
+            return state
+
+        preview_rows = list(state.get("preview_rows") or [])
+        if preview_rows:
+            export_state = dict(state)
+            export_state["classified_keywords"] = preview_rows
+            return export_state
+
+        resolved_run_id = cls._normalize_run_id(state.get("run_id"))
+        if not resolved_run_id:
+            return state
+
+        db_payload = cls.get_final_keyword_rows(run_id=resolved_run_id, limit=10000)
+        restored: List[Dict[str, Any]] = []
+        for row in db_payload.get("keywords") or []:
+            payload = row.get("source_payload")
+            if isinstance(payload, dict) and str(payload.get("keyword") or "").strip():
+                restored.append(payload)
+                continue
+            keyword = str(row.get("keyword") or "").strip()
+            if not keyword:
+                continue
+            restored.append(
+                {
+                    "keyword": keyword,
+                    "group_name": row.get("group_name"),
+                    "theme_name": row.get("theme_name"),
+                    "shopping_category_path": row.get("theme_detail"),
+                    "monthly_mobile_searches": row.get("monthly_mobile_searches"),
+                    "monthly_mobile_ctr": row.get("monthly_mobile_ctr"),
+                    "competition_level": row.get("competition_level"),
+                    "monthly_exposure_ads": row.get("monthly_exposure_ads"),
+                    "product_count": row.get("product_count"),
+                    "ad_efficiency": row.get("ad_efficiency"),
+                    "monopoly_suspect": row.get("monopoly_suspect"),
+                    "season_months": row.get("season_months") or "-",
+                }
+            )
+
+        if not restored:
+            return state
+
+        export_state = dict(state)
+        export_state["run_id"] = resolved_run_id
+        export_state["classified_keywords"] = restored
+        return export_state
 
     @classmethod
     def get_progress_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
@@ -118,8 +178,8 @@ class KeywordSourcingService:
         run_id: Optional[str] = None,
         limit: int = 10,
     ) -> Dict[str, Any]:
-        capped_limit = max(1, min(int(limit or 10), 100))
-        selected_run_id = run_id
+        capped_limit = max(1, min(int(limit or 10), 10000))
+        selected_run_id = cls._normalize_run_id(run_id)
 
         if not selected_run_id:
             latest_state = cls._load_state_from_db()
@@ -205,8 +265,15 @@ class KeywordSourcingService:
                     "product_count": cls._to_int(row.get("product_count")),
                     "monopoly_suspect": str(
                         source_payload.get("monopoly_suspect")
-                        or cls._monopoly_suspect_label(cls._to_int(row.get("product_count")) or 0)
-                        or ""
+                        if isinstance(source_payload, dict)
+                        else ""
+                    )
+                    or cls._monopoly_suspect_label(cls._to_int(row.get("product_count")) or 0)
+                    or "",
+                    "season_months": (
+                        source_payload.get("season_months")
+                        if isinstance(source_payload, dict) and source_payload.get("season_months")
+                        else "-"
                     ),
                     "rank": cls._to_int(row.get("rank_order")),
                     "crawl_status": row.get("crawl_status") or "pending",

@@ -51,7 +51,7 @@ async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> Dict[str,
 
 @router.get("/keyword-sourcing/detail")
 async def get_keyword_sourcing_detail(run_id: Optional[str] = None) -> Dict[str, Any]:
-    return KeywordSourcingService.get_status(run_id=run_id)
+    return KeywordSourcingService.get_export_state(run_id=run_id)
 
 
 @router.get("/keyword-sourcing/history")
@@ -72,7 +72,7 @@ async def export_keyword_sourcing_excel(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     selected_run_id = str(run_id or "").strip() or None
-    state = KeywordSourcingService.get_status(run_id=selected_run_id)
+    state = KeywordSourcingService.get_export_state(run_id=selected_run_id)
 
     from app.api.routes_admin import build_keyword_summary_rows_data
 
