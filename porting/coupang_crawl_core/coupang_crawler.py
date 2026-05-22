@@ -631,6 +631,29 @@ class CoupangCrawler:
         ):
             if keyword in badge_blob:
                 return label
+
+        full_blob = " ".join(
+            part
+            for part in (
+                badge_blob,
+                li.get_text(" ", strip=True),
+            )
+            if part
+        )
+        if any(
+            token in full_blob
+            for token in (
+                "무료배송",
+                "배송비",
+                "오늘출발",
+                "오늘 출발",
+                "도착보장",
+                "내일도착",
+                "내일 도착",
+                "무료반품",
+            )
+        ):
+            return "일반배송"
         return ""
 
     def _normalize_review_count_display(self, raw: str) -> str:
