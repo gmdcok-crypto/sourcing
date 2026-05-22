@@ -17,9 +17,8 @@ class UserPwaFeedService:
 
     @classmethod
     def build_feed(cls) -> Dict[str, Any]:
-        image_map = cls._load_local_image_map()
         try:
-            run_id = cls._latest_run_id()
+            crawled_rows = cls._load_crawled_keywords()
         except Exception:
             fallback_themes = cls._build_local_only_themes()
             return {
@@ -28,56 +27,18 @@ class UserPwaFeedService:
                 "themes": fallback_themes,
             }
 
-        if not run_id:
+        if not crawled_rows:
             fallback_themes = cls._build_local_only_themes()
             return {
                 "status": "ok",
                 "run_id": None,
                 "themes": fallback_themes,
             }
-
-        try:
-            keyword_rows = cls._load_final_keywords(run_id)
-            keyword_map = cls._group_keywords_by_theme(keyword_rows)
-        except Exception:
-            fallback_themes = cls._build_local_only_themes()
-            return {
-                "status": "ok",
-                "run_id": run_id,
-                "themes": fallback_themes,
-            }
-
-        try:
-            snapshot_map = cls._load_latest_coupang_rows_for_keywords(
-                [row["keyword"] for rows in keyword_map.values() for row in rows]
-            )
-        except Exception:
-            snapshot_map = {}
-
-        themes: List[Dict[str, Any]] = []
-        for theme_name, rows in keyword_map.items():
-            cards = []
-            for row in rows[: cls.THEME_KEYWORD_LIMIT]:
-                cards.append(
-                    cls._build_keyword_card(
-                        row,
-                        snapshot_map.get(row["keyword"], []),
-                        image_map.get(row["keyword"], ""),
-                    )
-                )
-            if cards:
-                themes.append(
-                    {
-                        "theme_name": theme_name,
-                        "theme_detail": rows[0].get("theme_detail") or theme_name,
-                        "cards": cards,
-                    }
-                )
 
         return {
             "status": "ok",
-            "run_id": run_id,
-            "themes": themes,
+            "run_id": None,
+            "themes": cls._group_crawled_rows_by_theme(crawled_rows),
         }
 
     @classmethod
@@ -131,29 +92,37 @@ class UserPwaFeedService:
         return str(row.get("run_id") or "").strip() or None
 
     @classmethod
-    def _load_final_keywords(cls, run_id: str) -> List[Dict[str, Any]]:
+    def _load_crawled_keywords(cls) -> List[Dict[str, Any]]:
         connection = get_mysql_connection()
         try:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
                     SELECT
-                        keyword,
-                        theme_name,
-                        shopping_category_path,
-                        full_path,
-                        rank_order,
-                        monthly_mobile_searches,
-                        group_name
-                    FROM keyword_sourcing_final_keywords
-                    WHERE run_id = %s
+                        r.keyword_text AS keyword,
+                        MAX(r.collected_at) AS latest_collected_at,
+                        MAX(CASE WHEN i.rank_no = 1 THEN i.product_title END) AS top_product_title,
+                        MAX(CASE WHEN i.rank_no = 1 THEN i.price_text END) AS top_product_price,
+                        MAX(CASE WHEN i.rank_no = 1 THEN i.product_url END) AS top_product_url,
+                        MAX(meta.theme_name) AS theme_name,
+                        MAX(meta.shopping_category_path) AS theme_detail,
+                        MAX(meta.group_name) AS group_name
+                    FROM coupang_search_runs r
+                    INNER JOIN coupang_search_ranked_items i
+                        ON i.run_id = r.id
+                    LEFT JOIN (
+                        SELECT
+                            keyword,
+                            theme_name,
+                            shopping_category_path,
+                            group_name
+                        FROM keyword_sourcing_final_keywords
+                    ) meta
+                        ON meta.keyword = r.keyword_text
+                    GROUP BY r.keyword_text
                     ORDER BY
-                        theme_name ASC,
-                        COALESCE(rank_order, 999999) ASC,
-                        COALESCE(monthly_mobile_searches, 0) DESC,
-                        keyword ASC
+                        latest_collected_at DESC
                     """,
-                    (run_id,),
                 )
                 rows = cursor.fetchall() or []
         finally:
@@ -161,26 +130,52 @@ class UserPwaFeedService:
         return list(rows)
 
     @classmethod
-    def _group_keywords_by_theme(cls, rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    def _group_crawled_rows_by_theme(cls, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        image_map = cls._load_local_image_map()
+        snapshot_map = {}
+        try:
+            snapshot_map = cls._load_latest_coupang_rows_for_keywords(
+                [str(row.get("keyword") or "").strip() for row in rows]
+            )
+        except Exception:
+            snapshot_map = {}
+
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        seen_keywords: Dict[str, set[str]] = defaultdict(set)
         for row in rows:
             theme_name = str(row.get("theme_name") or "").strip()
             keyword = str(row.get("keyword") or "").strip()
-            if not theme_name or not keyword:
+            if not keyword:
+                continue
+            theme_name = theme_name or "기타"
+            if keyword in seen_keywords[theme_name]:
                 continue
             if len(grouped[theme_name]) >= cls.THEME_KEYWORD_LIMIT:
                 continue
             grouped[theme_name].append(
+                cls._build_keyword_card(
+                    {
+                        "keyword": keyword,
+                        "theme_name": theme_name,
+                        "theme_detail": row.get("theme_detail") or theme_name,
+                        "group_name": row.get("group_name") or "-",
+                    },
+                    snapshot_map.get(keyword, []),
+                    image_map.get(keyword, ""),
+                )
+            )
+            seen_keywords[theme_name].add(keyword)
+
+        themes: List[Dict[str, Any]] = []
+        for theme_name, cards in grouped.items():
+            themes.append(
                 {
-                    "keyword": keyword,
                     "theme_name": theme_name,
-                    "theme_detail": row.get("shopping_category_path")
-                    or row.get("full_path")
-                    or theme_name,
-                    "group_name": row.get("group_name") or "-",
+                    "theme_detail": str(cards[0].get("theme_detail") or theme_name),
+                    "cards": cards[: cls.THEME_KEYWORD_LIMIT],
                 }
             )
-        return dict(grouped)
+        return themes
 
     @classmethod
     def _load_latest_coupang_rows_for_keywords(cls, keywords: List[str]) -> Dict[str, List[Dict[str, Any]]]:
