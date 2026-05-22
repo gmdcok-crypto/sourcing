@@ -53,6 +53,14 @@ USER_PWA_HTML = """
       margin: 0 auto;
     }
 
+    .page-title {
+      margin: 0 0 20px;
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: #f8fbff;
+    }
+
     .theme-section {
       margin-bottom: 34px;
     }
@@ -307,6 +315,7 @@ USER_PWA_HTML = """
 </head>
 <body>
   <div class="shell">
+    <h1 class="page-title">소싱 Ai</h1>
     <main id="app">__THEME_ROWS__</main>
   </div>
 </body>
