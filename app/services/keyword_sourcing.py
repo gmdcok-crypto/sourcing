@@ -37,6 +37,28 @@ class KeywordSourcingService:
     _active_task: Optional[asyncio.Task] = None
     CATEGORY_DELAY_SECONDS = 0.5
     VALID_KEYWORD_LIMIT = 100
+    UNSOURCEABLE_PRODUCT_COUNT_MAX = 200
+    UNSOURCEABLE_KEYWORD_TOKENS = {
+        "코르딕스루프캐리어",
+        "뽀로로뮤직하우스",
+        "타요미끄럼틀",
+        "디어커스욕실화",
+        "제니롤링카트",
+        "헬로키티화장지",
+        "세라마이드앤오메가3",
+        "프로이덴유산균",
+        "하즐리샴푸",
+        "프루너스약용샴푸",
+        "킹콩샴푸",
+        "포앤츄",
+        "아일오브독스샴푸",
+        "아일오브독스",
+        "아이그룸",
+        "아이그룸샴푸",
+        "피카노리개모차",
+        "맥스포스퀀텀",
+        "위글위글헬로키티",
+    }
 
     def __init__(self, settings) -> None:
         self.settings = settings
@@ -690,6 +712,8 @@ class KeywordSourcingService:
             shopping_category_path = str(product_info.get("category_path") or "")
             monthly_trends = monthly_trend_map.get(keyword) or []
             season_months = self._estimate_season_months(monthly_trends)
+            if self._is_unsourceable_keyword(keyword=keyword, product_count=product_count):
+                continue
             group_name = self._classify_group(
                 monthly_mobile_searches=monthly_mobile_searches,
                 monthly_mobile_ctr=monthly_mobile_ctr,
@@ -723,6 +747,18 @@ class KeywordSourcingService:
             )
         )
         return enriched_rows
+
+    @classmethod
+    def _is_unsourceable_keyword(cls, *, keyword: str, product_count: int) -> bool:
+        normalized_keyword = str(keyword or "").strip().lower().replace(" ", "")
+        if not normalized_keyword:
+            return True
+        if 0 <= int(product_count or 0) <= cls.UNSOURCEABLE_PRODUCT_COUNT_MAX:
+            return True
+        return any(
+            token.lower().replace(" ", "") in normalized_keyword
+            for token in cls.UNSOURCEABLE_KEYWORD_TOKENS
+        )
 
     @staticmethod
     def _classify_group(
