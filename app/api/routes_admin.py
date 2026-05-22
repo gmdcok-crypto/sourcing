@@ -1728,7 +1728,7 @@ ADMIN_HTML = """
         runIdInput.value = keywordHistoryMode ? "" : (keywordSourcingRunId || "");
       }
       if (dateValueInput) {
-        dateValueInput.value = keywordHistoryDateInput && keywordHistoryDateInput.value
+        dateValueInput.value = keywordHistoryMode && keywordHistoryDateInput && keywordHistoryDateInput.value
           ? keywordHistoryDateInput.value
           : "";
       }
