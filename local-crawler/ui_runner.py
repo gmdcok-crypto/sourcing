@@ -17,10 +17,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from config import LocalCrawlerSettings, get_settings
 from railway_client import RailwayKeywordClient
 
-PORTING_DB_PATH = LOCAL_ROOT.parent / "porting" / "coupang_crawl_core" / "db.py"
-
-
 LOCAL_ROOT = Path(__file__).resolve().parent
+PORTING_DB_PATH = LOCAL_ROOT.parent / "porting" / "coupang_crawl_core" / "db.py"
 OUTPUT_DIR = LOCAL_ROOT / "output"
 STATE_PATH = OUTPUT_DIR / "ui_state.json"
 RESULTS_PATH = OUTPUT_DIR / "ui_results.json"
