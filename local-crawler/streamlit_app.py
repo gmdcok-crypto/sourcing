@@ -405,16 +405,35 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     )
 
 
-def _auto_refresh_when_active(status: str, refresh_seconds: int) -> None:
+def _auto_refresh_when_active(state: Dict[str, Any], refresh_seconds: int) -> None:
+    status = str(state.get("status") or "").strip().lower()
     if status not in {"starting", "running"}:
+        st.session_state.pop("crawler_refresh_signature", None)
         return
-    delay_ms = max(1, int(refresh_seconds or 5)) * 1000
+
+    signature = "|".join(
+        [
+            status,
+            str(state.get("current_index") or 0),
+            str(state.get("success_count") or 0),
+            str(state.get("failure_count") or 0),
+            str(state.get("current_keyword") or ""),
+            str(state.get("last_run_at") or ""),
+        ]
+    )
+    previous_signature = str(st.session_state.get("crawler_refresh_signature") or "")
+    st.session_state["crawler_refresh_signature"] = signature
+    poll_ms = max(800, int(refresh_seconds or 5) * 1000)
     components.html(
         f"""
         <script>
+        const previousSignature = {json.dumps(previous_signature)};
+        const currentSignature = {json.dumps(signature)};
         setTimeout(function() {{
-            window.parent.location.reload();
-        }}, {delay_ms});
+            if (previousSignature && previousSignature !== currentSignature) {{
+                window.parent.location.reload();
+            }}
+        }}, {poll_ms});
         </script>
         """,
         height=0,
@@ -426,7 +445,7 @@ def main() -> None:
     state = get_ui_state()
     results = get_ui_results()
     _apply_dark_theme()
-    _auto_refresh_when_active(str(state.get("status") or ""), int(settings.ui_refresh_seconds))
+    _auto_refresh_when_active(state, int(settings.ui_refresh_seconds))
 
     st.title("Local Crawler Console")
     st.caption("로컬 PC에서 final keywords 배치를 실행하고 상태, 로그, 상품 결과를 확인합니다.")
@@ -454,7 +473,7 @@ def main() -> None:
         st.divider()
         _render_environment_panel(settings, state)
 
-        st.caption("실행 중에는 화면이 자동 새로고침됩니다.")
+        st.caption("실행 중에는 키워드 단위 상태 변화가 있을 때만 화면이 자동 새로고침됩니다.")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("실행 상태", str(state.get("status") or "idle"))
