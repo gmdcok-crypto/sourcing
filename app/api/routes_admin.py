@@ -1719,25 +1719,14 @@ ADMIN_HTML = """
         params.set("run_id", keywordSourcingRunId);
       }
       params.set("_ts", String(Date.now()));
-      const response = await fetch(`/api/admin/keyword-sourcing/export?${params.toString()}`, {
-        method: "GET",
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error("엑셀 파일 생성에 실패했습니다.");
-      }
-      const blob = await response.blob();
-      const contentDisposition = response.headers.get("Content-Disposition") || "";
-      const filenameMatch = contentDisposition.match(/filename=\"?([^"]+)\"?/i);
-      const filename = filenameMatch ? filenameMatch[1] : "keyword-results.xlsx";
-      const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.download = filename;
+      link.href = `/api/admin/keyword-sourcing/export?${params.toString()}`;
+      link.download = "keyword-results.xlsx";
+      link.rel = "noopener";
+      link.style.display = "none";
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
     }
 
     function editTheme(themeId) {
