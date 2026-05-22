@@ -17,6 +17,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from config import LocalCrawlerSettings, get_settings
 from railway_client import RailwayKeywordClient
 
+PORTING_DB_PATH = LOCAL_ROOT.parent / "porting" / "coupang_crawl_core" / "db.py"
+
 
 LOCAL_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = LOCAL_ROOT / "output"
@@ -100,6 +102,70 @@ def _upload_results_to_r2(
     except (BotoCoreError, ClientError):
         return ""
     return key
+
+
+def _load_coupang_snapshot_helpers():
+    if not PORTING_DB_PATH.is_file():
+        return None, None
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("local_coupang_porting_db", PORTING_DB_PATH)
+    if spec is None or spec.loader is None:
+        return None, None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    build_payload = getattr(module, "build_recommend_engine_coupang_snapshot_payload", None)
+    insert_snapshot = getattr(module, "insert_coupang_search_snapshot", None)
+    if not callable(build_payload) or not callable(insert_snapshot):
+        return None, None
+    return build_payload, insert_snapshot
+
+
+def _sync_keyword_result_to_db(
+    *,
+    settings: LocalCrawlerSettings,
+    keyword: str,
+    crawl_result: Dict[str, Any],
+) -> bool:
+    build_payload, insert_snapshot = _load_coupang_snapshot_helpers()
+    if build_payload is None or insert_snapshot is None:
+        return False
+
+    db_url = (
+        settings.mysql_url
+        or settings.mysql_public_url
+        or settings.mariadb_public_url
+        or os.environ.get("MYSQL_URL")
+        or os.environ.get("MYSQL_PUBLIC_URL")
+        or os.environ.get("MARIADB_PUBLIC_URL")
+    )
+    if not db_url:
+        return False
+
+    previous_env = {
+        "MYSQL_URL": os.environ.get("MYSQL_URL"),
+        "MYSQL_PUBLIC_URL": os.environ.get("MYSQL_PUBLIC_URL"),
+        "MARIADB_PUBLIC_URL": os.environ.get("MARIADB_PUBLIC_URL"),
+    }
+    os.environ["MYSQL_URL"] = db_url
+    os.environ["MYSQL_PUBLIC_URL"] = db_url
+    os.environ["MARIADB_PUBLIC_URL"] = db_url
+    try:
+        payload = crawl_result.get("payload") or {}
+        result = payload.get("result") or {}
+        snapshot_payload = build_payload(keyword=keyword, crawl_data=result)
+        if not snapshot_payload:
+            return False
+        inserted = insert_snapshot(snapshot_payload)
+        return bool(inserted)
+    except Exception:
+        return False
+    finally:
+        for env_key, env_value in previous_env.items():
+            if env_value is None:
+                os.environ.pop(env_key, None)
+            else:
+                os.environ[env_key] = env_value
 
 
 def _default_state() -> Dict[str, Any]:
@@ -404,6 +470,15 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
             if success:
                 state["success_count"] = int(state.get("success_count") or 0) + 1
                 _append_log(state, f"{keyword} 완료", level="success")
+                synced = _sync_keyword_result_to_db(
+                    settings=settings,
+                    keyword=keyword,
+                    crawl_result=crawl_result,
+                )
+                if synced:
+                    _append_log(state, f"{keyword} Railway DB 반영 완료", level="success")
+                else:
+                    _append_log(state, f"{keyword} Railway DB 반영 스킵", level="warning")
             else:
                 state["failure_count"] = int(state.get("failure_count") or 0) + 1
                 stderr = str(crawl_result.get("stderr") or "").strip()
