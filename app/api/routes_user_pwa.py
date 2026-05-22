@@ -215,9 +215,7 @@ USER_PWA_HTML = """
     .media {
       position: relative;
       aspect-ratio: 1 / 1.08;
-      background:
-        linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)),
-        linear-gradient(135deg, rgba(255, 77, 109, 0.18), rgba(110, 168, 255, 0.16));
+      background: #ffffff;
       overflow: hidden;
     }
 
