@@ -50,6 +50,21 @@ def _dump_smoke_extract_report(payload: Dict[str, Any]) -> None:
         safe_print(f"[SMOKE] 추출 결과 JSON 저장 실패(무시): {ex!r}")
 
 
+def _dump_smoke_search_html(html: str) -> None:
+    """스모크 검색 결과 HTML을 .smoke/last_smoke_search.html 에 저장한다."""
+    text = str(html or "")
+    if not text.strip():
+        return
+    out_p = Path(__file__).resolve().parent / ".smoke" / "last_smoke_search.html"
+    try:
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_p, "w", encoding="utf-8") as f:
+            f.write(text)
+        safe_print(f"[SMOKE] 검색 결과 HTML 저장: {out_p}")
+    except Exception as ex:
+        safe_print(f"[SMOKE] 검색 결과 HTML 저장 실패(무시): {ex!r}")
+
+
 def _smoke_strict_clean_enabled() -> bool:
     raw = os.environ.get("COUPANG_SMOKE_STRICT_CLEAN", "0")
     return str(raw).strip().lower() not in {"0", "false", "no", "off", "n"}
@@ -3021,6 +3036,7 @@ class CoupangCrawler:
                                         **probe,
                                     }
                                     self._sync_smoke_ranked_ui_cache_from_payload(search_kw, smoke_payload)
+                                    _dump_smoke_search_html(str(page.content() or ""))
                                     _persist_smoke_extract_report_to_db(smoke_payload)
                                     _dump_smoke_extract_report(smoke_payload)
                                 except Exception as hp_e:

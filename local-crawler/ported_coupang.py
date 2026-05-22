@@ -16,6 +16,9 @@ WORKSPACE_ROOT = LOCAL_ROOT.parent
 PORTING_ROOT = WORKSPACE_ROOT / "porting" / "coupang_crawl_core"
 ENV_PATH = LOCAL_ROOT / ".env"
 OUTPUT_DIR = LOCAL_ROOT / "output"
+SMOKE_DIR = PORTING_ROOT / ".smoke"
+SMOKE_JSON_PATH = SMOKE_DIR / "last_smoke_extract.json"
+SMOKE_HTML_PATH = SMOKE_DIR / "last_smoke_search.html"
 
 
 def _load_env_file(path: Path) -> None:
@@ -46,6 +49,14 @@ def _dump_result(payload: Dict[str, Any]) -> None:
     out_path = OUTPUT_DIR / "ported_last_result.json"
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _clear_smoke_artifacts() -> None:
+    for path in (SMOKE_JSON_PATH, SMOKE_HTML_PATH):
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            continue
 
 
 def _normalize_space(value: Any) -> str:
@@ -592,6 +603,52 @@ def _enrich_result_with_detail_pages(crawler: Any, result_data: Dict[str, Any], 
     return updated
 
 
+def _run_keyword_via_smoke_worker(crawler: Any, keyword: str) -> Dict[str, Any]:
+    kw = str(keyword or "").strip()
+    if not kw:
+        return crawler._result_with_reason("EMPTY_KEYWORD")
+
+    _clear_smoke_artifacts()
+    os.environ["COUPANG_SMOKE_COUPANG_QUERY"] = kw
+    ok = crawler.smoke_open_playwright_chromium_window("https://www.google.com/", wait_seconds=5.0)
+    if not ok:
+        return crawler._result_with_reason("SMOKE_START_FAILED")
+
+    try:
+        probe_ok, status = crawler.poll_smoke_until_coupang_probe_finished(timeout_seconds=120.0)
+        smoke_payload = {}
+        if SMOKE_JSON_PATH.is_file():
+            try:
+                smoke_payload = json.loads(SMOKE_JSON_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                smoke_payload = {}
+
+        result_data: Dict[str, Any]
+        if SMOKE_HTML_PATH.is_file():
+            result_data = crawler.parse_local_html(str(SMOKE_HTML_PATH))
+        else:
+            result_data = crawler._result_with_reason("SMOKE_HTML_MISSING")
+
+        if isinstance(smoke_payload, dict):
+            result_data["page_title"] = smoke_payload.get("title") or result_data.get("page_title") or ""
+            result_data["page_url"] = smoke_payload.get("url") or result_data.get("page_url") or ""
+            result_data["html_len"] = smoke_payload.get("html_len") or result_data.get("html_len")
+            if smoke_payload.get("organic_count") not in (None, ""):
+                result_data["product_count"] = smoke_payload.get("organic_count")
+            result_data["fetch_source"] = "smoke"
+            result_data.setdefault("detail_debug", [])
+        if not probe_ok and str(result_data.get("reason_code") or "").strip() == "OK":
+            result_data["reason_code"] = "SMOKE_PROBE_FAILED"
+        if not probe_ok and not isinstance(smoke_payload, dict):
+            result_data["reason_code"] = "SMOKE_PROBE_FAILED"
+        return result_data
+    finally:
+        try:
+            crawler.stop_smoke_playwright_chromium_window(join_timeout=15.0)
+        except Exception:
+            pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run ported Coupang crawler core")
     parser.add_argument("--keyword", default="", help="검색 키워드. 비우면 MANUAL_KEYWORD 사용")
@@ -672,8 +729,7 @@ def main() -> None:
         keyword = (args.keyword or os.environ.get("MANUAL_KEYWORD") or "").strip()
         if not keyword:
             raise SystemExit("keyword is required. Pass --keyword or set MANUAL_KEYWORD in .env")
-        os.environ.setdefault("COUPANG_SMOKE_COUPANG_QUERY", keyword)
-        result_data = crawler.crawl_coupang(keyword)
+        result_data = _run_keyword_via_smoke_worker(crawler, keyword)
         if result_data and isinstance(result_data, dict):
             result_data.setdefault("detail_debug", [])
 
