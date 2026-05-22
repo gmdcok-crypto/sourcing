@@ -140,6 +140,18 @@ _PRODUCT_CARD_HTML_SELECTOR = (
     "li[class*='ProductUnit'], li[class*='productUnit']"
 )
 
+STABLE_GOOGLE_NAV_QUERIES: Tuple[str, ...] = (
+    "쿠팡",
+    "coupang",
+    "쿠팡 로켓배송",
+    "쿠팡 로켓와우",
+    "로켓프레시",
+    "쿠팡 로켓프레시",
+    "쿠팡 로켓직구",
+    "쿠팡 공식",
+    "쿠팡 홈",
+)
+
 HEADLESS = True
 
 
@@ -1148,6 +1160,14 @@ class CoupangCrawler:
             return f"https://www.google.com/search?q={quote(kw)}"
         return "https://www.google.com/"
 
+    @staticmethod
+    def _google_nav_query_sequence(explicit: str = "") -> List[str]:
+        s = str(explicit or "").strip()
+        if s:
+            return [s] if s == "쿠팡" else [s, "쿠팡"]
+        primary = random.choice(STABLE_GOOGLE_NAV_QUERIES)
+        return [primary] if primary == "쿠팡" else [primary, "쿠팡"]
+
     def _session_headers_from_page(self, page: Page) -> Dict[str, str]:
         try:
             ua = str(page.evaluate("() => navigator.userAgent"))
@@ -1405,70 +1425,103 @@ class CoupangCrawler:
         kw = str(keyword or "").strip()
         if not kw:
             raise RuntimeError("EMPTY_KEYWORD")
-
-        google_url = "https://www.google.com/ncr"
-        page.goto(google_url, wait_until="domcontentloaded")
-        self._accept_google_consent_if_present(page)
-        self._human_sleep(0.25, 0.7)
-
-        search_box = page.locator("textarea[name='q'], input[name='q']:not([type='hidden'])").first
-        search_box.wait_for(state="visible", timeout=15000)
-        search_box.click(timeout=5000)
-        page.wait_for_timeout(random.randint(180, 420))
-        try:
-            search_box.fill("")
-        except Exception:
-            pass
-        page.keyboard.type(f"{kw} 쿠팡", delay=random.randint(70, 140))
-        page.wait_for_timeout(random.randint(260, 650))
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=20000):
-            page.keyboard.press("Enter")
-        page.wait_for_load_state("domcontentloaded")
-        self._linger_on_results_page(page, passes=random.randint(1, 2))
-
-        coupang_locators = [
-            page.locator('a[href*="www.coupang.com/np/search"]').first,
-            page.locator('a[href*="coupang.com/np/search"]').first,
-            page.locator('a[href^="https://www.coupang.com"]').first,
-            page.locator('a[href*="coupang.com"]').first,
-        ]
-
-        clicked = False
+        explicit_google_query = str(os.environ.get("COUPANG_SMOKE_GOOGLE_QUERY") or "").strip()
+        google_queries = self._google_nav_query_sequence(explicit_google_query)
         last_err: Optional[Exception] = None
-        for loc in coupang_locators:
+
+        for attempt_i, google_query in enumerate(google_queries):
+            if attempt_i == 0:
+                page.goto("https://www.google.com/ncr", wait_until="domcontentloaded")
+            else:
+                safe_print(f"[Crawler][playwright] google nav retry query={google_query!r}")
+                page.goto("https://www.google.com/", wait_until="domcontentloaded", timeout=25000)
+                page.wait_for_timeout(400)
+
+            self._accept_google_consent_if_present(page)
+            self._human_sleep(0.25, 0.7)
             try:
-                loc.wait_for(state="visible", timeout=4000)
-                loc.scroll_into_view_if_needed(timeout=4000)
-                self._human_sleep(0.15, 0.5)
-                ctx = page.context
-                before_pages = len(ctx.pages)
-                loc.click(timeout=10000)
-                page.wait_for_timeout(random.randint(250, 700))
-                if len(ctx.pages) > before_pages:
-                    page = ctx.pages[-1]
-                page.wait_for_load_state("domcontentloaded", timeout=25000)
-                clicked = True
-                break
+                search_box = page.locator("textarea[name='q'], input[name='q']:not([type='hidden'])").first
+                search_box.wait_for(state="visible", timeout=15000)
+                search_box.click(timeout=5000)
+                page.wait_for_timeout(250)
+                try:
+                    search_box.fill("")
+                except Exception:
+                    pass
+                page.keyboard.type(google_query, delay=100)
+                page.wait_for_timeout(400)
+                page.keyboard.press("Enter")
+                try:
+                    page.wait_for_url(re.compile(r"/search\?"), timeout=25000)
+                except Exception:
+                    safe_print("[Crawler][playwright] google wait_for_url timeout — continue")
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(1200)
+
+                refresh_serp_raw = os.environ.get("COUPANG_SMOKE_REFRESH_SERP", "1")
+                do_refresh_serp = str(refresh_serp_raw).strip().lower() not in {"0", "false", "no", "off", "n"}
+                if do_refresh_serp:
+                    try:
+                        safe_print("[Crawler][playwright] Google SERP refresh 1회 수행")
+                        page.reload(wait_until="domcontentloaded", timeout=25000)
+                        page.wait_for_timeout(900)
+                    except Exception as refresh_err:
+                        safe_print(f"[Crawler][playwright] SERP refresh 실패(무시): {refresh_err!r}")
+
+                self._linger_on_results_page(page, passes=random.randint(1, 2))
+
+                coupang_locators = [
+                    page.locator("a").filter(has_text=re.compile(r"https://www\.coupang\.com", re.I)).first,
+                    page.locator('a[href*="www.coupang.com/np/search"]').first,
+                    page.locator('a[href*="coupang.com/np/search"]').first,
+                    page.locator('a[href^="https://www.coupang.com"]').first,
+                    page.locator('a[href*="www.coupang.com"]').first,
+                    page.locator('a[href*="coupang.com"]').first,
+                ]
+
+                clicked = False
+                local_last_err: Optional[Exception] = None
+                for loc in coupang_locators:
+                    try:
+                        loc.wait_for(state="visible", timeout=6000)
+                        loc.scroll_into_view_if_needed(timeout=5000)
+                        self._human_sleep(0.15, 0.5)
+                        ctx = page.context
+                        before_pages = len(ctx.pages)
+                        loc.click(timeout=15000)
+                        page.wait_for_timeout(350)
+                        if len(ctx.pages) > before_pages:
+                            page = ctx.pages[-1]
+                            page.wait_for_load_state("domcontentloaded", timeout=25000)
+                        else:
+                            page.wait_for_url(re.compile(r"coupang\.com"), timeout=25000)
+                            page.wait_for_load_state("domcontentloaded")
+                        page.wait_for_timeout(600)
+                        clicked = True
+                        break
+                    except Exception as ex:
+                        local_last_err = ex
+                        continue
+
+                if not clicked:
+                    raise RuntimeError(f"쿠팡 링크 클릭 실패: {local_last_err!r}")
+
+                cur_url = str(page.url or "").strip()
+                if "coupang.com/np/search" in cur_url:
+                    page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=15000)
+                    page.wait_for_timeout(random.randint(700, 1400))
+                    self._scroll_coupang_search_results_page(page, max_wheel_batches=8)
+                    return cur_url
+
+                if "coupang.com" not in cur_url.lower():
+                    raise RuntimeError("GOOGLE_TO_COUPANG_NAVIGATION_FAILED")
+
+                return self._open_search_results_page_via_ui(page, kw)
             except Exception as ex:
                 last_err = ex
                 continue
 
-        if not clicked:
-            if last_err is not None:
-                raise last_err
-            raise RuntimeError("GOOGLE_TO_COUPANG_CLICK_FAILED")
-
-        cur_url = str(page.url or "").strip()
-        if "coupang.com/np/search" in cur_url:
-            page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=15000)
-            page.wait_for_timeout(random.randint(700, 1400))
-            self._scroll_coupang_search_results_page(page, max_wheel_batches=8)
-            return cur_url
-
-        if "coupang.com" not in cur_url.lower():
-            raise RuntimeError("GOOGLE_TO_COUPANG_NAVIGATION_FAILED")
-
-        return self._open_search_results_page_via_ui(page, kw)
+        raise RuntimeError(f"쿠팡 링크 진입 실패(시도 {google_queries!r}): {last_err!r}") from last_err
 
     def fetch_detail_pages_via_search(
         self,
