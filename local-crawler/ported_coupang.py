@@ -629,6 +629,12 @@ def _run_keyword_via_smoke_worker(crawler: Any, keyword: str) -> Dict[str, Any]:
         else:
             result_data = crawler._result_with_reason("SMOKE_HTML_MISSING")
 
+        reason_code = str(result_data.get("reason_code") or "").strip()
+        if reason_code not in {"OK", ""} and isinstance(smoke_payload, dict):
+            smoke_result = crawler.build_result_from_smoke_payload(smoke_payload)
+            if smoke_result and smoke_result.get("top10_items"):
+                result_data = smoke_result
+
         if isinstance(smoke_payload, dict):
             result_data["page_title"] = smoke_payload.get("title") or result_data.get("page_title") or ""
             result_data["page_url"] = smoke_payload.get("url") or result_data.get("page_url") or ""

@@ -727,11 +727,15 @@ class CoupangCrawler:
         text = f"{title}\n{html}".lower()
         blocked_signals = [
             "access denied",
-            "robot",
+            "not a robot",
+            "are you a robot",
             "automated queries",
+            "unusual traffic",
             "captcha",
             "서비스 이용에 불편",
-            "차단",
+            "비정상적인 접근",
+            "요청이 차단",
+            "접근이 차단",
         ]
         return any(sig in text for sig in blocked_signals)
 
@@ -1888,23 +1892,75 @@ class CoupangCrawler:
             finally:
                 self.close()
 
-    def parse_local_html(self, file_path: str) -> Dict[str, Any]:
+    def build_result_from_smoke_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raw_items = list(payload.get("top10") or [])
+        if not raw_items:
+            return None
+
+        items: List[Dict[str, Any]] = []
+        for row in raw_items:
+            if not isinstance(row, dict):
+                continue
+            try:
+                rank = int(row.get("rank") or 0)
+            except Exception:
+                rank = 0
+            if rank < 1:
+                continue
+            title = str(row.get("title") or "").strip()
+            if not title:
+                continue
+            price_num = self._parse_int(str(row.get("price") or ""))
+            if price_num is None:
+                continue
+            review_num = self._parse_int(str(row.get("review_count") or ""))
+            review_score = self._parse_float(str(row.get("review_score") or ""))
+            shipping = str(row.get("shipping") or "").strip()
+            url = str(row.get("url") or "").strip()
+            items.append(
+                {
+                    "rank": rank,
+                    "title": title,
+                    "price": float(price_num),
+                    "review_count": float(review_num) if review_num is not None else None,
+                    "review_score": float(review_score) if review_score is not None else None,
+                    "delivery_type": None,
+                    "shipping_fee": shipping or None,
+                    "url": url,
+                    "image_url": "",
+                }
+            )
+
+        if not items:
+            return None
+
+        try:
+            product_count = int(payload.get("organic_count") or payload.get("card_count") or len(items))
+        except Exception:
+            product_count = len(items)
+
+        out = self._build_result(product_count, items)
+        out["reason_code"] = "OK"
+        out["fetch_source"] = "smoke"
+        return out
+
+    def parse_local_html(self, file_path: str, *, skip_block_check: bool = False) -> Dict[str, Any]:
         """직접 저장한 로컬 HTML 파일 파싱 기능"""
         if not os.path.exists(file_path):
             return self._result_with_reason("FILE_NOT_FOUND")
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 html = f.read()
-            
-            if self._is_blocked(html, ""):
+
+            if not skip_block_check and self._is_blocked(html, ""):
                 safe_print(f"[WAF_BLOCK] 로컬 파일({file_path}) 내에 WAF/CAPTCHA 차단 신호가 있습니다.")
                 self._stats["blocked"] += 1
                 return self._result_with_reason("BLOCKED_BY_WAF")
 
             product_count, items = self._parse_top10_from_html(html)
-            if product_count <= 0:
+            if product_count <= 0 or not items:
                 return self._result_with_reason("NO_PRODUCTS")
-            
+
             out = self._build_result(product_count, items)
             out["reason_code"] = "OK"
             return out
