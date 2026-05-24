@@ -28,6 +28,12 @@ class LocalCrawlerSettings(BaseSettings):
 
     brightdata_api_token: Optional[str] = Field(default=None, alias="BRIGHTDATA_API_TOKEN")
     brightdata_request_zone: Optional[str] = Field(default=None, alias="BRIGHTDATA_REQUEST_ZONE")
+    brightdata_browser_ws_1688: Optional[str] = Field(
+        default=None, alias="BRIGHTDATA_BROWSER_WS_1688"
+    )
+    china_search_top_n: int = Field(default=8, alias="CHINA_SEARCH_TOP_N")
+    china_fx_cny_to_krw: float = Field(default=185.0, alias="CHINA_FX_CNY_TO_KRW")
+    china_search_sleep_sec: float = Field(default=3.0, alias="CHINA_SEARCH_SLEEP_SEC")
     coupang_bright_request: str = Field(default="off", alias="COUPANG_BRIGHT_REQUEST")
 
     crawler_headless: bool = Field(default=True, alias="CRAWLER_HEADLESS")

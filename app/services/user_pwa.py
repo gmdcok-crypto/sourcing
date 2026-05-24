@@ -51,6 +51,8 @@ class UserPwaFeedService:
         for item in items:
             if not isinstance(item, dict):
                 continue
+            if cls._parse_int(item.get("rank")) != 1:
+                continue
             theme_name = str(item.get("theme_name") or "").strip() or "기타"
             keyword = str(item.get("keyword") or "").strip()
             if not keyword or keyword in seen_keywords[theme_name]:
@@ -154,6 +156,8 @@ class UserPwaFeedService:
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         seen_keywords: Dict[str, set[str]] = defaultdict(set)
         for row in rows:
+            if cls._parse_int(row.get("rank")) not in (None, 1):
+                continue
             theme_name = str(row.get("theme_name") or "").strip()
             keyword = str(row.get("keyword") or "").strip()
             if not keyword:

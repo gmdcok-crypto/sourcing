@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     )
     bright_data_zone: Optional[str] = Field(default=None, alias="BRIGHT_DATA_ZONE")
     brightdata_browser_ws: Optional[str] = Field(default=None, alias="BRIGHTDATA_BROWSER_WS")
+    brightdata_browser_ws_1688: Optional[str] = Field(
+        default=None, alias="BRIGHTDATA_BROWSER_WS_1688"
+    )
+    china_1688_navigation_timeout_ms: int = Field(
+        default=120_000, alias="CHINA_1688_NAVIGATION_TIMEOUT_MS"
+    )
     brightdata_country: str = Field(default="KR", alias="BRIGHTDATA_COUNTRY")
     brightdata_session_prefix: str = Field(default="coupang", alias="BRIGHTDATA_SESSION_PREFIX")
     brightdata_timeout: int = Field(default=60, alias="BRIGHTDATA_TIMEOUT")
@@ -58,7 +64,7 @@ class Settings(BaseSettings):
     coupang_scroll_steps_max: int = Field(default=6, alias="COUPANG_SCROLL_STEPS_MAX")
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "local-crawler/.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

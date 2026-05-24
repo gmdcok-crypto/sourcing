@@ -1,10 +1,11 @@
-import json
 from html import escape
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 
+from app.services.china_1688_url import China1688UrlService
 from app.services.user_pwa import UserPwaFeedService
 
 router = APIRouter(tags=["user-pwa"])
@@ -288,6 +289,22 @@ USER_PWA_HTML = """
       color: #eef2ff;
     }
 
+    .btn-1688 {
+      background: linear-gradient(135deg, #ff8a00, #ffb347);
+      color: #1a1208;
+      box-shadow: 0 14px 28px rgba(255, 138, 0, 0.22);
+    }
+
+    .btn-1688:disabled {
+      opacity: 0.72;
+      cursor: wait;
+      transform: none;
+    }
+
+    .btn-1688.is-loading {
+      min-width: 132px;
+    }
+
     .empty {
       border: 1px dashed rgba(255,255,255,0.14);
       border-radius: 24px;
@@ -318,6 +335,47 @@ USER_PWA_HTML = """
     <h1 class="page-title">소싱 Ai</h1>
     <main id="app">__THEME_ROWS__</main>
   </div>
+  <script>
+    async function open1688Search(btn) {
+      const imageUrl = (btn.dataset.imageUrl || "").trim();
+      if (!imageUrl) {
+        alert("쿠팡 이미지 URL이 없습니다.");
+        return;
+      }
+
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.classList.add("is-loading");
+      btn.textContent = "1688 생성 중…";
+
+      try {
+        const response = await fetch("/api/user/1688/search-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_url: imageUrl }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || data.error || "1688 URL 생성 실패");
+        }
+        if (data.search_url) {
+          window.open(data.search_url, "_blank", "noopener,noreferrer");
+        } else {
+          alert(data.error || "1688 URL을 만들지 못했습니다.");
+        }
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "1688 URL 생성 중 오류");
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("is-loading");
+        btn.textContent = originalLabel;
+      }
+    }
+
+    document.querySelectorAll(".btn-1688").forEach((btn) => {
+      btn.addEventListener("click", () => open1688Search(btn));
+    });
+  </script>
 </body>
 </html>
 """
@@ -350,6 +408,7 @@ def _render_card(card: Dict[str, Any]) -> str:
     top_title = escape(str(card.get("top_product_title") or "상위 상품 데이터 없음"))
     keyword = escape(str(card.get("keyword") or ""))
     product_url = escape(str(card.get("top_product_url") or "#"))
+    raw_image_url = escape(image_url)
 
     return f"""
     <article class="card">
@@ -382,7 +441,13 @@ def _render_card(card: Dict[str, Any]) -> str:
         </div>
         <div class="actions">
           <a class="btn btn-primary" href="{product_url}" target="_blank" rel="noreferrer">상품 보기</a>
-          <button class="btn btn-secondary" type="button">{escape(str(card.get("group_name") or "-"))}</button>
+          <button
+            class="btn btn-1688"
+            type="button"
+            data-image-url="{raw_image_url}"
+            data-keyword="{keyword}"
+            {"disabled" if not image_url else ""}
+          >1688 图搜</button>
         </div>
       </div>
     </article>
@@ -416,6 +481,33 @@ def _render_theme_rows(payload: Dict[str, Any]) -> str:
             """
         )
     return "".join(chunks)
+
+
+class China1688SearchRequest(BaseModel):
+    image_url: str = Field(min_length=1)
+
+
+@router.post("/api/user/1688/search-url")
+async def create_1688_search_url(body: China1688SearchRequest) -> Dict[str, Any]:
+    if not China1688UrlService.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="BRIGHTDATA_BROWSER_WS_1688 is not configured",
+        )
+
+    result = await China1688UrlService.generate_url(body.image_url)
+    if result.status != "URL_OK" or not result.search_url:
+        raise HTTPException(
+            status_code=502,
+            detail=result.error or f"1688 URL generation failed ({result.status})",
+        )
+
+    return {
+        "status": result.status,
+        "search_url": result.search_url,
+        "image_id": result.image_id,
+        "fetch_source": result.fetch_source,
+    }
 
 
 @router.get("/api/user/feed")

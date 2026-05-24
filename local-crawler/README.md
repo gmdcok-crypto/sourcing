@@ -102,7 +102,27 @@ python ported_coupang.py --open-google-ready --wait-seconds 120
 python ported_coupang.py --open-search-ready --wait-seconds 120
 ```
 
-## 5. 참고
+## 5. 1688 이미지검색 (평균단가)
+
+`ui_results.json`의 `image_url`을 사용해 1688 유사상품 가격을 조회합니다.
+
+사전 준비:
+
+- `.env`에 `BRIGHTDATA_BROWSER_WS_1688` (Browser API, `-country-cn` 포함)
+- (선택) `CHINA_SEARCH_TOP_N`, `CHINA_FX_CNY_TO_KRW`
+
+실행:
+
+```powershell
+cd d:\sourcing\local-crawler
+python test_bright_1688_browser.py
+python china_runner.py --limit 3
+python china_runner.py --limit 0
+```
+
+`--limit 0`은 전체 row 처리입니다. 결과는 `ui_results.json`에 `china_avg_price_cny`, `china_avg_price_krw`, `margin_pct_est` 필드로 merge 됩니다.
+
+## 6. 참고
 
 - 포팅 코어 원문: `porting/coupang_crawl_core/README.md`
 - 이식 절차 문서: `PORTING_COUPANG_CRAWL.md`
