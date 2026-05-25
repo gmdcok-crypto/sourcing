@@ -34,6 +34,9 @@ ADMIN_HTML = """
       --danger: #ff6b6b;
       --radius-xl: 24px;
       --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+      --field-bg: #12182a;
+      --field-bg-hover: #182038;
+      color-scheme: dark;
     }
 
     * { box-sizing: border-box; }
@@ -530,8 +533,7 @@ ADMIN_HTML = """
       font-weight: 700;
     }
 
-    .input,
-    .select {
+    .input {
       width: 100%;
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 12px;
@@ -540,6 +542,46 @@ ADMIN_HTML = """
       padding: 12px 14px;
       font-size: 13px;
       outline: none;
+    }
+
+    .select {
+      width: 100%;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      background-color: var(--field-bg);
+      color: var(--text);
+      padding: 12px 38px 12px 14px;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+      color-scheme: dark;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238f9bb7' d='M1.4 1.4 6 6l4.6-4.6L12 3l-6 6-6-6z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      background-size: 12px 8px;
+    }
+
+    .select:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      background-color: var(--field-bg-hover);
+    }
+
+    .select option,
+    .select optgroup {
+      background-color: var(--field-bg);
+      color: var(--text);
+    }
+
+    .select option:checked {
+      background: linear-gradient(0deg, rgba(124, 156, 255, 0.35), rgba(124, 156, 255, 0.35));
+      color: #ffffff;
+    }
+
+    .select::-ms-expand {
+      display: none;
     }
 
     .input:focus,
