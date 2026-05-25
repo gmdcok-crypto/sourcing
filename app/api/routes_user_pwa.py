@@ -305,6 +305,29 @@ USER_PWA_HTML = """
       min-width: 132px;
     }
 
+    .toast-1688 {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      transform: translateX(-50%);
+      max-width: min(92vw, 560px);
+      padding: 14px 18px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 180, 80, 0.35);
+      background: rgba(18, 14, 8, 0.94);
+      color: #ffe8c7;
+      font-size: 13px;
+      line-height: 1.55;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+      z-index: 20;
+      animation: toast-in 0.2s ease;
+    }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
     .empty {
       border: 1px dashed rgba(255,255,255,0.14);
       border-radius: 24px;
@@ -336,6 +359,19 @@ USER_PWA_HTML = """
     <main id="app">__THEME_ROWS__</main>
   </div>
   <script>
+    function show1688Hint() {
+      const existing = document.getElementById("toast-1688");
+      if (existing) existing.remove();
+
+      const toast = document.createElement("div");
+      toast.id = "toast-1688";
+      toast.className = "toast-1688";
+      toast.textContent =
+        "1688 탭이 열렸습니다. 슬라이더(滑动验证) 인증이 나오면 직접 밀어주세요. 한국에서 열면 자주 나오며, 한 번 통과하면 같은 탭에서는 다시 안 나올 수 있습니다.";
+      document.body.appendChild(toast);
+      window.setTimeout(() => toast.remove(), 8000);
+    }
+
     async function open1688Search(btn) {
       const imageUrl = (btn.dataset.imageUrl || "").trim();
       if (!imageUrl) {
@@ -360,6 +396,7 @@ USER_PWA_HTML = """
         }
         if (data.search_url) {
           window.open(data.search_url, "_blank", "noopener,noreferrer");
+          show1688Hint();
         } else {
           alert(data.error || "1688 URL을 만들지 못했습니다.");
         }
