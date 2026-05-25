@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     china_1688_navigation_timeout_ms: int = Field(
         default=120_000, alias="CHINA_1688_NAVIGATION_TIMEOUT_MS"
     )
+    china_1688_browser_country: str = Field(
+        default="KR", alias="CHINA_1688_BROWSER_COUNTRY"
+    )
     brightdata_country: str = Field(default="KR", alias="BRIGHTDATA_COUNTRY")
     brightdata_session_prefix: str = Field(default="coupang", alias="BRIGHTDATA_SESSION_PREFIX")
     brightdata_timeout: int = Field(default=60, alias="BRIGHTDATA_TIMEOUT")

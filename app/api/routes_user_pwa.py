@@ -529,7 +529,7 @@ async def create_1688_search_url(body: China1688SearchRequest) -> Dict[str, Any]
     if not China1688UrlService.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="BRIGHTDATA_BROWSER_WS_1688 is not configured",
+            detail="Bright Data browser WS is not configured (BRIGHTDATA_BROWSER_WS or BRIGHTDATA_BROWSER_WS_1688)",
         )
 
     result = await China1688UrlService.generate_url(body.image_url)
@@ -544,6 +544,7 @@ async def create_1688_search_url(body: China1688SearchRequest) -> Dict[str, Any]
         "search_url": result.search_url,
         "image_id": result.image_id,
         "fetch_source": result.fetch_source,
+        "browser_country": result.browser_country,
     }
 
 
