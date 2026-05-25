@@ -308,7 +308,7 @@ USER_PWA_HTML = """
       min-width: 132px;
     }
 
-    .btn-1688-drag {
+    .btn-1688-manual {
       background: linear-gradient(135deg, #47c087, #7ddea8);
       color: #082116;
       box-shadow: 0 14px 28px rgba(71, 192, 135, 0.22);
@@ -414,7 +414,7 @@ USER_PWA_HTML = """
       window.setTimeout(() => toast.remove(), 8000);
     }
 
-    function showDragGuideBar(popupOpened) {
+    function showManualGuideBar() {
       const existing = document.getElementById("guide-bar-1688");
       if (existing) existing.remove();
 
@@ -422,11 +422,7 @@ USER_PWA_HTML = """
       bar.id = "guide-bar-1688";
       bar.className = "guide-bar-1688";
       bar.innerHTML = `
-        <span>${
-          popupOpened
-            ? "왼쪽 「1688 이미지」 작은 창을 1688 옆에 두고, 이미지를 업로드 칸으로 드래그하세요."
-            : "「1688 소싱 도우미」 탭을 1688 옆에 두고, 왼쪽 이미지를 드래그하세요. (팝업 차단 시)"
-        }</span>
+        <span>1688 탭과 「1688 수동 소싱」 탭을 나란히 두세요. 이미지 저장 후 다운로드 폴더에서 1688 업로드 칸으로 드래그하면 됩니다.</span>
         <button type="button" id="guide-bar-close">닫기</button>
       `;
       document.body.appendChild(bar);
@@ -434,58 +430,15 @@ USER_PWA_HTML = """
       window.setTimeout(() => bar.remove(), 12000);
     }
 
-    function buildDragHelperUrl(imageUrl, keyword, mode) {
+    function buildManualHelperUrl(imageUrl, keyword) {
       const params = new URLSearchParams({
         url: imageUrl,
         keyword: keyword || "",
-        mode: mode || "popup",
       });
       return `/user/1688-drag-image?${params.toString()}`;
     }
 
-    let dragPopupWindow = null;
-
-    function openDragHelper(imageUrl, keyword) {
-      const popupUrl = buildDragHelperUrl(imageUrl, keyword, "popup");
-      const panelUrl = buildDragHelperUrl(imageUrl, keyword, "panel");
-      const popupWidth = 320;
-      const popupHeight = 500;
-      const left = Math.max(12, window.screenX + 12);
-      const top = Math.max(12, window.screenY + 72);
-      const features = [
-        "popup=yes",
-        `width=${popupWidth}`,
-        `height=${popupHeight}`,
-        `left=${left}`,
-        `top=${top}`,
-        "resizable=yes",
-        "scrollbars=no",
-        "toolbar=no",
-        "menubar=no",
-        "location=no",
-        "status=no",
-      ].join(",");
-
-      if (dragPopupWindow && !dragPopupWindow.closed) {
-        dragPopupWindow.location.href = popupUrl;
-        dragPopupWindow.focus();
-        showDragGuideBar(true);
-        return true;
-      }
-
-      dragPopupWindow = window.open(popupUrl, "pwa1688DragImage", features);
-      if (dragPopupWindow) {
-        dragPopupWindow.focus();
-        showDragGuideBar(true);
-        return true;
-      }
-
-      window.open(panelUrl, "_blank", "noopener,noreferrer");
-      showDragGuideBar(false);
-      return false;
-    }
-
-    function open1688Drag(btn) {
+    function open1688Manual(btn) {
       const imageUrl = (btn.dataset.imageUrl || "").trim();
       const keyword = (btn.dataset.keyword || "").trim();
       if (!imageUrl) {
@@ -494,7 +447,8 @@ USER_PWA_HTML = """
       }
 
       window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => openDragHelper(imageUrl, keyword), 250);
+      window.open(buildManualHelperUrl(imageUrl, keyword), "_blank", "noopener,noreferrer");
+      showManualGuideBar();
     }
 
     async function open1688Search(btn) {
@@ -538,8 +492,8 @@ USER_PWA_HTML = """
       btn.addEventListener("click", () => open1688Search(btn));
     });
 
-    document.querySelectorAll(".btn-1688-drag").forEach((btn) => {
-      btn.addEventListener("click", () => open1688Drag(btn));
+    document.querySelectorAll(".btn-1688-manual").forEach((btn) => {
+      btn.addEventListener("click", () => open1688Manual(btn));
     });
   </script>
 </body>
@@ -553,518 +507,154 @@ DRAG_IMAGE_HELPER_HTML = """
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>1688 이미지 · __KEYWORD__</title>
+  <title>1688 수동 소싱 · __KEYWORD__</title>
   <style>
-    :root {
-      --green: #22a06b;
-      --green-soft: #e8f7ef;
-      --line: #dbe3ef;
-      --text: #102033;
-      --muted: #64748b;
-      --panel: #ffffff;
-      --bg: #eef3f8;
-    }
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; }
     body {
-      font-family: Inter, "Segoe UI", Arial, sans-serif;
-      color: var(--text);
-      background: var(--bg);
-    }
-    body.mode-popup {
-      overflow: hidden;
-      background: linear-gradient(180deg, #f8fbff 0%, #eef3f8 100%);
-    }
-    body.mode-panel {
-      min-height: 100vh;
-    }
-    .shell {
-      height: 100%;
-    }
-    body.mode-popup .shell {
-      display: flex;
-      flex-direction: column;
-      padding: 10px;
-      gap: 8px;
-      height: 100vh;
-    }
-    body.mode-panel .shell {
-      display: grid;
-      grid-template-columns: minmax(300px, 360px) 1fr;
-      min-height: 100vh;
-    }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-    }
-    body.mode-panel .topbar {
-      grid-column: 1 / -1;
-      padding: 14px 18px;
-      background: #0f172a;
-      color: #f8fafc;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-    }
-    body.mode-popup .topbar {
-      padding: 2px 2px 0;
-    }
-    .brand {
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #94a3b8;
-    }
-    body.mode-popup .brand { color: var(--muted); }
-    .title {
       margin: 0;
-      font-size: 16px;
-      font-weight: 800;
-      line-height: 1.35;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      background: #f1f5f9;
+      color: #0f172a;
     }
-    body.mode-panel .title { color: #f8fafc; font-size: 18px; }
-    .top-actions {
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px 20px 40px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #dbe3ef;
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 800;
+    }
+    .sub {
+      margin: 0 0 18px;
+      color: #64748b;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .preview {
+      display: grid;
+      place-items: center;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 18px;
+      min-height: 200px;
+    }
+    .preview img {
+      max-width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+    }
+    .steps {
+      margin: 0 0 18px;
+      padding-left: 20px;
+      line-height: 1.85;
+      font-size: 14px;
+      color: #334155;
+    }
+    .steps strong { color: #0f172a; }
+    .actions {
       display: flex;
-      gap: 6px;
-      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
     }
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 7px 10px;
-      border-radius: 8px;
-      border: 1px solid var(--line);
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid #cbd5e1;
       background: #fff;
-      color: var(--text);
-      font-size: 11px;
-      font-weight: 700;
+      color: #0f172a;
+      font-size: 14px;
+      font-weight: 800;
       text-decoration: none;
       cursor: pointer;
     }
     .btn-primary {
-      background: var(--green);
-      border-color: var(--green);
-      color: #fff;
-    }
-    body.mode-panel .btn-ghost {
-      background: rgba(255,255,255,0.08);
-      border-color: rgba(255,255,255,0.12);
-      color: #f8fafc;
-    }
-    .left-panel {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      min-height: 0;
-    }
-    body.mode-panel .left-panel {
-      padding: 18px;
-      background: var(--panel);
-      border-right: 1px solid var(--line);
-    }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: var(--green-soft);
-      color: #166534;
-      font-size: 11px;
-      font-weight: 800;
-      width: fit-content;
-    }
-    .drag-zone {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      border: 2px dashed var(--green);
-      border-radius: 16px;
-      background: #fff;
-      padding: 12px;
-      min-height: 0;
-      position: relative;
-    }
-    body.mode-popup .drag-zone { min-height: 280px; }
-    body.mode-panel .drag-zone { min-height: 360px; }
-    .drag-badge {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      padding: 4px 8px;
-      border-radius: 999px;
-      background: var(--green);
-      color: #fff;
-      font-size: 10px;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-    }
-    .arrow-out {
-      position: absolute;
-      right: -2px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 28px;
-      height: 28px;
-      border-radius: 999px;
-      background: var(--green);
-      color: #fff;
-      display: grid;
-      place-items: center;
-      font-size: 14px;
-      font-weight: 900;
-      box-shadow: 0 8px 20px rgba(34, 160, 107, 0.35);
-    }
-    body.mode-panel .arrow-out { display: none; }
-    img {
-      max-width: 100%;
-      max-height: 200px;
-      object-fit: contain;
-      user-select: none;
-      pointer-events: none;
-    }
-    body.mode-panel img { max-height: 240px; }
-    .preview-note {
-      margin-top: 8px;
-      font-size: 10px;
-      color: var(--muted);
-      text-align: center;
-    }
-    .drag-handle-wrap {
-      margin-top: 10px;
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 10px;
-      width: 100%;
-    }
-    .drag-handle-wrap[hidden] { display: none !important; }
-    .method-card {
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: #fff;
-      padding: 12px;
-    }
-    .method-card.recommended {
+      background: #22a06b;
       border-color: #22a06b;
-      background: var(--green-soft);
-    }
-    .method-badge {
-      display: inline-block;
-      margin-bottom: 8px;
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: var(--green);
       color: #fff;
-      font-size: 10px;
-      font-weight: 800;
+      box-shadow: 0 10px 24px rgba(34, 160, 107, 0.25);
     }
-    .method-title {
-      margin: 0 0 6px;
+    .status {
+      min-height: 20px;
       font-size: 13px;
-      font-weight: 800;
-      color: var(--text);
-    }
-    .method-desc {
-      margin: 0 0 10px;
-      font-size: 11px;
+      font-weight: 700;
+      color: #166534;
       line-height: 1.5;
-      color: var(--muted);
     }
-    .drag-handle {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 12px 8px 8px;
-      border-radius: 999px;
-      border: 2px solid #94a3b8;
-      background: #f8fafc;
-      cursor: grab;
-      user-select: none;
-      width: fit-content;
-    }
-    .drag-handle:active { cursor: grabbing; }
-    .drag-handle-thumb {
-      width: 44px;
-      height: 44px;
-      border-radius: 10px;
-      background: #fff;
-      object-fit: contain;
-      border: 1px solid #cbd5e1;
-      flex: 0 0 auto;
-      cursor: grab;
-    }
-    .drag-handle-label {
-      font-size: 11px;
-      font-weight: 700;
-      color: #475569;
-      white-space: nowrap;
-    }
-    .drop-warning {
-      font-size: 10px;
-      line-height: 1.45;
-      color: #b45309;
-      text-align: left;
-    }
-    .status-line {
-      min-height: 16px;
-      font-size: 11px;
-      font-weight: 700;
-      color: #166534;
-    }
-    .loading {
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .footer-actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .right-panel {
-      padding: 22px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      justify-content: center;
-    }
-    body.mode-popup .right-panel { display: none; }
-    .guide-card {
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 18px 20px;
-      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
-    }
-    .guide-title {
-      margin: 0 0 12px;
-      font-size: 18px;
-      font-weight: 800;
-    }
-    .steps {
-      margin: 0;
-      padding-left: 18px;
-      line-height: 1.8;
-      color: #334155;
-      font-size: 14px;
-    }
-    .layout-demo {
-      margin-top: 16px;
-      display: grid;
-      grid-template-columns: 120px 36px 1fr;
-      gap: 10px;
-      align-items: center;
-    }
-    .demo-box {
+    .note {
+      margin-top: 14px;
+      padding: 12px 14px;
       border-radius: 12px;
-      border: 1px solid var(--line);
-      background: #f8fafc;
-      padding: 12px 10px;
-      text-align: center;
-      font-size: 11px;
-      font-weight: 700;
-      color: #475569;
-      min-height: 88px;
-      display: grid;
-      place-items: center;
-    }
-    .demo-box.active {
-      border-color: var(--green);
-      background: var(--green-soft);
-      color: #166534;
-    }
-    .demo-arrow {
-      text-align: center;
-      font-size: 22px;
-      font-weight: 900;
-      color: var(--green);
-    }
-    .popup-steps {
-      margin: 0;
-      padding-left: 16px;
-      color: var(--muted);
-      font-size: 11px;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #9a3412;
+      font-size: 12px;
       line-height: 1.55;
     }
-    body.mode-panel .popup-steps { display: none; }
+    .loading { color: #64748b; font-size: 14px; }
   </style>
 </head>
-<body class="mode-__MODE__">
-  <div class="shell">
-    <div class="topbar">
-      <div>
-        <div class="brand">1688 Drag Tool</div>
-        <h1 class="title">__KEYWORD__</h1>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>__KEYWORD__</h1>
+      <p class="sub">Bright Data 없이 1688 图搜 — 이미지 저장 후 다운로드 폴더에서 1688으로 드래그합니다.</p>
+      <div class="preview">
+        <div class="loading" id="loading">이미지 불러오는 중…</div>
+        <img id="preview-image" alt="상품 미리보기" hidden />
       </div>
-      <div class="top-actions">
-        <a class="btn btn-primary" id="open-1688" href="https://s.1688.com/youyuan/index.htm" target="_blank" rel="noreferrer">1688</a>
-        <button class="btn btn-ghost" type="button" id="close-window">닫기</button>
-      </div>
-    </div>
-
-    <section class="left-panel">
-      <span class="chip">쿠팡 1위 이미지</span>
-      <div class="drag-zone" id="drag-zone">
-        <span class="drag-badge">PREVIEW</span>
-        <span class="arrow-out">→</span>
-        <div class="loading" id="loading">이미지 준비 중…</div>
-        <img id="preview-image" alt="상품 미리보기" draggable="false" hidden />
-        <div class="preview-note" id="preview-note" hidden>미리보기 · 아래 ①②③ 방법 중 선택</div>
-      </div>
-      <div class="drag-handle-wrap" id="drag-handle-wrap" hidden>
-        <div class="method-card recommended">
-          <span class="method-badge">추천</span>
-          <p class="method-title">① 이미지 저장 → 1688 업로드</p>
-          <p class="method-desc">저장 후 다운로드 폴더에서 1688 「上传图片」 칸으로 드래그하면 금지 표시 없이 됩니다.</p>
-          <a class="btn btn-primary" id="download-link" href="#" download hidden>이미지 저장</a>
-        </div>
-        <div class="method-card">
-          <p class="method-title">② 클립보드 복사 → 1688 붙여넣기</p>
-          <p class="method-desc">1688 업로드 칸을 클릭한 뒤 Ctrl+V 로 붙여넣기.</p>
-          <button class="btn" type="button" id="copy-clipboard">클립보드 복사</button>
-        </div>
-        <div class="method-card">
-          <p class="method-title">③ 썸네일 드래그 (브라우저마다 다름)</p>
-          <p class="method-desc">탭 간 드래그는 1688에서 🚫 금지 표시가 날 수 있습니다.</p>
-          <div class="drag-handle" id="drag-handle">
-            <img class="drag-handle-thumb" id="drag-thumb" alt="드래그 썸네일" draggable="true" />
-            <span class="drag-handle-label">썸네일 드래그 시도</span>
-          </div>
-        </div>
-        <p class="drop-warning">🚫 금지 표시 = 1688이 브라우저 탭 간 드롭을 거부한 것입니다. ①번(저장 후 드래그)을 사용하세요.</p>
-        <div class="status-line" id="status-line"></div>
-      </div>
-      <ol class="popup-steps">
-        <li>1688 탭과 이 창을 나란히 둡니다.</li>
-        <li><strong>① 이미지 저장</strong> 후 폴더에서 1688으로 드래그.</li>
-        <li>또는 <strong>② 복사 → Ctrl+V</strong>.</li>
+      <ol class="steps">
+        <li><strong>① 이미지 저장</strong> 버튼을 눌러 PC에 저장합니다.</li>
+        <li><strong>1688 탭</strong>에서 「上传图片 / 以图搜图」 <strong>점선 업로드 칸</strong>을 찾습니다.</li>
+        <li><strong>다운로드 폴더</strong>의 이미지 파일을 그 칸으로 <strong>드래그 앤 드롭</strong>합니다.</li>
       </ol>
-      <div class="footer-actions"></div>
-    </section>
-
-    <aside class="right-panel">
-      <div class="guide-card">
-        <h2 class="guide-title">화면 배치 가이드</h2>
-        <ol class="steps">
-          <li><strong>1688 탭</strong>을 메인 화면으로 둡니다.</li>
-          <li>이 <strong>소싱 도우미 탭</strong>을 1688 <strong>왼쪽</strong>에 붙입니다.</li>
-          <li><strong>① 저장 후 드래그</strong> 또는 <strong>② Ctrl+V</strong>를 사용합니다.</li>
-        </ol>
-        <div class="layout-demo">
-          <div class="demo-box active">이 창<br/>이미지</div>
-          <div class="demo-arrow">→</div>
-          <div class="demo-box">1688 탭<br/>上传图片</div>
-        </div>
+      <div class="actions">
+        <a class="btn btn-primary" id="download-link" href="#" download hidden>① 이미지 저장</a>
+        <a class="btn" href="https://s.1688.com/youyuan/index.htm" target="_blank" rel="noreferrer">1688 열기</a>
       </div>
-      <div class="guide-card">
-        <h2 class="guide-title">Windows 빠른 배치</h2>
-        <ol class="steps">
-          <li>1688 탭 선택 → <strong>Win + →</strong></li>
-          <li>이 탭 선택 → <strong>Win + ←</strong></li>
-          <li>슬라이더(滑动验证)가 나오면 먼저 통과</li>
-        </ol>
-      </div>
-    </aside>
+      <div class="status" id="status-line">저장 후 다운로드 폴더(보통 「다운로드」)에서 파일을 1688으로 드래그하세요.</div>
+      <div class="note">Win + ← / → 로 1688 탭과 이 탭을 나란히 두면 편합니다. 슬라이더(滑动验证)가 나오면 먼저 통과하세요.</div>
+    </div>
   </div>
   <script>
     const PROXY_URL = "__PROXY_URL__";
-
-    document.getElementById("close-window").addEventListener("click", () => window.close());
-    document.getElementById("open-1688").addEventListener("click", (event) => {
-      event.preventDefault();
-      window.open("https://s.1688.com/youyuan/index.htm", "_blank", "noopener,noreferrer");
-    });
-
-    function setSmallDragImage(event, img) {
-      const size = 48;
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext("2d");
-      if (!ctx || !img.naturalWidth) return;
-      const ratio = Math.min(size / img.naturalWidth, size / img.naturalHeight);
-      const width = img.naturalWidth * ratio;
-      const height = img.naturalHeight * ratio;
-      ctx.drawImage(img, (size - width) / 2, (size - height) / 2, width, height);
-      event.dataTransfer.setDragImage(canvas, size / 2, size / 2);
-    }
-
-    async function blobToPng(blob) {
-      if (blob.type === "image/png") return blob;
-      const bitmap = await createImageBitmap(blob);
-      const canvas = document.createElement("canvas");
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("canvas unavailable");
-      ctx.drawImage(bitmap, 0, 0);
-      return new Promise((resolve, reject) => {
-        canvas.toBlob((pngBlob) => {
-          if (pngBlob) resolve(pngBlob);
-          else reject(new Error("png convert failed"));
-        }, "image/png");
-      });
-    }
+    const FILENAME = "__FILENAME__";
 
     async function boot() {
       const preview = document.getElementById("preview-image");
       const loading = document.getElementById("loading");
-      const previewNote = document.getElementById("preview-note");
       const downloadLink = document.getElementById("download-link");
-      const dragZone = document.getElementById("drag-zone");
-      const dragHandleWrap = document.getElementById("drag-handle-wrap");
-      const dragThumb = document.getElementById("drag-thumb");
-      const copyButton = document.getElementById("copy-clipboard");
       const statusLine = document.getElementById("status-line");
-      let imageBlob = null;
 
       try {
         const response = await fetch(PROXY_URL);
         if (!response.ok) throw new Error("이미지 로드 실패");
-        imageBlob = await response.blob();
-        const objectUrl = URL.createObjectURL(imageBlob);
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
         preview.src = objectUrl;
         preview.onload = () => {
           preview.hidden = false;
-          previewNote.hidden = false;
-          dragThumb.src = objectUrl;
-          dragHandleWrap.hidden = false;
           loading.hidden = true;
           downloadLink.href = objectUrl;
-          downloadLink.download = "__FILENAME__";
+          downloadLink.download = FILENAME;
           downloadLink.hidden = false;
         };
-        dragThumb.addEventListener("dragstart", (event) => {
-          if (!event.dataTransfer) return;
-          event.stopPropagation();
-          event.dataTransfer.effectAllowed = "copy";
-          setSmallDragImage(event, dragThumb);
-          dragZone.style.borderColor = "#64748b";
-          statusLine.textContent = "썸네일 드래그 중… 금지 표시면 ① 저장 방식을 사용하세요.";
-        });
-        dragThumb.addEventListener("dragend", () => {
-          dragZone.style.borderColor = "";
-        });
-        copyButton.addEventListener("click", async () => {
-          if (!imageBlob || !navigator.clipboard || !window.ClipboardItem) {
-            statusLine.textContent = "클립보드 복사를 지원하지 않습니다. ① 저장 방식을 사용하세요.";
-            return;
-          }
-          try {
-            const pngBlob = await blobToPng(imageBlob);
-            await navigator.clipboard.write([
-              new ClipboardItem({ "image/png": pngBlob }),
-            ]);
-            statusLine.textContent = "복사됨. 1688 업로드 칸 클릭 후 Ctrl+V";
-          } catch (error) {
-            statusLine.textContent = "복사 실패. ① 이미지 저장 방식을 사용하세요.";
-          }
-        });
         downloadLink.addEventListener("click", () => {
-          statusLine.textContent = "저장 후 다운로드 폴더에서 1688 업로드 칸으로 드래그하세요.";
+          statusLine.textContent = "저장됨. 다운로드 폴더에서 jpg/png 파일을 1688 업로드 칸으로 드래그하세요.";
         });
       } catch (error) {
         loading.textContent = error instanceof Error ? error.message : "이미지 준비 실패";
@@ -1139,12 +729,12 @@ def _render_card(card: Dict[str, Any]) -> str:
         <div class="actions">
           <a class="btn btn-primary" href="{product_url}" target="_blank" rel="noreferrer">상품 보기</a>
           <button
-            class="btn btn-1688-drag"
+            class="btn btn-1688-manual"
             type="button"
             data-image-url="{raw_image_url}"
             data-keyword="{keyword}"
             {"disabled" if not image_url else ""}
-          >1688 드래그</button>
+          >1688 수동</button>
           <button
             class="btn btn-1688"
             type="button"
@@ -1261,14 +851,12 @@ async def get_user_feed() -> Dict[str, Any]:
 async def drag_image_helper(
     url: str = Query(..., min_length=8),
     keyword: str = Query(""),
-    mode: str = Query("popup"),
 ) -> HTMLResponse:
     image_url = str(url or "").strip()
     if not _is_allowed_product_image_url(image_url):
         raise HTTPException(status_code=400, detail="unsupported image url")
 
-    layout_mode = "panel" if str(mode or "").strip().lower() == "panel" else "popup"
-    safe_keyword = escape(str(keyword or "").strip() or "1688 드래그용 이미지")
+    safe_keyword = escape(str(keyword or "").strip() or "1688 수동 소싱")
     safe_filename = (
         str(keyword or "coupang")
         .strip()
@@ -1279,7 +867,6 @@ async def drag_image_helper(
     )
     proxy_url = f"/api/user/image-proxy?url={quote(image_url, safe='')}"
     html = DRAG_IMAGE_HELPER_HTML
-    html = html.replace("__MODE__", layout_mode)
     html = html.replace("__KEYWORD__", safe_keyword)
     html = html.replace("__PROXY_URL__", proxy_url)
     html = html.replace("__FILENAME__", f"{safe_filename}.jpg")
