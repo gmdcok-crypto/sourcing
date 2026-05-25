@@ -1,6 +1,6 @@
 from html import escape
 from typing import Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -395,8 +395,15 @@ USER_PWA_HTML = """
       object-fit: contain;
       display: block;
       margin: 0 auto;
-      pointer-events: none;
       user-select: none;
+    }
+
+    .drag-image-shell img.is-draggable {
+      cursor: grab;
+    }
+
+    .drag-image-shell img.is-draggable:active {
+      cursor: grabbing;
     }
 
     .drag-image-hint {
@@ -511,6 +518,32 @@ USER_PWA_HTML = """
       });
     }
 
+    function buildDragHelperUrl(imageUrl, keyword) {
+      const params = new URLSearchParams({
+        url: imageUrl,
+        keyword: keyword || "",
+      });
+      return `/user/1688-drag-image?${params.toString()}`;
+    }
+
+    function enableNativeImageDrag(img, statusEl) {
+      img.draggable = true;
+      img.classList.add("is-draggable");
+      img.addEventListener("dragstart", (event) => {
+        if (!event.dataTransfer) return;
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", "coupang-product-image");
+        if (statusEl) {
+          statusEl.textContent = "드래그 중입니다. 1688 탭의 「上传图片 / 以图搜图」 점선 영역에 놓으세요.";
+        }
+      });
+      img.addEventListener("dragend", () => {
+        if (statusEl) {
+          statusEl.textContent = "드롭했습니다. 1688에서 업로드/검색 결과를 확인하세요.";
+        }
+      });
+    }
+
     async function showDragModal(imageUrl, keyword) {
       closeDragModal();
 
@@ -525,20 +558,22 @@ USER_PWA_HTML = """
           </div>
           <div class="drag-modal-body">
             <ol class="drag-steps">
-              <li>1688 탭을 열어 두세요.</li>
-              <li>아래 이미지를 1688 업로드 영역으로 드래그하세요.</li>
-              <li>슬라이더(滑动验证)가 나오면 직접 밀어주세요.</li>
+              <li><strong>1688 탭</strong>과 <strong>이미지 탭</strong>을 나란히 둡니다.</li>
+              <li><strong>「이미지 탭 열기 (추천)」</strong>를 누른 뒤, 그 탭의 큰 이미지를 1688 업로드 칸으로 드래그합니다.</li>
+              <li>안 되면 아래 모달 이미지를 직접 드래그하거나, 「이미지 저장」 후 1688에 업로드합니다.</li>
             </ol>
             <div class="drag-image-shell" id="drag-image-shell">
-              <img id="drag-preview-image" alt="상품 이미지" />
+              <img id="drag-preview-image" alt="상품 이미지" draggable="false" />
               <div class="drag-image-hint" id="drag-image-hint">이미지 준비 중…</div>
             </div>
             <div class="drag-modal-actions">
+              <button class="btn btn-1688-drag" type="button" id="drag-open-image-tab">이미지 탭 열기 (추천)</button>
               <button class="btn btn-1688-drag" type="button" id="drag-open-1688">1688 탭 다시 열기</button>
+              <a class="btn btn-secondary" id="drag-download-image" href="#" download>이미지 저장</a>
               <button class="btn btn-secondary" type="button" id="drag-close-modal">닫기</button>
             </div>
             <div class="drag-status" id="drag-status">
-              PC Chrome/Edge에서 테스트하세요. 이미지는 PC에 저장되지 않고 1688로만 넘깁니다.
+              PC Chrome/Edge 권장. 창을 Win+← / Win+→ 로 나란히 두면 드롭이 쉽습니다.
             </div>
           </div>
         </div>
@@ -553,37 +588,33 @@ USER_PWA_HTML = """
       backdrop.querySelector("#drag-open-1688").addEventListener("click", () => {
         window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
       });
+      backdrop.querySelector("#drag-open-image-tab").addEventListener("click", () => {
+        window.open(buildDragHelperUrl(imageUrl, keyword), "_blank", "noopener,noreferrer");
+      });
 
       const shell = backdrop.querySelector("#drag-image-shell");
       const preview = backdrop.querySelector("#drag-preview-image");
       const hint = backdrop.querySelector("#drag-image-hint");
       const status = backdrop.querySelector("#drag-status");
-
-      preview.src = buildImageProxyUrl(imageUrl);
-      preview.alt = keyword || "상품 이미지";
+      const downloadLink = backdrop.querySelector("#drag-download-image");
 
       try {
         const dragFile = await prepareDragFile(imageUrl, keyword);
+        const objectUrl = URL.createObjectURL(dragFile);
+        preview.src = objectUrl;
+        preview.alt = keyword || "상품 이미지";
+        downloadLink.href = objectUrl;
+        downloadLink.download = dragFile.name;
         shell.classList.add("is-ready");
-        shell.draggable = true;
-        hint.textContent = "이 이미지를 1688 업로드 칸으로 드래그하세요";
-
-        shell.addEventListener("dragstart", (event) => {
-          if (!event.dataTransfer) return;
-          event.dataTransfer.effectAllowed = "copy";
-          event.dataTransfer.items.clear();
-          event.dataTransfer.items.add(dragFile);
-          status.textContent = "드래그 중입니다. 1688 탭의 업로드 영역에 놓으세요.";
-        });
-
-        shell.addEventListener("dragend", () => {
-          status.textContent = "드롭 완료. 1688에서 결과가 나오는지 확인하세요.";
-        });
+        hint.textContent = "또는 이 이미지를 1688 업로드 칸으로 드래그";
+        enableNativeImageDrag(preview, status);
       } catch (error) {
+        preview.src = buildImageProxyUrl(imageUrl);
+        preview.alt = keyword || "상품 이미지";
         hint.textContent = "드래그 파일 준비 실패";
         status.textContent =
           error instanceof Error
-            ? `${error.message} 아래 이미지를 우클릭 저장 후 1688에 업로드해 보세요.`
+            ? `${error.message} 「이미지 탭 열기」 또는 「이미지 저장」을 사용해 보세요.`
             : "이미지 준비 실패";
       }
     }
@@ -597,6 +628,7 @@ USER_PWA_HTML = """
       }
 
       window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
+      window.open(buildDragHelperUrl(imageUrl, keyword), "_blank", "noopener,noreferrer");
       showDragModal(imageUrl, keyword);
     }
 
@@ -644,6 +676,163 @@ USER_PWA_HTML = """
     document.querySelectorAll(".btn-1688-drag").forEach((btn) => {
       btn.addEventListener("click", () => open1688Drag(btn));
     });
+  </script>
+</body>
+</html>
+"""
+
+
+DRAG_IMAGE_HELPER_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>1688 드래그용 이미지</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #f3f4f6;
+      color: #111827;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    header, footer {
+      padding: 16px 20px;
+      background: #ffffff;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    footer {
+      border-bottom: 0;
+      border-top: 1px solid #e5e7eb;
+      font-size: 13px;
+      color: #4b5563;
+      line-height: 1.6;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 22px;
+    }
+    .sub {
+      margin: 0;
+      color: #6b7280;
+      font-size: 14px;
+    }
+    main {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .frame {
+      width: min(92vw, 760px);
+      background: #ffffff;
+      border: 2px dashed #34a56f;
+      border-radius: 20px;
+      padding: 24px;
+      text-align: center;
+      box-shadow: 0 16px 40px rgba(17, 24, 39, 0.08);
+    }
+    img {
+      max-width: 100%;
+      max-height: 70vh;
+      object-fit: contain;
+      cursor: grab;
+      user-select: none;
+    }
+    img:active { cursor: grabbing; }
+    .hint {
+      margin-top: 14px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #166534;
+    }
+    .actions {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      color: #111827;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: #34a56f;
+      border-color: #34a56f;
+      color: #ffffff;
+    }
+    .loading {
+      color: #6b7280;
+      font-size: 15px;
+      padding: 40px 0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>__KEYWORD__</h1>
+    <p class="sub">이 탭의 이미지를 1688 「上传图片 / 以图搜图」 영역으로 드래그하세요.</p>
+  </header>
+  <main>
+    <div class="frame">
+      <div class="loading" id="loading">이미지 불러오는 중…</div>
+      <img id="drag-image" alt="상품 이미지" draggable="false" hidden />
+      <div class="hint" id="hint" hidden>이미지를 잡아 1688 탭으로 끌어다 놓으세요</div>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://s.1688.com/youyuan/index.htm" target="_blank" rel="noreferrer">1688 열기</a>
+        <a class="btn" id="download-link" href="#" download hidden>이미지 저장</a>
+      </div>
+    </div>
+  </main>
+  <footer>
+    드롭이 안 되면 「이미지 저장」 후 1688에 업로드하거나, PWA의 주황 「1688 图搜」 버튼을 사용하세요.
+  </footer>
+  <script>
+    const PROXY_URL = "__PROXY_URL__";
+
+    async function boot() {
+      const img = document.getElementById("drag-image");
+      const loading = document.getElementById("loading");
+      const hint = document.getElementById("hint");
+      const downloadLink = document.getElementById("download-link");
+
+      try {
+        const response = await fetch(PROXY_URL);
+        if (!response.ok) throw new Error("이미지 로드 실패");
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        img.src = objectUrl;
+        img.hidden = false;
+        img.draggable = true;
+        loading.hidden = true;
+        hint.hidden = false;
+        downloadLink.href = objectUrl;
+        downloadLink.download = "__FILENAME__";
+        downloadLink.hidden = false;
+        img.addEventListener("dragstart", (event) => {
+          if (!event.dataTransfer) return;
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData("text/plain", "coupang-product-image");
+        });
+      } catch (error) {
+        loading.textContent = error instanceof Error ? error.message : "이미지 준비 실패";
+      }
+    }
+
+    boot();
   </script>
 </body>
 </html>
@@ -827,6 +1016,32 @@ async def create_1688_search_url(body: China1688SearchRequest) -> Dict[str, Any]
 @router.get("/api/user/feed")
 async def get_user_feed() -> Dict[str, Any]:
     return UserPwaFeedService.build_feed()
+
+
+@router.get("/user/1688-drag-image", response_class=HTMLResponse)
+async def drag_image_helper(
+    url: str = Query(..., min_length=8),
+    keyword: str = Query(""),
+) -> HTMLResponse:
+    image_url = str(url or "").strip()
+    if not _is_allowed_product_image_url(image_url):
+        raise HTTPException(status_code=400, detail="unsupported image url")
+
+    safe_keyword = escape(str(keyword or "").strip() or "1688 드래그용 이미지")
+    safe_filename = (
+        str(keyword or "coupang")
+        .strip()
+        .replace(" ", "_")
+        .encode("ascii", "ignore")
+        .decode("ascii")[:40]
+        or "coupang"
+    )
+    proxy_url = f"/api/user/image-proxy?url={quote(image_url, safe='')}"
+    html = DRAG_IMAGE_HELPER_HTML
+    html = html.replace("__KEYWORD__", safe_keyword)
+    html = html.replace("__PROXY_URL__", proxy_url)
+    html = html.replace("__FILENAME__", f"{safe_filename}.jpg")
+    return HTMLResponse(content=html)
 
 
 @router.get("/user", response_class=HTMLResponse)
