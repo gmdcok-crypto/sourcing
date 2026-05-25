@@ -11,7 +11,8 @@ import pandas as pd
 
 from app.services.db import get_mysql_connection
 from app.services.naver_datalab import NaverShoppingInsightService
-from app.services.keyword_noise import apply_step1_noise_flags, filter_noise
+from app.services.discovery_post_filter import apply_discovery_post_filter, category_path_depth
+from app.services.keyword_noise import apply_step1_noise_flags, filter_noise, normalize_keyword
 from app.services.naver_api import NaverShoppingService
 from app.services.naver_searchad import NaverSearchAdService
 from app.services.naver_search_trend import NaverSearchTrendService
@@ -36,7 +37,7 @@ class KeywordSourcingService:
     _active_run_id: Optional[str] = None
     _active_task: Optional[asyncio.Task] = None
     CATEGORY_DELAY_SECONDS = 0.5
-    VALID_KEYWORD_LIMIT = 100
+    # CID당 상한은 discovery_post_filter(by_depth cap + enrich_budget)가 담당
     UNSOURCEABLE_PRODUCT_COUNT_MAX = 200
     UNSOURCEABLE_PRODUCT_COUNT_GTE = 1_000_000
     UNSOURCEABLE_CTR_MIN = 9.9
@@ -454,6 +455,7 @@ class KeywordSourcingService:
         state = self._runs[run_id]
         rows: List[Dict[str, Any]] = []
         keyword_pool: Dict[str, Dict[str, Any]] = {}
+        post_filter_candidates: List[Dict[str, Any]] = []
 
         try:
             categories = self._load_theme_categories(theme_id=theme_id)
@@ -504,18 +506,21 @@ class KeywordSourcingService:
 
                     raw_keyword_list = [row["keyword"] for row in top_keywords]
                     valid_keywords_all, noise_keywords = filter_noise(raw_keyword_list)
-                    valid_keywords = valid_keywords_all[: self.VALID_KEYWORD_LIMIT]
-                    valid_keyword_set = set(valid_keywords)
-                    state["top100_count"] = int(state.get("top100_count") or 0) + len(valid_keywords)
+                    noise_keyword_set = set(noise_keywords)
+                    full_path = str(category.get("full_path") or category["category_name"] or "").strip()
+                    cid_depth = category_path_depth(full_path)
+                    source_group = f"cid:{category['cid']}"
 
                     for row in top_keywords:
                         keyword = row["keyword"]
-                        existing = keyword_pool.get(keyword)
+                        datalab_rank = int(row.get("rank") or 9999)
+                        is_noise = keyword in noise_keyword_set
                         row_payload = {
                             "run_id": run_id,
                             "collected_at": datetime.now(timezone.utc).isoformat(),
                             "keyword": keyword,
                             "rank": row.get("rank"),
+                            "datalab_rank": datalab_rank,
                             "ratio": row.get("ratio"),
                             "theme_id": category["theme_id"],
                             "theme_code": category["theme_code"],
@@ -523,18 +528,29 @@ class KeywordSourcingService:
                             "category_id": category["category_id"],
                             "cid": category["cid"],
                             "category_name": category["category_name"],
-                            "full_path": category["full_path"],
-                            "is_noise": keyword in noise_keywords,
-                            "is_valid": keyword in valid_keyword_set,
+                            "full_path": full_path,
+                            "source_path": full_path,
+                            "category_path": full_path,
+                            "source_group": source_group,
+                            "source_group_order": index,
+                            "cid_depth": cid_depth,
+                            "is_noise": is_noise,
+                            "is_valid": not is_noise,
                             "source": "naver_shopping_insight",
                         }
-                        if not existing or (row_payload["rank"] or 999999) < (existing.get("rank") or 999999):
+                        existing = keyword_pool.get(keyword)
+                        if not existing or datalab_rank < int(
+                            existing.get("datalab_rank") or existing.get("rank") or 9999
+                        ):
                             keyword_pool[keyword] = row_payload
+                        if not is_noise:
+                            post_filter_candidates.append(row_payload)
 
                     state["success_count"] += 1
                     self._append_log(
                         state,
-                        f"[{index}/{len(categories)}] {category['category_name']} 완료 (top150 {len(top_keywords)}건 / 유효키워드 {len(valid_keywords)}건)",
+                        f"[{index}/{len(categories)}] {category['category_name']} 완료 "
+                        f"(top150 {len(top_keywords)}건 / 노이즈제외 {len(valid_keywords_all)}건)",
                     )
                 except Exception as error:  # noqa: BLE001
                     state["failure_count"] += 1
@@ -549,6 +565,13 @@ class KeywordSourcingService:
                 self._persist_state(state)
                 if index < len(categories):
                     await asyncio.sleep(self.CATEGORY_DELAY_SECONDS)
+
+            post_filter_stats = self._apply_discovery_post_filter_to_pool(
+                keyword_pool=keyword_pool,
+                candidates=post_filter_candidates,
+                state=state,
+            )
+            state["post_filter_stats"] = post_filter_stats
 
             top_keywords = self._build_top_keyword_rows(keyword_pool)
             safety_removed = apply_step1_noise_flags(top_keywords)
@@ -762,6 +785,43 @@ class KeywordSourcingService:
             dataframe=dataframe,
         )
         return saved_json_key, saved_parquet_key
+
+    def _apply_discovery_post_filter_to_pool(
+        self,
+        *,
+        keyword_pool: Dict[str, Dict[str, Any]],
+        candidates: List[Dict[str, Any]],
+        state: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        def log_line(message: str) -> None:
+            self._append_log(state, message)
+
+        filtered_rows, stats = apply_discovery_post_filter(candidates, log=log_line)
+        allowed_normalized = {
+            normalize_keyword(str(row.get("keyword") or "")) for row in filtered_rows
+        }
+
+        for payload in keyword_pool.values():
+            if payload.get("is_noise"):
+                continue
+            normalized = normalize_keyword(str(payload.get("keyword") or ""))
+            payload["is_valid"] = normalized in allowed_normalized
+
+        for row in filtered_rows:
+            keyword = str(row.get("keyword") or "").strip()
+            if not keyword or keyword not in keyword_pool:
+                continue
+            keyword_pool[keyword].update(row)
+            keyword_pool[keyword]["is_valid"] = True
+
+        if stats.get("enabled"):
+            log_line(
+                "discovery_post_filter: "
+                f"in={stats.get('input_count')} dedupe={stats.get('after_dedupe')} "
+                f"group_cap={stats.get('after_group_cap')} out={stats.get('output_count')} "
+                f"budget_trim={stats.get('budget_trimmed')}"
+            )
+        return stats
 
     @staticmethod
     def _build_top_keyword_rows(keyword_pool: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
