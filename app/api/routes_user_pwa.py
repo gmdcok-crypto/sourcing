@@ -737,21 +737,54 @@ DRAG_IMAGE_HELPER_HTML = """
       margin-top: 10px;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      gap: 6px;
+      align-items: stretch;
+      gap: 10px;
+      width: 100%;
     }
     .drag-handle-wrap[hidden] { display: none !important; }
+    .method-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      padding: 12px;
+    }
+    .method-card.recommended {
+      border-color: #22a06b;
+      background: var(--green-soft);
+    }
+    .method-badge {
+      display: inline-block;
+      margin-bottom: 8px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--green);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .method-title {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .method-desc {
+      margin: 0 0 10px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
     .drag-handle {
       display: inline-flex;
       align-items: center;
       gap: 10px;
       padding: 8px 12px 8px 8px;
       border-radius: 999px;
-      border: 2px solid var(--green);
-      background: var(--green-soft);
+      border: 2px solid #94a3b8;
+      background: #f8fafc;
       cursor: grab;
       user-select: none;
-      box-shadow: 0 8px 18px rgba(34, 160, 107, 0.18);
+      width: fit-content;
     }
     .drag-handle:active { cursor: grabbing; }
     .drag-handle-thumb {
@@ -760,21 +793,27 @@ DRAG_IMAGE_HELPER_HTML = """
       border-radius: 10px;
       background: #fff;
       object-fit: contain;
-      border: 1px solid #bbf7d0;
+      border: 1px solid #cbd5e1;
       flex: 0 0 auto;
+      cursor: grab;
     }
     .drag-handle-label {
-      font-size: 12px;
-      font-weight: 800;
-      color: #166534;
+      font-size: 11px;
+      font-weight: 700;
+      color: #475569;
       white-space: nowrap;
     }
     .drop-warning {
       font-size: 10px;
       line-height: 1.45;
       color: #b45309;
-      text-align: center;
-      max-width: 280px;
+      text-align: left;
+    }
+    .status-line {
+      min-height: 16px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #166534;
     }
     .loading {
       color: var(--muted);
@@ -873,23 +912,37 @@ DRAG_IMAGE_HELPER_HTML = """
         <span class="arrow-out">→</span>
         <div class="loading" id="loading">이미지 준비 중…</div>
         <img id="preview-image" alt="상품 미리보기" draggable="false" hidden />
-        <div class="preview-note" id="preview-note" hidden>큰 이미지는 미리보기만 · 아래 초록 칩만 드래그</div>
+        <div class="preview-note" id="preview-note" hidden>미리보기 · 아래 ①②③ 방법 중 선택</div>
       </div>
       <div class="drag-handle-wrap" id="drag-handle-wrap" hidden>
-        <div class="drag-handle" id="drag-handle" draggable="true">
-          <img class="drag-handle-thumb" id="drag-thumb" alt="" draggable="false" />
-          <span class="drag-handle-label">1688 업로드 칸으로 드래그 →</span>
+        <div class="method-card recommended">
+          <span class="method-badge">추천</span>
+          <p class="method-title">① 이미지 저장 → 1688 업로드</p>
+          <p class="method-desc">저장 후 다운로드 폴더에서 1688 「上传图片」 칸으로 드래그하면 금지 표시 없이 됩니다.</p>
+          <a class="btn btn-primary" id="download-link" href="#" download hidden>이미지 저장</a>
         </div>
-        <p class="drop-warning">⚠ 1688 「上传图片」 점선 칸에만 드롭. 빈 곳에 놓으면 화면을 덮을 수 있습니다.</p>
+        <div class="method-card">
+          <p class="method-title">② 클립보드 복사 → 1688 붙여넣기</p>
+          <p class="method-desc">1688 업로드 칸을 클릭한 뒤 Ctrl+V 로 붙여넣기.</p>
+          <button class="btn" type="button" id="copy-clipboard">클립보드 복사</button>
+        </div>
+        <div class="method-card">
+          <p class="method-title">③ 썸네일 드래그 (브라우저마다 다름)</p>
+          <p class="method-desc">탭 간 드래그는 1688에서 🚫 금지 표시가 날 수 있습니다.</p>
+          <div class="drag-handle" id="drag-handle">
+            <img class="drag-handle-thumb" id="drag-thumb" alt="드래그 썸네일" draggable="true" />
+            <span class="drag-handle-label">썸네일 드래그 시도</span>
+          </div>
+        </div>
+        <p class="drop-warning">🚫 금지 표시 = 1688이 브라우저 탭 간 드롭을 거부한 것입니다. ①번(저장 후 드래그)을 사용하세요.</p>
+        <div class="status-line" id="status-line"></div>
       </div>
       <ol class="popup-steps">
-        <li>이 창을 1688 왼쪽에 붙여 두세요.</li>
-        <li><strong>초록 칩</strong>만 1688 업로드 칸으로 드래그.</li>
-        <li>안 되면 「저장」 후 업로드.</li>
+        <li>1688 탭과 이 창을 나란히 둡니다.</li>
+        <li><strong>① 이미지 저장</strong> 후 폴더에서 1688으로 드래그.</li>
+        <li>또는 <strong>② 복사 → Ctrl+V</strong>.</li>
       </ol>
-      <div class="footer-actions">
-        <a class="btn" id="download-link" href="#" download hidden>이미지 저장</a>
-      </div>
+      <div class="footer-actions"></div>
     </section>
 
     <aside class="right-panel">
@@ -898,7 +951,7 @@ DRAG_IMAGE_HELPER_HTML = """
         <ol class="steps">
           <li><strong>1688 탭</strong>을 메인 화면으로 둡니다.</li>
           <li>이 <strong>소싱 도우미 탭</strong>을 1688 <strong>왼쪽</strong>에 붙입니다.</li>
-          <li><strong>초록 칩</strong>만 1688 업로드 칸으로 드래그합니다.</li>
+          <li><strong>① 저장 후 드래그</strong> 또는 <strong>② Ctrl+V</strong>를 사용합니다.</li>
         </ol>
         <div class="layout-demo">
           <div class="demo-box active">이 창<br/>이미지</div>
@@ -925,16 +978,35 @@ DRAG_IMAGE_HELPER_HTML = """
       window.open("https://s.1688.com/youyuan/index.htm", "_blank", "noopener,noreferrer");
     });
 
-    function setTinyDragImage(event) {
-      const ghost = document.createElement("div");
-      ghost.style.width = "1px";
-      ghost.style.height = "1px";
-      ghost.style.opacity = "0";
-      ghost.style.position = "fixed";
-      ghost.style.top = "-1000px";
-      document.body.appendChild(ghost);
-      event.dataTransfer.setDragImage(ghost, 0, 0);
-      window.setTimeout(() => ghost.remove(), 0);
+    function setSmallDragImage(event, img) {
+      const size = 48;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx || !img.naturalWidth) return;
+      const ratio = Math.min(size / img.naturalWidth, size / img.naturalHeight);
+      const width = img.naturalWidth * ratio;
+      const height = img.naturalHeight * ratio;
+      ctx.drawImage(img, (size - width) / 2, (size - height) / 2, width, height);
+      event.dataTransfer.setDragImage(canvas, size / 2, size / 2);
+    }
+
+    async function blobToPng(blob) {
+      if (blob.type === "image/png") return blob;
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas unavailable");
+      ctx.drawImage(bitmap, 0, 0);
+      return new Promise((resolve, reject) => {
+        canvas.toBlob((pngBlob) => {
+          if (pngBlob) resolve(pngBlob);
+          else reject(new Error("png convert failed"));
+        }, "image/png");
+      });
     }
 
     async function boot() {
@@ -944,18 +1016,16 @@ DRAG_IMAGE_HELPER_HTML = """
       const downloadLink = document.getElementById("download-link");
       const dragZone = document.getElementById("drag-zone");
       const dragHandleWrap = document.getElementById("drag-handle-wrap");
-      const dragHandle = document.getElementById("drag-handle");
       const dragThumb = document.getElementById("drag-thumb");
-      let dragFile = null;
+      const copyButton = document.getElementById("copy-clipboard");
+      const statusLine = document.getElementById("status-line");
+      let imageBlob = null;
 
       try {
         const response = await fetch(PROXY_URL);
         if (!response.ok) throw new Error("이미지 로드 실패");
-        const blob = await response.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        dragFile = new File([blob], "__FILENAME__", {
-          type: blob.type || "image/jpeg",
-        });
+        imageBlob = await response.blob();
+        const objectUrl = URL.createObjectURL(imageBlob);
         preview.src = objectUrl;
         preview.onload = () => {
           preview.hidden = false;
@@ -967,19 +1037,34 @@ DRAG_IMAGE_HELPER_HTML = """
           downloadLink.download = "__FILENAME__";
           downloadLink.hidden = false;
         };
-        dragHandle.addEventListener("dragstart", (event) => {
-          if (!event.dataTransfer || !dragFile) return;
+        dragThumb.addEventListener("dragstart", (event) => {
+          if (!event.dataTransfer) return;
+          event.stopPropagation();
           event.dataTransfer.effectAllowed = "copy";
-          event.dataTransfer.clearData();
-          event.dataTransfer.items.clear();
-          event.dataTransfer.items.add(dragFile);
-          setTinyDragImage(event);
-          dragZone.style.borderColor = "#15803d";
-          dragHandle.style.opacity = "0.72";
+          setSmallDragImage(event, dragThumb);
+          dragZone.style.borderColor = "#64748b";
+          statusLine.textContent = "썸네일 드래그 중… 금지 표시면 ① 저장 방식을 사용하세요.";
         });
-        dragHandle.addEventListener("dragend", () => {
+        dragThumb.addEventListener("dragend", () => {
           dragZone.style.borderColor = "";
-          dragHandle.style.opacity = "1";
+        });
+        copyButton.addEventListener("click", async () => {
+          if (!imageBlob || !navigator.clipboard || !window.ClipboardItem) {
+            statusLine.textContent = "클립보드 복사를 지원하지 않습니다. ① 저장 방식을 사용하세요.";
+            return;
+          }
+          try {
+            const pngBlob = await blobToPng(imageBlob);
+            await navigator.clipboard.write([
+              new ClipboardItem({ "image/png": pngBlob }),
+            ]);
+            statusLine.textContent = "복사됨. 1688 업로드 칸 클릭 후 Ctrl+V";
+          } catch (error) {
+            statusLine.textContent = "복사 실패. ① 이미지 저장 방식을 사용하세요.";
+          }
+        });
+        downloadLink.addEventListener("click", () => {
+          statusLine.textContent = "저장 후 다운로드 폴더에서 1688 업로드 칸으로 드래그하세요.";
         });
       } catch (error) {
         loading.textContent = error instanceof Error ? error.message : "이미지 준비 실패";
