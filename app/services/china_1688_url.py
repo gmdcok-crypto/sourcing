@@ -30,29 +30,39 @@ class China1688UrlResponse:
 class China1688UrlService:
     _session: Optional[object] = None
     _session_ws: str = ""
+    _session_country: str = ""
     _lock = asyncio.Lock()
     _request_count = 0
 
     @classmethod
-    def _resolve_ws_endpoint(cls) -> Tuple[str, str]:
+    def _browser_country(cls) -> str:
         settings = get_settings()
-        country = (settings.china_1688_browser_country or "KR").strip().upper()
+        return (settings.china_1688_browser_country or "KR").strip().upper()
+
+    @classmethod
+    def _ws_candidates(cls) -> list[Tuple[str, str]]:
+        settings = get_settings()
         kr_ws = (settings.brightdata_browser_ws or "").strip()
         cn_ws = (settings.brightdata_browser_ws_1688 or "").strip()
+        country = cls._browser_country()
 
         if country == "CN":
-            ws = cn_ws or kr_ws
-            label = "CN" if cn_ws else ("KR" if kr_ws else country)
+            ordered = [("CN", cn_ws), ("KR", kr_ws)]
         else:
-            ws = kr_ws or cn_ws
-            label = "KR" if kr_ws else ("CN" if cn_ws else country)
+            ordered = [("KR", kr_ws), ("CN", cn_ws)]
 
-        return ws, label
+        seen: set[str] = set()
+        candidates: list[Tuple[str, str]] = []
+        for label, ws in ordered:
+            if not ws or ws in seen:
+                continue
+            seen.add(ws)
+            candidates.append((label, ws))
+        return candidates
 
     @classmethod
     def is_configured(cls) -> bool:
-        ws, _ = cls._resolve_ws_endpoint()
-        return bool(ws)
+        return bool(cls._ws_candidates())
 
     @classmethod
     async def shutdown(cls) -> None:
@@ -60,37 +70,51 @@ class China1688UrlService:
             session = cls._session
             cls._session = None
             cls._session_ws = ""
+            cls._session_country = ""
             cls._request_count = 0
         if session is not None:
             await session.close()
 
     @classmethod
-    async def _get_session(cls):
+    async def _open_session(cls, ws: str, country: str):
         _ensure_local_crawler_path()
         from services.alibaba_1688 import Warm1688UrlSession
 
         settings = get_settings()
-        ws, country = cls._resolve_ws_endpoint()
-        if not ws:
-            raise RuntimeError(
-                "Bright Data browser WS is not configured "
-                "(set BRIGHTDATA_BROWSER_WS for KR or BRIGHTDATA_BROWSER_WS_1688 for CN)"
-            )
+        session = Warm1688UrlSession(
+            ws_endpoint=ws,
+            navigation_timeout_ms=int(settings.china_1688_navigation_timeout_ms or 120_000),
+        )
+        await session.open()
+        return session
 
+    @classmethod
+    async def _get_session(cls):
         async with cls._lock:
-            if cls._session is None or cls._session_ws != ws:
-                if cls._session is not None:
-                    await cls._session.close()
-                    cls._session = None
-                    cls._request_count = 0
-                session = Warm1688UrlSession(
-                    ws_endpoint=ws,
-                    navigation_timeout_ms=int(settings.china_1688_navigation_timeout_ms or 120_000),
-                )
-                await session.open()
+            if cls._session is not None:
+                return cls._session, cls._session_country
+
+        last_error: Optional[Exception] = None
+        for country, ws in cls._ws_candidates():
+            try:
+                session = await cls._open_session(ws, country)
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            async with cls._lock:
                 cls._session = session
                 cls._session_ws = ws
-            return cls._session, country
+                cls._session_country = country
+                cls._request_count = 0
+            return session, country
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(
+            "Bright Data browser WS is not configured "
+            "(set BRIGHTDATA_BROWSER_WS for KR or BRIGHTDATA_BROWSER_WS_1688 for CN)"
+        )
 
     @classmethod
     async def generate_url(cls, image_url: str) -> China1688UrlResponse:
@@ -122,6 +146,7 @@ class China1688UrlService:
                         pass
                     cls._session = None
                     cls._session_ws = ""
+                    cls._session_country = ""
             return China1688UrlResponse(
                 status="NO_MATCH",
                 error=f"{type(exc).__name__}: {exc}",
