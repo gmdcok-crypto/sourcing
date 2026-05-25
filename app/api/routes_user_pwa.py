@@ -721,20 +721,60 @@ DRAG_IMAGE_HELPER_HTML = """
     body.mode-panel .arrow-out { display: none; }
     img {
       max-width: 100%;
-      max-height: 220px;
+      max-height: 200px;
       object-fit: contain;
+      user-select: none;
+      pointer-events: none;
+    }
+    body.mode-panel img { max-height: 240px; }
+    .preview-note {
+      margin-top: 8px;
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .drag-handle-wrap {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .drag-handle-wrap[hidden] { display: none !important; }
+    .drag-handle {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px 8px 8px;
+      border-radius: 999px;
+      border: 2px solid var(--green);
+      background: var(--green-soft);
       cursor: grab;
       user-select: none;
+      box-shadow: 0 8px 18px rgba(34, 160, 107, 0.18);
     }
-    body.mode-panel img { max-height: 280px; }
-    img:active { cursor: grabbing; }
-    .hint {
-      margin-top: 10px;
-      font-size: 11px;
-      font-weight: 700;
+    .drag-handle:active { cursor: grabbing; }
+    .drag-handle-thumb {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: #fff;
+      object-fit: contain;
+      border: 1px solid #bbf7d0;
+      flex: 0 0 auto;
+    }
+    .drag-handle-label {
+      font-size: 12px;
+      font-weight: 800;
       color: #166534;
+      white-space: nowrap;
+    }
+    .drop-warning {
+      font-size: 10px;
+      line-height: 1.45;
+      color: #b45309;
       text-align: center;
-      line-height: 1.5;
+      max-width: 280px;
     }
     .loading {
       color: var(--muted);
@@ -829,15 +869,22 @@ DRAG_IMAGE_HELPER_HTML = """
     <section class="left-panel">
       <span class="chip">쿠팡 1위 이미지</span>
       <div class="drag-zone" id="drag-zone">
-        <span class="drag-badge">DRAG</span>
+        <span class="drag-badge">PREVIEW</span>
         <span class="arrow-out">→</span>
         <div class="loading" id="loading">이미지 준비 중…</div>
-        <img id="drag-image" alt="상품 이미지" draggable="false" hidden />
-        <div class="hint" id="hint" hidden>1688 「上传图片 / 以图搜图」 점선 영역에 드롭</div>
+        <img id="preview-image" alt="상품 미리보기" draggable="false" hidden />
+        <div class="preview-note" id="preview-note" hidden>큰 이미지는 미리보기만 · 아래 초록 칩만 드래그</div>
+      </div>
+      <div class="drag-handle-wrap" id="drag-handle-wrap" hidden>
+        <div class="drag-handle" id="drag-handle" draggable="true">
+          <img class="drag-handle-thumb" id="drag-thumb" alt="" draggable="false" />
+          <span class="drag-handle-label">1688 업로드 칸으로 드래그 →</span>
+        </div>
+        <p class="drop-warning">⚠ 1688 「上传图片」 점선 칸에만 드롭. 빈 곳에 놓으면 화면을 덮을 수 있습니다.</p>
       </div>
       <ol class="popup-steps">
         <li>이 창을 1688 왼쪽에 붙여 두세요.</li>
-        <li>아래 이미지를 1688 업로드 칸으로 드래그.</li>
+        <li><strong>초록 칩</strong>만 1688 업로드 칸으로 드래그.</li>
         <li>안 되면 「저장」 후 업로드.</li>
       </ol>
       <div class="footer-actions">
@@ -851,7 +898,7 @@ DRAG_IMAGE_HELPER_HTML = """
         <ol class="steps">
           <li><strong>1688 탭</strong>을 메인 화면으로 둡니다.</li>
           <li>이 <strong>소싱 도우미 탭</strong>을 1688 <strong>왼쪽</strong>에 붙입니다.</li>
-          <li>왼쪽 이미지를 1688 업로드 칸으로 드래그합니다.</li>
+          <li><strong>초록 칩</strong>만 1688 업로드 칸으로 드래그합니다.</li>
         </ol>
         <div class="layout-demo">
           <div class="demo-box active">이 창<br/>이미지</div>
@@ -872,60 +919,68 @@ DRAG_IMAGE_HELPER_HTML = """
   <script>
     const PROXY_URL = "__PROXY_URL__";
 
-    function setSmallDragImage(event, img) {
-      const size = 84;
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext("2d");
-      if (!ctx || !img.naturalWidth) return;
-      const ratio = Math.min(size / img.naturalWidth, size / img.naturalHeight);
-      const width = img.naturalWidth * ratio;
-      const height = img.naturalHeight * ratio;
-      ctx.drawImage(img, (size - width) / 2, (size - height) / 2, width, height);
-      event.dataTransfer.setDragImage(canvas, size / 2, size / 2);
-    }
-
     document.getElementById("close-window").addEventListener("click", () => window.close());
     document.getElementById("open-1688").addEventListener("click", (event) => {
       event.preventDefault();
       window.open("https://s.1688.com/youyuan/index.htm", "_blank", "noopener,noreferrer");
     });
 
+    function setTinyDragImage(event) {
+      const ghost = document.createElement("div");
+      ghost.style.width = "1px";
+      ghost.style.height = "1px";
+      ghost.style.opacity = "0";
+      ghost.style.position = "fixed";
+      ghost.style.top = "-1000px";
+      document.body.appendChild(ghost);
+      event.dataTransfer.setDragImage(ghost, 0, 0);
+      window.setTimeout(() => ghost.remove(), 0);
+    }
+
     async function boot() {
-      const img = document.getElementById("drag-image");
+      const preview = document.getElementById("preview-image");
       const loading = document.getElementById("loading");
-      const hint = document.getElementById("hint");
+      const previewNote = document.getElementById("preview-note");
       const downloadLink = document.getElementById("download-link");
       const dragZone = document.getElementById("drag-zone");
+      const dragHandleWrap = document.getElementById("drag-handle-wrap");
+      const dragHandle = document.getElementById("drag-handle");
+      const dragThumb = document.getElementById("drag-thumb");
+      let dragFile = null;
 
       try {
         const response = await fetch(PROXY_URL);
         if (!response.ok) throw new Error("이미지 로드 실패");
         const blob = await response.blob();
         const objectUrl = URL.createObjectURL(blob);
-        img.src = objectUrl;
-        img.onload = () => {
-          img.hidden = false;
-          img.draggable = true;
+        dragFile = new File([blob], "__FILENAME__", {
+          type: blob.type || "image/jpeg",
+        });
+        preview.src = objectUrl;
+        preview.onload = () => {
+          preview.hidden = false;
+          previewNote.hidden = false;
+          dragThumb.src = objectUrl;
+          dragHandleWrap.hidden = false;
           loading.hidden = true;
-          hint.hidden = false;
           downloadLink.href = objectUrl;
           downloadLink.download = "__FILENAME__";
           downloadLink.hidden = false;
         };
-        const onDragStart = (event) => {
-          if (!event.dataTransfer) return;
+        dragHandle.addEventListener("dragstart", (event) => {
+          if (!event.dataTransfer || !dragFile) return;
           event.dataTransfer.effectAllowed = "copy";
-          event.dataTransfer.setData("text/plain", "coupang-product-image");
-          setSmallDragImage(event, img);
+          event.dataTransfer.clearData();
+          event.dataTransfer.items.clear();
+          event.dataTransfer.items.add(dragFile);
+          setTinyDragImage(event);
           dragZone.style.borderColor = "#15803d";
-        };
-        const onDragEnd = () => {
+          dragHandle.style.opacity = "0.72";
+        });
+        dragHandle.addEventListener("dragend", () => {
           dragZone.style.borderColor = "";
-        };
-        img.addEventListener("dragstart", onDragStart);
-        img.addEventListener("dragend", onDragEnd);
+          dragHandle.style.opacity = "1";
+        });
       } catch (error) {
         loading.textContent = error instanceof Error ? error.message : "이미지 준비 실패";
       }
