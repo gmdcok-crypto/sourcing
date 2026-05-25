@@ -32,6 +32,7 @@ class China1688UrlService:
     _session_ws: str = ""
     _session_country: str = ""
     _lock = asyncio.Lock()
+    _generate_lock = asyncio.Lock()
     _request_count = 0
 
     @classmethod
@@ -65,7 +66,7 @@ class China1688UrlService:
         return bool(cls._ws_candidates())
 
     @classmethod
-    async def shutdown(cls) -> None:
+    async def _reset_session(cls) -> None:
         async with cls._lock:
             session = cls._session
             cls._session = None
@@ -73,7 +74,14 @@ class China1688UrlService:
             cls._session_country = ""
             cls._request_count = 0
         if session is not None:
-            await session.close()
+            try:
+                await session.close()
+            except Exception:
+                pass
+
+    @classmethod
+    async def shutdown(cls) -> None:
+        await cls._reset_session()
 
     @classmethod
     async def _open_session(cls, ws: str, country: str):
@@ -117,40 +125,15 @@ class China1688UrlService:
         )
 
     @classmethod
-    async def generate_url(cls, image_url: str) -> China1688UrlResponse:
-        image_url = str(image_url or "").strip()
-        if not image_url:
-            return China1688UrlResponse(status="NO_IMAGE", error="empty image_url")
-
-        if not cls.is_configured():
-            return China1688UrlResponse(
-                status="NO_MATCH",
-                error="Bright Data browser WS is not configured",
-            )
-
-        try:
-            session, country = await cls._get_session()
-            cls._request_count += 1
-            result = await session.generate_url(
-                image_url,
-                reuse_home=True,
-                use_cache=False,
-                fast=True,
-            )
-        except Exception as exc:
-            async with cls._lock:
-                if cls._session is not None:
-                    try:
-                        await cls._session.close()
-                    except Exception:
-                        pass
-                    cls._session = None
-                    cls._session_ws = ""
-                    cls._session_country = ""
-            return China1688UrlResponse(
-                status="NO_MATCH",
-                error=f"{type(exc).__name__}: {exc}",
-            )
+    async def _generate_once(cls, image_url: str) -> China1688UrlResponse:
+        session, country = await cls._get_session()
+        cls._request_count += 1
+        result = await session.generate_url(
+            image_url,
+            reuse_home=True,
+            use_cache=False,
+            fast=True,
+        )
 
         fetch_source = str(result.fetch_source or "")
         if country and fetch_source:
@@ -164,3 +147,43 @@ class China1688UrlService:
             fetch_source=fetch_source,
             browser_country=country,
         )
+
+    @classmethod
+    async def generate_url(cls, image_url: str) -> China1688UrlResponse:
+        image_url = str(image_url or "").strip()
+        if not image_url:
+            return China1688UrlResponse(status="NO_IMAGE", error="empty image_url")
+
+        if not cls.is_configured():
+            return China1688UrlResponse(
+                status="NO_MATCH",
+                error="Bright Data browser WS is not configured",
+            )
+
+        async with cls._generate_lock:
+            last_result: Optional[China1688UrlResponse] = None
+            for attempt in range(2):
+                try:
+                    result = await cls._generate_once(image_url)
+                except Exception as exc:
+                    await cls._reset_session()
+                    if attempt == 0:
+                        continue
+                    return China1688UrlResponse(
+                        status="NO_MATCH",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+
+                if result.status == "URL_OK" and result.search_url:
+                    return result
+
+                last_result = result
+                if attempt == 0:
+                    await cls._reset_session()
+                    continue
+                break
+
+            return last_result or China1688UrlResponse(
+                status="NO_MATCH",
+                error="1688 URL generation failed",
+            )

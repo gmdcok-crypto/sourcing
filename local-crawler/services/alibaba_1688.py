@@ -407,6 +407,17 @@ async def _parse_image_search_page(
     )
 
 
+async def _extract_image_id_from_page(page: Page) -> Optional[str]:
+    try:
+        image_id = _extract_image_id_from_text(page.url)
+        if image_id:
+            return image_id
+        html = await page.content()
+        return _extract_image_id_from_text(html[:80000])
+    except Exception:
+        return None
+
+
 async def _capture_image_id_from_response(response: Any, *, upload_started: bool) -> Optional[str]:
     if not upload_started:
         return None
@@ -418,6 +429,10 @@ async def _capture_image_id_from_response(response: Any, *, upload_started: bool
             "imageSearchOfferResultViewService",
             "wirelessrecommend.recommend",
             "mtop.relationrecommend",
+            "mtop.alibaba",
+            "imageSearch",
+            "ImageUpload",
+            "searchImage",
         )
     ):
         return None
@@ -549,14 +564,17 @@ async def _upload_image_and_capture_id(
                 "buffer": image_bytes,
             }
         )
-        upload_ready_timeout = min(8000 if fast else 15000, navigation_timeout_ms)
+        upload_ready_timeout = min(15000 if fast else 15000, navigation_timeout_ms)
         await _wait_for_home_upload_ready(page, timeout_ms=upload_ready_timeout, fast=fast)
 
         deadline = time.monotonic() + image_id_wait_sec
         while time.monotonic() < deadline and not captured_image_ids:
             await asyncio.sleep(poll_sec)
 
-        return (captured_image_ids[-1] if captured_image_ids else None, page.url)
+        image_id = captured_image_ids[-1] if captured_image_ids else None
+        if not image_id:
+            image_id = await _extract_image_id_from_page(page)
+        return (image_id, page.url)
     finally:
         page.remove_listener("response", _on_response)
 
@@ -602,34 +620,51 @@ async def search_1688_image_search_url_only(
             fetch_source=fetch_source,
         )
 
-    home_sleep = 0.2 if fast else 0.8
-    image_id_wait = 8.0 if fast else 10.0
+    home_sleep = 0.4 if fast else 0.8
+    image_id_wait = 18.0 if fast else 12.0
 
-    try:
-        image_id, page_url = await _upload_image_and_capture_id(
-            page,
-            image_bytes,
-            navigation_timeout_ms=navigation_timeout_ms,
-            home_sleep_sec=home_sleep,
-            image_id_wait_sec=image_id_wait,
-            file_input_timeout_ms=120_000 if fetch_source.startswith("local_kr") else None,
-            reuse_home=reuse_home,
-            fast=fast,
-        )
-    except Exception as exc:
-        return ChinaSearchResult(
-            status="NO_MATCH",
-            image_url=image_url,
-            error=f"upload_{type(exc).__name__}: {exc}",
-            search_url=page.url,
-            fetch_source=fetch_source,
-        )
+    upload_attempts: list[tuple[bool, bool]] = [(reuse_home, fast)]
+    if reuse_home:
+        upload_attempts.append((False, fast))
+    upload_attempts.append((False, False))
+
+    image_id: Optional[str] = None
+    page_url = page.url
+    last_upload_error = ""
+
+    for attempt_index, (attempt_reuse_home, attempt_fast) in enumerate(upload_attempts):
+        try:
+            image_id, page_url = await _upload_image_and_capture_id(
+                page,
+                image_bytes,
+                navigation_timeout_ms=navigation_timeout_ms,
+                home_sleep_sec=home_sleep if attempt_fast else 0.8,
+                image_id_wait_sec=image_id_wait if attempt_fast else 12.0,
+                file_input_timeout_ms=120_000 if fetch_source.startswith("local_kr") else None,
+                reuse_home=attempt_reuse_home,
+                fast=attempt_fast,
+            )
+        except Exception as exc:
+            last_upload_error = f"upload_{type(exc).__name__}: {exc}"
+            if attempt_index + 1 < len(upload_attempts):
+                continue
+            return ChinaSearchResult(
+                status="NO_MATCH",
+                image_url=image_url,
+                error=last_upload_error,
+                search_url=page.url,
+                fetch_source=fetch_source,
+            )
+
+        if image_id:
+            break
+        last_upload_error = "image_id_not_captured_after_upload"
 
     if not image_id:
         return ChinaSearchResult(
             status="NO_MATCH",
             image_url=image_url,
-            error="image_id_not_captured_after_upload",
+            error=last_upload_error or "image_id_not_captured_after_upload",
             search_url=page_url,
             fetch_source=fetch_source,
         )
