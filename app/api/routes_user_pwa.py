@@ -422,12 +422,25 @@ USER_PWA_HTML = """
       bar.id = "guide-bar-1688";
       bar.className = "guide-bar-1688";
       bar.innerHTML = `
-        <span>1688 탭과 「1688 수동 소싱」 탭을 나란히 두세요. 이미지 저장 후 다운로드 폴더에서 1688 업로드 칸으로 드래그하면 됩니다.</span>
+        <span>1688 图搜는 <strong>로그인 필수</strong>입니다. 1688 탭에서 먼저 로그인(타오바오 계정 가능) → 이미지 저장 → 다운로드 폴더에서 업로드 칸으로 드래그하세요.</span>
         <button type="button" id="guide-bar-close">닫기</button>
       `;
       document.body.appendChild(bar);
       bar.querySelector("#guide-bar-close").addEventListener("click", () => bar.remove());
-      window.setTimeout(() => bar.remove(), 12000);
+      window.setTimeout(() => bar.remove(), 15000);
+    }
+
+    function showManualLoginToast() {
+      const existing = document.getElementById("toast-1688-manual");
+      if (existing) existing.remove();
+
+      const toast = document.createElement("div");
+      toast.id = "toast-1688-manual";
+      toast.className = "toast-1688";
+      toast.textContent =
+        "1688 탭에서 로그인이 필요할 수 있습니다. 「로그인후 가능합니다」가 뜨면 1688(또는 타오바오) 계정으로 로그인한 뒤 이미지를 업로드하세요.";
+      document.body.appendChild(toast);
+      window.setTimeout(() => toast.remove(), 10000);
     }
 
     function buildManualHelperUrl(imageUrl, keyword) {
@@ -449,6 +462,7 @@ USER_PWA_HTML = """
       window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
       window.open(buildManualHelperUrl(imageUrl, keyword), "_blank", "noopener,noreferrer");
       showManualGuideBar();
+      showManualLoginToast();
     }
 
     async function open1688Search(btn) {
@@ -606,28 +620,51 @@ DRAG_IMAGE_HELPER_HTML = """
       line-height: 1.55;
     }
     .loading { color: #64748b; font-size: 14px; }
+    .login-notice {
+      margin: 0 0 18px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+      font-size: 13px;
+      line-height: 1.6;
+      font-weight: 700;
+    }
+    .login-notice a {
+      color: #b91c1c;
+      text-decoration: underline;
+      font-weight: 800;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>__KEYWORD__</h1>
-      <p class="sub">Bright Data 없이 1688 图搜 — 이미지 저장 후 다운로드 폴더에서 1688으로 드래그합니다.</p>
+      <p class="sub">Bright Data 없이 1688 图搜 — 1688 로그인 후 이미지 저장 → 다운로드 폴더에서 업로드합니다.</p>
+      <div class="login-notice">
+        「로그인후 가능합니다」가 뜨면 <strong>1688(또는 타오바오) 계정 로그인</strong>이 필요합니다.
+        <a href="https://login.1688.com/?goto=https%3A%2F%2Fs.1688.com%2Fyouyuan%2Findex.htm" target="_blank" rel="noreferrer">1688 로그인</a>
+        후 다시 업로드하세요. 타오바오 계정으로도 로그인 가능합니다.
+      </div>
       <div class="preview">
         <div class="loading" id="loading">이미지 불러오는 중…</div>
         <img id="preview-image" alt="상품 미리보기" hidden />
       </div>
       <ol class="steps">
+        <li><strong>1688 탭</strong>에서 먼저 <strong>로그인</strong>합니다. (미로그인 시 「로그인후 가능합니다」)</li>
         <li><strong>① 이미지 저장</strong> 버튼을 눌러 PC에 저장합니다.</li>
-        <li><strong>1688 탭</strong>에서 「上传图片 / 以图搜图」 <strong>점선 업로드 칸</strong>을 찾습니다.</li>
+        <li>1688 「上传图片 / 以图搜图」 <strong>점선 업로드 칸</strong>을 찾습니다.</li>
         <li><strong>다운로드 폴더</strong>의 이미지 파일을 그 칸으로 <strong>드래그 앤 드롭</strong>합니다.</li>
       </ol>
       <div class="actions">
         <a class="btn btn-primary" id="download-link" href="#" download hidden>① 이미지 저장</a>
-        <a class="btn" href="https://s.1688.com/youyuan/index.htm" target="_blank" rel="noreferrer">1688 열기</a>
+        <a class="btn" href="https://login.1688.com/?goto=https%3A%2F%2Fs.1688.com%2Fyouyuan%2Findex.htm" target="_blank" rel="noreferrer">1688 로그인</a>
+        <a class="btn" href="https://s.1688.com/youyuan/index.htm" target="_blank" rel="noreferrer">图搜 열기</a>
       </div>
-      <div class="status" id="status-line">저장 후 다운로드 폴더(보통 「다운로드」)에서 파일을 1688으로 드래그하세요.</div>
-      <div class="note">Win + ← / → 로 1688 탭과 이 탭을 나란히 두면 편합니다. 슬라이더(滑动验证)가 나오면 먼저 통과하세요.</div>
+      <div class="status" id="status-line">1688 로그인 → 이미지 저장 → 다운로드 폴더에서 1688 업로드 칸으로 드래그하세요.</div>
+      <div class="note">Win + ← / → 로 1688 탭과 이 탭을 나란히 두면 편합니다. 슬라이더(滑动验证)가 나오면 먼저 통과하세요. 로그인 없이 图搜는 1688 정책상 불가합니다.</div>
     </div>
   </div>
   <script>
