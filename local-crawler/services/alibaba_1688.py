@@ -199,13 +199,18 @@ def _is_image_search_url(url: str) -> bool:
     return bool(_IMAGE_SEARCH_URL_RE.search(str(url or "")))
 
 
-def _build_image_search_url(image_id: str) -> str:
+def _build_image_search_url(image_id: str, *, source_image_url: str = "") -> str:
     image_id = str(image_id or "").strip()
-    return (
-        "https://s.1688.com/youyuan/index.htm"
-        f"?tab=imageSearch&imageId={image_id}&imageIdList={image_id}"
-        "&spm=a260k.home2025.imagesearch.upload"
-    )
+    params = [
+        "tab=imageSearch",
+        f"imageId={image_id}",
+        f"imageIdList={image_id}",
+        "spm=a260k.home2025.imagesearch.upload",
+    ]
+    source_image_url = str(source_image_url or "").strip()
+    if source_image_url:
+        params.append(f"imageAddress={quote(source_image_url, safe='')}")
+    return "https://s.1688.com/youyuan/index.htm?" + "&".join(params)
 
 
 def _extract_image_id_from_text(text: str) -> Optional[str]:
@@ -573,11 +578,18 @@ async def search_1688_image_search_url_only(
     if use_cache:
         cached_url = _cache_get(image_url)
         if cached_url:
+            image_id = _extract_image_id_from_text(cached_url) or ""
+            search_url = (
+                _build_image_search_url(image_id, source_image_url=image_url)
+                if image_id
+                else cached_url
+            )
             return ChinaSearchResult(
                 status="URL_OK",
                 image_url=image_url,
-                search_url=cached_url,
+                search_url=search_url,
                 fetch_source=f"{fetch_source}_cache",
+                image_id=image_id,
             )
 
     try:
@@ -622,7 +634,7 @@ async def search_1688_image_search_url_only(
             fetch_source=fetch_source,
         )
 
-    search_url = _build_image_search_url(image_id)
+    search_url = _build_image_search_url(image_id, source_image_url=image_url)
     if use_cache:
         _cache_set(image_url, search_url)
     return ChinaSearchResult(
@@ -668,7 +680,7 @@ async def _search_via_home_upload(
             fetch_source="browser_upload",
         )
 
-    target_url = _build_image_search_url(image_id)
+    target_url = _build_image_search_url(image_id, source_image_url=image_url)
     await page.goto(target_url, wait_until="domcontentloaded", timeout=navigation_timeout_ms)
     await asyncio.sleep(2)
 

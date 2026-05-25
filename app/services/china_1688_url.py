@@ -134,7 +134,7 @@ class China1688UrlService:
             result = await session.generate_url(
                 image_url,
                 reuse_home=True,
-                use_cache=True,
+                use_cache=False,
                 fast=True,
             )
         except Exception as exc:
