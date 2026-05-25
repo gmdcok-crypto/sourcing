@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.discovery_post_filter import apply_discovery_post_filter, dedupe_deepest_win
+from app.services.discovery_post_filter import (
+    apply_discovery_post_filter,
+    category_path_depth,
+    dedupe_deepest_win,
+)
 
 
 def _row(
@@ -28,6 +32,10 @@ def _row(
 
 
 class TestDiscoveryPostFilter(unittest.TestCase):
+    def test_category_path_depth_with_spaces(self) -> None:
+        self.assertEqual(category_path_depth("A > B > C"), 3)
+        self.assertEqual(category_path_depth("A>B"), 2)
+
     def test_deepest_win_keeps_deeper_cid(self) -> None:
         rows = [
             _row("dup", depth=2, rank=1, group="cid:1", order=0),

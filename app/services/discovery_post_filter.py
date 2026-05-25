@@ -6,6 +6,7 @@ STEP1 후보 — 노이즈 필터 이후 depth cap + enrich_budget.
 from __future__ import annotations
 
 import copy
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -44,11 +45,14 @@ def load_discovery_post_filter_config() -> Dict[str, Any]:
     return cfg
 
 
+_PATH_SEP_RE = re.compile(r"\s*>\s*")
+
+
 def category_path_depth(category_path: str) -> int:
     path = str(category_path or "").strip()
     if not path:
         return 0
-    return len([segment for segment in path.split(">") if str(segment).strip()])
+    return len([segment for segment in _PATH_SEP_RE.split(path) if str(segment).strip()])
 
 
 def depth_label_from_depth(depth: int, cfg: Optional[Dict[str, Any]] = None) -> str:
@@ -91,8 +95,13 @@ def _row_sort_key(row: Dict[str, Any]) -> Tuple[int, int, int]:
     )
 
 
-def _row_beats(candidate: Dict[str, Any], previous: Dict[str, Any]) -> bool:
+def keyword_row_beats(candidate: Dict[str, Any], previous: Dict[str, Any]) -> bool:
+    """deepest_win: 더 깊은 category_path 우선, 동일 depth면 datalab_rank."""
     return _row_sort_key(candidate) < _row_sort_key(previous)
+
+
+def _row_beats(candidate: Dict[str, Any], previous: Dict[str, Any]) -> bool:
+    return keyword_row_beats(candidate, previous)
 
 
 def dedupe_deepest_win(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -120,6 +129,8 @@ def apply_discovery_post_filter(
     config = cfg if cfg is not None else load_discovery_post_filter_config()
     stats: Dict[str, Any] = {
         "enabled": bool(config.get("enabled", True)),
+        "dedupe": str(config.get("dedupe") or "deepest_win"),
+        "by_depth": dict(config.get("by_depth") or {}),
         "input_count": len(rows),
         "after_dedupe": 0,
         "after_group_cap": 0,

@@ -11,7 +11,13 @@ import pandas as pd
 
 from app.services.db import get_mysql_connection
 from app.services.naver_datalab import NaverShoppingInsightService
-from app.services.discovery_post_filter import apply_discovery_post_filter, category_path_depth
+from app.services.discovery_post_filter import (
+    apply_discovery_post_filter,
+    category_path_depth,
+    depth_label_from_depth,
+    keyword_row_beats,
+    load_discovery_post_filter_config,
+)
 from app.services.keyword_noise import apply_step1_noise_flags, filter_noise, normalize_keyword
 from app.services.naver_api import NaverShoppingService
 from app.services.naver_searchad import NaverSearchAdService
@@ -509,6 +515,7 @@ class KeywordSourcingService:
                     noise_keyword_set = set(noise_keywords)
                     full_path = str(category.get("full_path") or category["category_name"] or "").strip()
                     cid_depth = category_path_depth(full_path)
+                    depth_label = depth_label_from_depth(cid_depth)
                     source_group = f"cid:{category['cid']}"
 
                     for row in top_keywords:
@@ -534,17 +541,16 @@ class KeywordSourcingService:
                             "source_group": source_group,
                             "source_group_order": index,
                             "cid_depth": cid_depth,
+                            "depth_label": depth_label,
                             "is_noise": is_noise,
                             "is_valid": not is_noise,
                             "source": "naver_shopping_insight",
                         }
                         existing = keyword_pool.get(keyword)
-                        if not existing or datalab_rank < int(
-                            existing.get("datalab_rank") or existing.get("rank") or 9999
-                        ):
+                        if not existing or keyword_row_beats(row_payload, existing):
                             keyword_pool[keyword] = row_payload
                         if not is_noise:
-                            post_filter_candidates.append(row_payload)
+                            post_filter_candidates.append(dict(row_payload))
 
                     state["success_count"] += 1
                     self._append_log(
@@ -566,6 +572,16 @@ class KeywordSourcingService:
                 if index < len(categories):
                     await asyncio.sleep(self.CATEGORY_DELAY_SECONDS)
 
+            post_filter_cfg = load_discovery_post_filter_config()
+            by_depth = post_filter_cfg.get("by_depth") or {}
+            self._append_log(
+                state,
+                "discovery_post_filter 설정: "
+                f"dedupe={post_filter_cfg.get('dedupe')} "
+                f"L1={by_depth.get('L1')} L2={by_depth.get('L2')} "
+                f"L3={by_depth.get('L3')} L4={by_depth.get('L4')} "
+                f"enrich_budget={post_filter_cfg.get('enrich_budget')}",
+            )
             post_filter_stats = self._apply_discovery_post_filter_to_pool(
                 keyword_pool=keyword_pool,
                 candidates=post_filter_candidates,
@@ -809,18 +825,29 @@ class KeywordSourcingService:
 
         for row in filtered_rows:
             keyword = str(row.get("keyword") or "").strip()
-            if not keyword or keyword not in keyword_pool:
+            if not keyword:
                 continue
-            keyword_pool[keyword].update(row)
+            if keyword not in keyword_pool:
+                keyword_pool[keyword] = dict(row)
+            else:
+                keyword_pool[keyword].update(row)
             keyword_pool[keyword]["is_valid"] = True
 
         if stats.get("enabled"):
             log_line(
                 "discovery_post_filter: "
-                f"in={stats.get('input_count')} dedupe={stats.get('after_dedupe')} "
+                f"dedupe={stats.get('dedupe')} "
+                f"in={stats.get('input_count')} deepest_win={stats.get('after_dedupe')} "
                 f"group_cap={stats.get('after_group_cap')} out={stats.get('output_count')} "
                 f"budget_trim={stats.get('budget_trimmed')}"
             )
+            for summary in stats.get("group_summaries") or []:
+                log_line(
+                    "  "
+                    f"{summary.get('source_group')} {summary.get('depth_label')}"
+                    f"(d={summary.get('cid_depth')}) "
+                    f"kept={summary.get('kept')}/{summary.get('cap')}"
+                )
         return stats
 
     @staticmethod
