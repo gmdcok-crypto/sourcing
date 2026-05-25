@@ -11,14 +11,7 @@ import pandas as pd
 
 from app.services.db import get_mysql_connection
 from app.services.naver_datalab import NaverShoppingInsightService
-from app.services.discovery_post_filter import (
-    apply_discovery_post_filter,
-    category_path_depth,
-    depth_label_from_depth,
-    keyword_row_beats,
-    load_discovery_post_filter_config,
-)
-from app.services.keyword_noise import apply_step1_noise_flags, filter_noise, normalize_keyword
+from app.services.keyword_noise import filter_noise
 from app.services.naver_api import NaverShoppingService
 from app.services.naver_searchad import NaverSearchAdService
 from app.services.naver_search_trend import NaverSearchTrendService
@@ -43,9 +36,8 @@ class KeywordSourcingService:
     _active_run_id: Optional[str] = None
     _active_task: Optional[asyncio.Task] = None
     CATEGORY_DELAY_SECONDS = 0.5
-    # CID당 상한은 discovery_post_filter(by_depth cap + enrich_budget)가 담당
+    VALID_KEYWORD_LIMIT = 100
     UNSOURCEABLE_PRODUCT_COUNT_MAX = 200
-    UNSOURCEABLE_PRODUCT_COUNT_GTE = 1_000_000
     UNSOURCEABLE_CTR_MIN = 9.9
     MONOPOLY_SUSPECT_PRODUCT_COUNT_MIN = 201
     MONOPOLY_SUSPECT_PRODUCT_COUNT_MAX = 1000
@@ -461,7 +453,6 @@ class KeywordSourcingService:
         state = self._runs[run_id]
         rows: List[Dict[str, Any]] = []
         keyword_pool: Dict[str, Dict[str, Any]] = {}
-        post_filter_candidates: List[Dict[str, Any]] = []
 
         try:
             categories = self._load_theme_categories(theme_id=theme_id)
@@ -512,22 +503,18 @@ class KeywordSourcingService:
 
                     raw_keyword_list = [row["keyword"] for row in top_keywords]
                     valid_keywords_all, noise_keywords = filter_noise(raw_keyword_list)
-                    noise_keyword_set = set(noise_keywords)
-                    full_path = str(category.get("full_path") or category["category_name"] or "").strip()
-                    cid_depth = category_path_depth(full_path)
-                    depth_label = depth_label_from_depth(cid_depth)
-                    source_group = f"cid:{category['cid']}"
+                    valid_keywords = valid_keywords_all[: self.VALID_KEYWORD_LIMIT]
+                    valid_keyword_set = set(valid_keywords)
+                    state["top100_count"] = int(state.get("top100_count") or 0) + len(valid_keywords)
 
                     for row in top_keywords:
                         keyword = row["keyword"]
-                        datalab_rank = int(row.get("rank") or 9999)
-                        is_noise = keyword in noise_keyword_set
+                        existing = keyword_pool.get(keyword)
                         row_payload = {
                             "run_id": run_id,
                             "collected_at": datetime.now(timezone.utc).isoformat(),
                             "keyword": keyword,
                             "rank": row.get("rank"),
-                            "datalab_rank": datalab_rank,
                             "ratio": row.get("ratio"),
                             "theme_id": category["theme_id"],
                             "theme_code": category["theme_code"],
@@ -535,28 +522,18 @@ class KeywordSourcingService:
                             "category_id": category["category_id"],
                             "cid": category["cid"],
                             "category_name": category["category_name"],
-                            "full_path": full_path,
-                            "source_path": full_path,
-                            "category_path": full_path,
-                            "source_group": source_group,
-                            "source_group_order": index,
-                            "cid_depth": cid_depth,
-                            "depth_label": depth_label,
-                            "is_noise": is_noise,
-                            "is_valid": not is_noise,
+                            "full_path": category["full_path"],
+                            "is_noise": keyword in noise_keywords,
+                            "is_valid": keyword in valid_keyword_set,
                             "source": "naver_shopping_insight",
                         }
-                        existing = keyword_pool.get(keyword)
-                        if not existing or keyword_row_beats(row_payload, existing):
+                        if not existing or (row_payload["rank"] or 999999) < (existing.get("rank") or 999999):
                             keyword_pool[keyword] = row_payload
-                        if not is_noise:
-                            post_filter_candidates.append(dict(row_payload))
 
                     state["success_count"] += 1
                     self._append_log(
                         state,
-                        f"[{index}/{len(categories)}] {category['category_name']} 완료 "
-                        f"(top150 {len(top_keywords)}건 / 노이즈제외 {len(valid_keywords_all)}건)",
+                        f"[{index}/{len(categories)}] {category['category_name']} 완료 (top150 {len(top_keywords)}건 / 유효키워드 {len(valid_keywords)}건)",
                     )
                 except Exception as error:  # noqa: BLE001
                     state["failure_count"] += 1
@@ -572,30 +549,7 @@ class KeywordSourcingService:
                 if index < len(categories):
                     await asyncio.sleep(self.CATEGORY_DELAY_SECONDS)
 
-            post_filter_cfg = load_discovery_post_filter_config()
-            by_depth = post_filter_cfg.get("by_depth") or {}
-            self._append_log(
-                state,
-                "discovery_post_filter 설정: "
-                f"dedupe={post_filter_cfg.get('dedupe')} "
-                f"L1={by_depth.get('L1')} L2={by_depth.get('L2')} "
-                f"L3={by_depth.get('L3')} L4={by_depth.get('L4')} "
-                f"enrich_budget={post_filter_cfg.get('enrich_budget')}",
-            )
-            post_filter_stats = self._apply_discovery_post_filter_to_pool(
-                keyword_pool=keyword_pool,
-                candidates=post_filter_candidates,
-                state=state,
-            )
-            state["post_filter_stats"] = post_filter_stats
-
             top_keywords = self._build_top_keyword_rows(keyword_pool)
-            safety_removed = apply_step1_noise_flags(top_keywords)
-            if safety_removed:
-                self._append_log(
-                    state,
-                    f"STEP1 노이즈 safety net: 추가 제외 {safety_removed}건",
-                )
             rows = [dict(row) for row in top_keywords]
             dataframe = pd.DataFrame(rows)
             valid_keywords = [row["keyword"] for row in top_keywords if row.get("is_valid")]
@@ -802,54 +756,6 @@ class KeywordSourcingService:
         )
         return saved_json_key, saved_parquet_key
 
-    def _apply_discovery_post_filter_to_pool(
-        self,
-        *,
-        keyword_pool: Dict[str, Dict[str, Any]],
-        candidates: List[Dict[str, Any]],
-        state: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        def log_line(message: str) -> None:
-            self._append_log(state, message)
-
-        filtered_rows, stats = apply_discovery_post_filter(candidates, log=log_line)
-        allowed_normalized = {
-            normalize_keyword(str(row.get("keyword") or "")) for row in filtered_rows
-        }
-
-        for payload in keyword_pool.values():
-            if payload.get("is_noise"):
-                continue
-            normalized = normalize_keyword(str(payload.get("keyword") or ""))
-            payload["is_valid"] = normalized in allowed_normalized
-
-        for row in filtered_rows:
-            keyword = str(row.get("keyword") or "").strip()
-            if not keyword:
-                continue
-            if keyword not in keyword_pool:
-                keyword_pool[keyword] = dict(row)
-            else:
-                keyword_pool[keyword].update(row)
-            keyword_pool[keyword]["is_valid"] = True
-
-        if stats.get("enabled"):
-            log_line(
-                "discovery_post_filter: "
-                f"dedupe={stats.get('dedupe')} "
-                f"in={stats.get('input_count')} deepest_win={stats.get('after_dedupe')} "
-                f"group_cap={stats.get('after_group_cap')} out={stats.get('output_count')} "
-                f"budget_trim={stats.get('budget_trimmed')}"
-            )
-            for summary in stats.get("group_summaries") or []:
-                log_line(
-                    "  "
-                    f"{summary.get('source_group')} {summary.get('depth_label')}"
-                    f"(d={summary.get('cid_depth')}) "
-                    f"kept={summary.get('kept')}/{summary.get('cap')}"
-                )
-        return stats
-
     @staticmethod
     def _build_top_keyword_rows(keyword_pool: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
         rows = list(keyword_pool.values())
@@ -936,9 +842,6 @@ class KeywordSourcingService:
 
         count = int(product_count or 0)
         if 1 <= count <= cls.UNSOURCEABLE_PRODUCT_COUNT_MAX:
-            return True
-
-        if count >= cls.UNSOURCEABLE_PRODUCT_COUNT_GTE:
             return True
 
         ctr = cls._parse_ctr(monthly_mobile_ctr)
