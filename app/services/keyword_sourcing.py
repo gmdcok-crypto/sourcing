@@ -11,7 +11,7 @@ import pandas as pd
 
 from app.services.db import get_mysql_connection
 from app.services.naver_datalab import NaverShoppingInsightService
-from app.services.keyword_noise import filter_noise
+from app.services.keyword_noise import apply_step1_noise_flags, filter_noise
 from app.services.naver_api import NaverShoppingService
 from app.services.naver_searchad import NaverSearchAdService
 from app.services.naver_search_trend import NaverSearchTrendService
@@ -38,6 +38,7 @@ class KeywordSourcingService:
     CATEGORY_DELAY_SECONDS = 0.5
     VALID_KEYWORD_LIMIT = 100
     UNSOURCEABLE_PRODUCT_COUNT_MAX = 200
+    UNSOURCEABLE_PRODUCT_COUNT_GTE = 1_000_000
     UNSOURCEABLE_CTR_MIN = 9.9
     MONOPOLY_SUSPECT_PRODUCT_COUNT_MIN = 201
     MONOPOLY_SUSPECT_PRODUCT_COUNT_MAX = 1000
@@ -550,6 +551,12 @@ class KeywordSourcingService:
                     await asyncio.sleep(self.CATEGORY_DELAY_SECONDS)
 
             top_keywords = self._build_top_keyword_rows(keyword_pool)
+            safety_removed = apply_step1_noise_flags(top_keywords)
+            if safety_removed:
+                self._append_log(
+                    state,
+                    f"STEP1 노이즈 safety net: 추가 제외 {safety_removed}건",
+                )
             rows = [dict(row) for row in top_keywords]
             dataframe = pd.DataFrame(rows)
             valid_keywords = [row["keyword"] for row in top_keywords if row.get("is_valid")]
@@ -842,6 +849,9 @@ class KeywordSourcingService:
 
         count = int(product_count or 0)
         if 1 <= count <= cls.UNSOURCEABLE_PRODUCT_COUNT_MAX:
+            return True
+
+        if count >= cls.UNSOURCEABLE_PRODUCT_COUNT_GTE:
             return True
 
         ctr = cls._parse_ctr(monthly_mobile_ctr)
