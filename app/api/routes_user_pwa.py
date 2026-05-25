@@ -1,8 +1,10 @@
 from html import escape
 from typing import Any, Dict
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+import httpx
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from app.services.china_1688_url import China1688UrlService
@@ -260,7 +262,8 @@ USER_PWA_HTML = """
     .actions {
       margin-top: 16px;
       display: flex;
-      gap: 10px;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .btn {
@@ -303,6 +306,118 @@ USER_PWA_HTML = """
 
     .btn-1688.is-loading {
       min-width: 132px;
+    }
+
+    .btn-1688-drag {
+      background: linear-gradient(135deg, #47c087, #7ddea8);
+      color: #082116;
+      box-shadow: 0 14px 28px rgba(71, 192, 135, 0.22);
+      min-width: 96px;
+    }
+
+    .drag-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 8, 16, 0.78);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      z-index: 30;
+    }
+
+    .drag-modal {
+      width: min(92vw, 720px);
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: linear-gradient(180deg, rgba(18, 26, 46, 0.98), rgba(10, 15, 28, 1));
+      box-shadow: 0 28px 70px rgba(0,0,0,0.55);
+      overflow: hidden;
+    }
+
+    .drag-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .drag-modal-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .drag-modal-close {
+      border: 0;
+      background: rgba(255,255,255,0.06);
+      color: #eef2ff;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    .drag-modal-body {
+      padding: 20px;
+    }
+
+    .drag-steps {
+      margin: 0 0 16px;
+      padding-left: 18px;
+      color: #dce4ff;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .drag-image-shell {
+      border: 2px dashed rgba(125, 222, 168, 0.55);
+      border-radius: 18px;
+      background: #ffffff;
+      padding: 18px;
+      text-align: center;
+    }
+
+    .drag-image-shell.is-ready {
+      cursor: grab;
+    }
+
+    .drag-image-shell.is-ready:active {
+      cursor: grabbing;
+    }
+
+    .drag-image-shell img {
+      max-width: 100%;
+      max-height: 360px;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .drag-image-hint {
+      margin-top: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #082116;
+    }
+
+    .drag-modal-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .drag-status {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
     }
 
     .toast-1688 {
@@ -359,6 +474,8 @@ USER_PWA_HTML = """
     <main id="app">__THEME_ROWS__</main>
   </div>
   <script>
+    const ALIBABA_1688_UPLOAD_URL = "https://s.1688.com/youyuan/index.htm";
+
     function show1688Hint() {
       const existing = document.getElementById("toast-1688");
       if (existing) existing.remove();
@@ -370,6 +487,117 @@ USER_PWA_HTML = """
         "1688 탭이 열렸습니다. 슬라이더(滑动验证) 인증이 나오면 직접 밀어주세요. 한국에서 열면 자주 나오며, 한 번 통과하면 같은 탭에서는 다시 안 나올 수 있습니다.";
       document.body.appendChild(toast);
       window.setTimeout(() => toast.remove(), 8000);
+    }
+
+    function closeDragModal() {
+      const modal = document.getElementById("drag-modal-backdrop");
+      if (modal) modal.remove();
+    }
+
+    function buildImageProxyUrl(imageUrl) {
+      return `/api/user/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+    }
+
+    async function prepareDragFile(imageUrl, keyword) {
+      const response = await fetch(buildImageProxyUrl(imageUrl));
+      if (!response.ok) {
+        throw new Error("이미지를 불러오지 못했습니다.");
+      }
+      const blob = await response.blob();
+      const extension = blob.type.includes("png") ? "png" : "jpg";
+      const safeKeyword = (keyword || "coupang").replace(/[^\w가-힣-]+/g, "_").slice(0, 40);
+      return new File([blob], `${safeKeyword}.${extension}`, {
+        type: blob.type || "image/jpeg",
+      });
+    }
+
+    async function showDragModal(imageUrl, keyword) {
+      closeDragModal();
+
+      const backdrop = document.createElement("div");
+      backdrop.id = "drag-modal-backdrop";
+      backdrop.className = "drag-modal-backdrop";
+      backdrop.innerHTML = `
+        <div class="drag-modal" role="dialog" aria-modal="true">
+          <div class="drag-modal-header">
+            <h2 class="drag-modal-title">1688 드래그 图搜 테스트</h2>
+            <button class="drag-modal-close" type="button" aria-label="닫기">×</button>
+          </div>
+          <div class="drag-modal-body">
+            <ol class="drag-steps">
+              <li>1688 탭을 열어 두세요.</li>
+              <li>아래 이미지를 1688 업로드 영역으로 드래그하세요.</li>
+              <li>슬라이더(滑动验证)가 나오면 직접 밀어주세요.</li>
+            </ol>
+            <div class="drag-image-shell" id="drag-image-shell">
+              <img id="drag-preview-image" alt="상품 이미지" />
+              <div class="drag-image-hint" id="drag-image-hint">이미지 준비 중…</div>
+            </div>
+            <div class="drag-modal-actions">
+              <button class="btn btn-1688-drag" type="button" id="drag-open-1688">1688 탭 다시 열기</button>
+              <button class="btn btn-secondary" type="button" id="drag-close-modal">닫기</button>
+            </div>
+            <div class="drag-status" id="drag-status">
+              PC Chrome/Edge에서 테스트하세요. 이미지는 PC에 저장되지 않고 1688로만 넘깁니다.
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(backdrop);
+
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) closeDragModal();
+      });
+      backdrop.querySelector(".drag-modal-close").addEventListener("click", closeDragModal);
+      backdrop.querySelector("#drag-close-modal").addEventListener("click", closeDragModal);
+      backdrop.querySelector("#drag-open-1688").addEventListener("click", () => {
+        window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
+      });
+
+      const shell = backdrop.querySelector("#drag-image-shell");
+      const preview = backdrop.querySelector("#drag-preview-image");
+      const hint = backdrop.querySelector("#drag-image-hint");
+      const status = backdrop.querySelector("#drag-status");
+
+      preview.src = buildImageProxyUrl(imageUrl);
+      preview.alt = keyword || "상품 이미지";
+
+      try {
+        const dragFile = await prepareDragFile(imageUrl, keyword);
+        shell.classList.add("is-ready");
+        shell.draggable = true;
+        hint.textContent = "이 이미지를 1688 업로드 칸으로 드래그하세요";
+
+        shell.addEventListener("dragstart", (event) => {
+          if (!event.dataTransfer) return;
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.items.clear();
+          event.dataTransfer.items.add(dragFile);
+          status.textContent = "드래그 중입니다. 1688 탭의 업로드 영역에 놓으세요.";
+        });
+
+        shell.addEventListener("dragend", () => {
+          status.textContent = "드롭 완료. 1688에서 결과가 나오는지 확인하세요.";
+        });
+      } catch (error) {
+        hint.textContent = "드래그 파일 준비 실패";
+        status.textContent =
+          error instanceof Error
+            ? `${error.message} 아래 이미지를 우클릭 저장 후 1688에 업로드해 보세요.`
+            : "이미지 준비 실패";
+      }
+    }
+
+    function open1688Drag(btn) {
+      const imageUrl = (btn.dataset.imageUrl || "").trim();
+      const keyword = (btn.dataset.keyword || "").trim();
+      if (!imageUrl) {
+        alert("쿠팡 이미지 URL이 없습니다.");
+        return;
+      }
+
+      window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
+      showDragModal(imageUrl, keyword);
     }
 
     async function open1688Search(btn) {
@@ -411,6 +639,10 @@ USER_PWA_HTML = """
 
     document.querySelectorAll(".btn-1688").forEach((btn) => {
       btn.addEventListener("click", () => open1688Search(btn));
+    });
+
+    document.querySelectorAll(".btn-1688-drag").forEach((btn) => {
+      btn.addEventListener("click", () => open1688Drag(btn));
     });
   </script>
 </body>
@@ -479,6 +711,13 @@ def _render_card(card: Dict[str, Any]) -> str:
         <div class="actions">
           <a class="btn btn-primary" href="{product_url}" target="_blank" rel="noreferrer">상품 보기</a>
           <button
+            class="btn btn-1688-drag"
+            type="button"
+            data-image-url="{raw_image_url}"
+            data-keyword="{keyword}"
+            {"disabled" if not image_url else ""}
+          >1688 드래그</button>
+          <button
             class="btn btn-1688"
             type="button"
             data-image-url="{raw_image_url}"
@@ -522,6 +761,43 @@ def _render_theme_rows(payload: Dict[str, Any]) -> str:
 
 class China1688SearchRequest(BaseModel):
     image_url: str = Field(min_length=1)
+
+
+def _is_allowed_product_image_url(url: str) -> bool:
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    return host.endswith("coupangcdn.com") or host.endswith("coupang.com")
+
+
+@router.get("/api/user/image-proxy")
+async def proxy_product_image(
+    url: str = Query(..., min_length=8),
+) -> Response:
+    image_url = str(url or "").strip()
+    if not _is_allowed_product_image_url(image_url):
+        raise HTTPException(status_code=400, detail="unsupported image url")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(image_url)
+            response.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"image_download_failed: {exc}",
+        ) from exc
+
+    content_type = response.headers.get("content-type") or "image/jpeg"
+    if not content_type.startswith("image/"):
+        content_type = "image/jpeg"
+
+    return Response(
+        content=response.content,
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.post("/api/user/1688/search-url")
