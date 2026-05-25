@@ -315,118 +315,6 @@ USER_PWA_HTML = """
       min-width: 96px;
     }
 
-    .drag-modal-backdrop {
-      position: fixed;
-      inset: 0;
-      background: rgba(4, 8, 16, 0.78);
-      display: grid;
-      place-items: center;
-      padding: 24px;
-      z-index: 30;
-    }
-
-    .drag-modal {
-      width: min(92vw, 720px);
-      border-radius: 24px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: linear-gradient(180deg, rgba(18, 26, 46, 0.98), rgba(10, 15, 28, 1));
-      box-shadow: 0 28px 70px rgba(0,0,0,0.55);
-      overflow: hidden;
-    }
-
-    .drag-modal-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 18px 20px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-    }
-
-    .drag-modal-title {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: -0.02em;
-    }
-
-    .drag-modal-close {
-      border: 0;
-      background: rgba(255,255,255,0.06);
-      color: #eef2ff;
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 18px;
-    }
-
-    .drag-modal-body {
-      padding: 20px;
-    }
-
-    .drag-steps {
-      margin: 0 0 16px;
-      padding-left: 18px;
-      color: #dce4ff;
-      font-size: 13px;
-      line-height: 1.7;
-    }
-
-    .drag-image-shell {
-      border: 2px dashed rgba(125, 222, 168, 0.55);
-      border-radius: 18px;
-      background: #ffffff;
-      padding: 18px;
-      text-align: center;
-    }
-
-    .drag-image-shell.is-ready {
-      cursor: grab;
-    }
-
-    .drag-image-shell.is-ready:active {
-      cursor: grabbing;
-    }
-
-    .drag-image-shell img {
-      max-width: 100%;
-      max-height: 360px;
-      object-fit: contain;
-      display: block;
-      margin: 0 auto;
-      user-select: none;
-    }
-
-    .drag-image-shell img.is-draggable {
-      cursor: grab;
-    }
-
-    .drag-image-shell img.is-draggable:active {
-      cursor: grabbing;
-    }
-
-    .drag-image-hint {
-      margin-top: 12px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #082116;
-    }
-
-    .drag-modal-actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 16px;
-    }
-
-    .drag-status {
-      margin-top: 12px;
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-
     .toast-1688 {
       position: fixed;
       left: 50%;
@@ -496,26 +384,17 @@ USER_PWA_HTML = """
       window.setTimeout(() => toast.remove(), 8000);
     }
 
-    function closeDragModal() {
-      const modal = document.getElementById("drag-modal-backdrop");
-      if (modal) modal.remove();
-    }
+    function showDragGuideToast() {
+      const existing = document.getElementById("toast-1688");
+      if (existing) existing.remove();
 
-    function buildImageProxyUrl(imageUrl) {
-      return `/api/user/image-proxy?url=${encodeURIComponent(imageUrl)}`;
-    }
-
-    async function prepareDragFile(imageUrl, keyword) {
-      const response = await fetch(buildImageProxyUrl(imageUrl));
-      if (!response.ok) {
-        throw new Error("이미지를 불러오지 못했습니다.");
-      }
-      const blob = await response.blob();
-      const extension = blob.type.includes("png") ? "png" : "jpg";
-      const safeKeyword = (keyword || "coupang").replace(/[^\w가-힣-]+/g, "_").slice(0, 40);
-      return new File([blob], `${safeKeyword}.${extension}`, {
-        type: blob.type || "image/jpeg",
-      });
+      const toast = document.createElement("div");
+      toast.id = "toast-1688";
+      toast.className = "toast-1688";
+      toast.textContent =
+        "왼쪽 작은 「이미지」 창에서 사진을 1688 업로드 칸으로 드래그하세요. PWA는 가리지 않습니다.";
+      document.body.appendChild(toast);
+      window.setTimeout(() => toast.remove(), 9000);
     }
 
     function buildDragHelperUrl(imageUrl, keyword) {
@@ -526,96 +405,33 @@ USER_PWA_HTML = """
       return `/user/1688-drag-image?${params.toString()}`;
     }
 
-    function enableNativeImageDrag(img, statusEl) {
-      img.draggable = true;
-      img.classList.add("is-draggable");
-      img.addEventListener("dragstart", (event) => {
-        if (!event.dataTransfer) return;
-        event.dataTransfer.effectAllowed = "copy";
-        event.dataTransfer.setData("text/plain", "coupang-product-image");
-        if (statusEl) {
-          statusEl.textContent = "드래그 중입니다. 1688 탭의 「上传图片 / 以图搜图」 점선 영역에 놓으세요.";
-        }
-      });
-      img.addEventListener("dragend", () => {
-        if (statusEl) {
-          statusEl.textContent = "드롭했습니다. 1688에서 업로드/검색 결과를 확인하세요.";
-        }
-      });
-    }
+    let dragPopupWindow = null;
 
-    async function showDragModal(imageUrl, keyword) {
-      closeDragModal();
+    function openDragPopup(imageUrl, keyword) {
+      const url = buildDragHelperUrl(imageUrl, keyword);
+      const features = [
+        "popup=yes",
+        "width=340",
+        "height=420",
+        "left=24",
+        "top=72",
+        "resizable=yes",
+        "scrollbars=no",
+        "toolbar=no",
+        "menubar=no",
+        "location=no",
+        "status=no",
+      ].join(",");
 
-      const backdrop = document.createElement("div");
-      backdrop.id = "drag-modal-backdrop";
-      backdrop.className = "drag-modal-backdrop";
-      backdrop.innerHTML = `
-        <div class="drag-modal" role="dialog" aria-modal="true">
-          <div class="drag-modal-header">
-            <h2 class="drag-modal-title">1688 드래그 图搜 테스트</h2>
-            <button class="drag-modal-close" type="button" aria-label="닫기">×</button>
-          </div>
-          <div class="drag-modal-body">
-            <ol class="drag-steps">
-              <li><strong>1688 탭</strong>과 <strong>이미지 탭</strong>을 나란히 둡니다.</li>
-              <li><strong>「이미지 탭 열기 (추천)」</strong>를 누른 뒤, 그 탭의 큰 이미지를 1688 업로드 칸으로 드래그합니다.</li>
-              <li>안 되면 아래 모달 이미지를 직접 드래그하거나, 「이미지 저장」 후 1688에 업로드합니다.</li>
-            </ol>
-            <div class="drag-image-shell" id="drag-image-shell">
-              <img id="drag-preview-image" alt="상품 이미지" draggable="false" />
-              <div class="drag-image-hint" id="drag-image-hint">이미지 준비 중…</div>
-            </div>
-            <div class="drag-modal-actions">
-              <button class="btn btn-1688-drag" type="button" id="drag-open-image-tab">이미지 탭 열기 (추천)</button>
-              <button class="btn btn-1688-drag" type="button" id="drag-open-1688">1688 탭 다시 열기</button>
-              <a class="btn btn-secondary" id="drag-download-image" href="#" download>이미지 저장</a>
-              <button class="btn btn-secondary" type="button" id="drag-close-modal">닫기</button>
-            </div>
-            <div class="drag-status" id="drag-status">
-              PC Chrome/Edge 권장. 창을 Win+← / Win+→ 로 나란히 두면 드롭이 쉽습니다.
-            </div>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(backdrop);
+      if (dragPopupWindow && !dragPopupWindow.closed) {
+        dragPopupWindow.location.href = url;
+        dragPopupWindow.focus();
+        return;
+      }
 
-      backdrop.addEventListener("click", (event) => {
-        if (event.target === backdrop) closeDragModal();
-      });
-      backdrop.querySelector(".drag-modal-close").addEventListener("click", closeDragModal);
-      backdrop.querySelector("#drag-close-modal").addEventListener("click", closeDragModal);
-      backdrop.querySelector("#drag-open-1688").addEventListener("click", () => {
-        window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
-      });
-      backdrop.querySelector("#drag-open-image-tab").addEventListener("click", () => {
-        window.open(buildDragHelperUrl(imageUrl, keyword), "_blank", "noopener,noreferrer");
-      });
-
-      const shell = backdrop.querySelector("#drag-image-shell");
-      const preview = backdrop.querySelector("#drag-preview-image");
-      const hint = backdrop.querySelector("#drag-image-hint");
-      const status = backdrop.querySelector("#drag-status");
-      const downloadLink = backdrop.querySelector("#drag-download-image");
-
-      try {
-        const dragFile = await prepareDragFile(imageUrl, keyword);
-        const objectUrl = URL.createObjectURL(dragFile);
-        preview.src = objectUrl;
-        preview.alt = keyword || "상품 이미지";
-        downloadLink.href = objectUrl;
-        downloadLink.download = dragFile.name;
-        shell.classList.add("is-ready");
-        hint.textContent = "또는 이 이미지를 1688 업로드 칸으로 드래그";
-        enableNativeImageDrag(preview, status);
-      } catch (error) {
-        preview.src = buildImageProxyUrl(imageUrl);
-        preview.alt = keyword || "상품 이미지";
-        hint.textContent = "드래그 파일 준비 실패";
-        status.textContent =
-          error instanceof Error
-            ? `${error.message} 「이미지 탭 열기」 또는 「이미지 저장」을 사용해 보세요.`
-            : "이미지 준비 실패";
+      dragPopupWindow = window.open(url, "pwa1688DragImage", features);
+      if (dragPopupWindow) {
+        dragPopupWindow.focus();
       }
     }
 
@@ -628,8 +444,8 @@ USER_PWA_HTML = """
       }
 
       window.open(ALIBABA_1688_UPLOAD_URL, "_blank", "noopener,noreferrer");
-      window.open(buildDragHelperUrl(imageUrl, keyword), "_blank", "noopener,noreferrer");
-      showDragModal(imageUrl, keyword);
+      openDragPopup(imageUrl, keyword);
+      showDragGuideToast();
     }
 
     async function open1688Search(btn) {
@@ -687,72 +503,72 @@ DRAG_IMAGE_HELPER_HTML = """
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>1688 드래그용 이미지</title>
+  <meta name="viewport" content="width=340, initial-scale=1.0" />
+  <title>1688 드래그</title>
   <style>
     * { box-sizing: border-box; }
-    body {
+    html, body {
       margin: 0;
-      min-height: 100vh;
-      background: #f3f4f6;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #f8fafc;
       color: #111827;
       font-family: Inter, "Segoe UI", Arial, sans-serif;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
     }
-    header, footer {
-      padding: 16px 20px;
-      background: #ffffff;
-      border-bottom: 1px solid #e5e7eb;
+    body {
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      gap: 10px;
     }
-    footer {
-      border-bottom: 0;
-      border-top: 1px solid #e5e7eb;
-      font-size: 13px;
-      color: #4b5563;
-      line-height: 1.6;
-    }
-    h1 {
-      margin: 0 0 6px;
-      font-size: 22px;
+    .title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.35;
     }
     .sub {
       margin: 0;
+      font-size: 11px;
+      line-height: 1.5;
       color: #6b7280;
-      font-size: 14px;
-    }
-    main {
-      display: grid;
-      place-items: center;
-      padding: 24px;
     }
     .frame {
-      width: min(92vw, 760px);
-      background: #ffffff;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       border: 2px dashed #34a56f;
-      border-radius: 20px;
-      padding: 24px;
-      text-align: center;
-      box-shadow: 0 16px 40px rgba(17, 24, 39, 0.08);
+      border-radius: 14px;
+      background: #ffffff;
+      padding: 10px;
+      min-height: 0;
     }
     img {
       max-width: 100%;
-      max-height: 70vh;
+      max-height: 210px;
       object-fit: contain;
       cursor: grab;
       user-select: none;
     }
     img:active { cursor: grabbing; }
     .hint {
-      margin-top: 14px;
-      font-size: 14px;
+      margin-top: 8px;
+      font-size: 11px;
       font-weight: 700;
       color: #166534;
+      text-align: center;
+      line-height: 1.45;
+    }
+    .loading {
+      color: #6b7280;
+      font-size: 13px;
     }
     .actions {
-      margin-top: 16px;
       display: flex;
-      gap: 10px;
+      gap: 8px;
       justify-content: center;
       flex-wrap: wrap;
     }
@@ -760,11 +576,12 @@ DRAG_IMAGE_HELPER_HTML = """
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 10px 14px;
-      border-radius: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
       border: 1px solid #d1d5db;
       background: #ffffff;
       color: #111827;
+      font-size: 11px;
       font-weight: 700;
       text-decoration: none;
       cursor: pointer;
@@ -774,34 +591,36 @@ DRAG_IMAGE_HELPER_HTML = """
       border-color: #34a56f;
       color: #ffffff;
     }
-    .loading {
-      color: #6b7280;
-      font-size: 15px;
-      padding: 40px 0;
-    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>__KEYWORD__</h1>
-    <p class="sub">이 탭의 이미지를 1688 「上传图片 / 以图搜图」 영역으로 드래그하세요.</p>
-  </header>
-  <main>
-    <div class="frame">
-      <div class="loading" id="loading">이미지 불러오는 중…</div>
-      <img id="drag-image" alt="상품 이미지" draggable="false" hidden />
-      <div class="hint" id="hint" hidden>이미지를 잡아 1688 탭으로 끌어다 놓으세요</div>
-      <div class="actions">
-        <a class="btn btn-primary" href="https://s.1688.com/youyuan/index.htm" target="_blank" rel="noreferrer">1688 열기</a>
-        <a class="btn" id="download-link" href="#" download hidden>이미지 저장</a>
-      </div>
-    </div>
-  </main>
-  <footer>
-    드롭이 안 되면 「이미지 저장」 후 1688에 업로드하거나, PWA의 주황 「1688 图搜」 버튼을 사용하세요.
-  </footer>
+  <h1 class="title">__KEYWORD__</h1>
+  <p class="sub">작은 창을 1688 옆에 두고, 아래 이미지를 업로드 칸으로 드래그하세요.</p>
+  <div class="frame">
+    <div class="loading" id="loading">불러오는 중…</div>
+    <img id="drag-image" alt="상품 이미지" draggable="false" hidden />
+    <div class="hint" id="hint" hidden>1688 「上传图片」 점선 영역에 드롭</div>
+  </div>
+  <div class="actions">
+    <a class="btn btn-primary" href="https://s.1688.com/youyuan/index.htm" target="_blank" rel="noreferrer">1688</a>
+    <a class="btn" id="download-link" href="#" download hidden>저장</a>
+  </div>
   <script>
     const PROXY_URL = "__PROXY_URL__";
+
+    function setSmallDragImage(event, img) {
+      const size = 88;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx || !img.naturalWidth) return;
+      const ratio = Math.min(size / img.naturalWidth, size / img.naturalHeight);
+      const width = img.naturalWidth * ratio;
+      const height = img.naturalHeight * ratio;
+      ctx.drawImage(img, (size - width) / 2, (size - height) / 2, width, height);
+      event.dataTransfer.setDragImage(canvas, size / 2, size / 2);
+    }
 
     async function boot() {
       const img = document.getElementById("drag-image");
@@ -815,17 +634,20 @@ DRAG_IMAGE_HELPER_HTML = """
         const blob = await response.blob();
         const objectUrl = URL.createObjectURL(blob);
         img.src = objectUrl;
-        img.hidden = false;
-        img.draggable = true;
-        loading.hidden = true;
-        hint.hidden = false;
-        downloadLink.href = objectUrl;
-        downloadLink.download = "__FILENAME__";
-        downloadLink.hidden = false;
+        img.onload = () => {
+          img.hidden = false;
+          img.draggable = true;
+          loading.hidden = true;
+          hint.hidden = false;
+          downloadLink.href = objectUrl;
+          downloadLink.download = "__FILENAME__";
+          downloadLink.hidden = false;
+        };
         img.addEventListener("dragstart", (event) => {
           if (!event.dataTransfer) return;
           event.dataTransfer.effectAllowed = "copy";
           event.dataTransfer.setData("text/plain", "coupang-product-image");
+          setSmallDragImage(event, img);
         });
       } catch (error) {
         loading.textContent = error instanceof Error ? error.message : "이미지 준비 실패";
