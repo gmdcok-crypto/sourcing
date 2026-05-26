@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 from datetime import date, timedelta
 from html import escape
 from typing import Any, Dict, List, Optional
@@ -1215,6 +1216,11 @@ ADMIN_HTML = """
     window.addEventListener("popstate", () => {
       const tabId = new URLSearchParams(window.location.search).get("tab") || "dashboard";
       switchAdminTab(tabId);
+      if (tabId === "pipeline" && !keywordHistoryMode) {
+        keywordLastFragmentSignature = "";
+        startKeywordLiveUpdates();
+        refreshKeywordSourcingStatus().catch((error) => console.error(error));
+      }
     });
 
     let editingThemeId = null;
@@ -1925,25 +1931,28 @@ ADMIN_HTML = """
       }
     }
 
+    function isAdminPipelineTab() {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get("tab") || "dashboard") === "pipeline";
+    }
+
+    function isPipelinePanelVisible() {
+      const pipeline = document.getElementById("pipeline");
+      return Boolean(pipeline && pipeline.classList.contains("active"));
+    }
+
+    function shouldPollKeywordLive() {
+      if (keywordHistoryMode) {
+        return false;
+      }
+      return isAdminPipelineTab() || isPipelinePanelVisible() || keywordLiveTracking;
+    }
+
     async function refreshKeywordLiveFragmentFromStatus() {
       const state = await apiFetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/status"), {
         timeoutMs: 8000,
       });
-      const signature = [
-        state.updated_at || "",
-        String(state.log_count || (state.logs || []).length),
-        String(state.progress_percent || 0),
-        String(state.processed_categories || 0),
-        String(state.status || ""),
-        String(state.message || ""),
-      ].join("|");
-      if (signature === keywordLastFragmentSignature) {
-        syncKeywordLiveControls(String(state.status || "idle"));
-        return;
-      }
-      keywordLastFragmentSignature = signature;
       renderKeywordSourcingStatus(state);
-      syncKeywordLiveControls(String(state.status || "idle"));
       if (state.run_id) {
         persistKeywordRunId(state.run_id);
       }
@@ -1953,10 +1962,10 @@ ADMIN_HTML = """
         if (keywordMonotonicStartedAt == null) {
           keywordMonotonicStartedAt = performance.now();
         }
+        startKeywordElapsedLoop();
       } else if (status === "completed" || status === "failed") {
         keywordLiveTracking = false;
         keywordMonotonicStartedAt = null;
-        stopKeywordLiveFragmentLoop();
         stopKeywordElapsedLoop();
         if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
           loadKeywordSourcingDetail(state.run_id).catch((error) => {
@@ -1964,39 +1973,15 @@ ADMIN_HTML = """
           });
         }
       }
+      syncKeywordLiveControls(status);
       markKeywordStatusHealthy(state);
     }
 
-    async function refreshKeywordLiveFragment() {
-      if (keywordHistoryMode) {
+    async function refreshKeywordLiveTick() {
+      if (!shouldPollKeywordLive()) {
         return;
       }
-      const response = await fetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/live-panel"), {
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        await refreshKeywordLiveFragmentFromStatus();
-        return;
-      }
-      const signature = response.headers.get("X-Progress-Signature") || "";
-      const html = await response.text();
-      const box = document.getElementById("keyword-live-fragment");
-      if (!box) {
-        return;
-      }
-      if (signature && signature === keywordLastFragmentSignature) {
-        syncKeywordLiveStateFromFragment();
-        return;
-      }
-      keywordLastFragmentSignature = signature;
-      box.innerHTML = html;
-      rebindKeywordFragmentRefs();
-      syncKeywordLiveStateFromFragment();
-      if (keywordLogBox) {
-        requestAnimationFrame(() => {
-          keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
-        });
-      }
+      await refreshKeywordLiveFragmentFromStatus();
     }
 
     function stopKeywordLiveFragmentLoop() {
@@ -2006,29 +1991,22 @@ ADMIN_HTML = """
       }
     }
 
-    function isAdminPipelineTab() {
-      const params = new URLSearchParams(window.location.search);
-      return (params.get("tab") || "dashboard") === "pipeline";
-    }
-
     function startKeywordLiveFragmentLoop() {
       stopKeywordLiveFragmentLoop();
-      if (!isAdminPipelineTab()) {
-        return;
-      }
-      const tick = () => {
-        refreshKeywordLiveFragment().catch((error) => {
+      refreshKeywordLiveTick().catch((error) => {
+        console.error(error);
+        if (keywordProgressLabel) {
+          setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중…");
+        }
+      });
+      keywordFragmentInterval = setInterval(() => {
+        refreshKeywordLiveTick().catch((error) => {
           console.error(error);
-          refreshKeywordLiveFragmentFromStatus().catch((fallbackError) => {
-            console.error(fallbackError);
-            if (keywordProgressLabel) {
-              setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중…");
-            }
-          });
+          if (keywordProgressLabel) {
+            setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중…");
+          }
         });
-      };
-      tick();
-      keywordFragmentInterval = setInterval(tick, KEYWORD_LIVE_FRAGMENT_MS);
+      }, KEYWORD_LIVE_FRAGMENT_MS);
     }
 
     function stopKeywordElapsedLoop() {
@@ -2059,11 +2037,13 @@ ADMIN_HTML = """
         return;
       }
       startKeywordLiveFragmentLoop();
-      startKeywordElapsedLoop();
+      if (keywordLiveTracking) {
+        startKeywordElapsedLoop();
+      }
     }
 
     async function refreshKeywordSourcingStatus() {
-      await refreshKeywordLiveFragment();
+      await refreshKeywordLiveTick();
     }
 
     function startKeywordLastUpdatedTicker() {
@@ -2479,8 +2459,8 @@ ADMIN_HTML = """
       keywordMonotonicStartedAt = performance.now();
       setKeywordLivePolling(true);
     }
-    if (!keywordHistoryMode && isAdminPipelineTab()) {
-      refreshKeywordSourcingStatus().catch((error) => {
+    if (!keywordHistoryMode) {
+      refreshKeywordLiveFragmentFromStatus().catch((error) => {
         if (keywordLogBox) {
           keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
         }
@@ -2490,8 +2470,6 @@ ADMIN_HTML = """
         console.error(error);
       });
       startKeywordLiveUpdates();
-    } else if (!keywordHistoryMode) {
-      stopKeywordLiveUpdates();
     } else {
       stopKeywordLiveUpdates();
     }
@@ -2698,7 +2676,15 @@ def build_auto_refresh_meta(
     keyword_status: Dict[str, Any],
     history_status: Optional[Dict[str, Any]],
 ) -> str:
-    return ""
+    if history_status is not None:
+        return ""
+    if selected_tab != "pipeline":
+        return ""
+    if str(keyword_status.get("status") or "") != "running":
+        return ""
+    timestamp = int(time.time())
+    refresh_url = f"/admin?tab=pipeline&amp;_live={timestamp}"
+    return f'<meta http-equiv="refresh" content="5;url={refresh_url}">'
 
 
 def build_auto_refresh_notice(
