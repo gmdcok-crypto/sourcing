@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import date, timedelta
 from html import escape
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,7 @@ ADMIN_HTML = """
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  __AUTO_REFRESH_META__
   <title>소싱 관리자 콘솔</title>
   <style>
     :root {
@@ -325,6 +327,16 @@ ADMIN_HTML = """
     @keyframes live-pulse {
       0%, 100% { opacity: 0.45; transform: scale(0.9); }
       50% { opacity: 1; transform: scale(1.1); }
+    }
+    .auto-refresh-notice {
+      margin: 0 0 14px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(46, 204, 113, 0.35);
+      background: rgba(46, 204, 113, 0.1);
+      color: #cbffde;
+      font-size: 12px;
+      font-weight: 700;
     }
     .summary-grid {
       display: grid;
@@ -930,11 +942,12 @@ ADMIN_HTML = """
             </div>
           </div>
           <div class="pipeline-stack">
+            __AUTO_REFRESH_NOTICE__
             <div class="progress-panel">
               <div class="section-title">
                 <div>
                   <h2>키워드 소싱 진행 현황</h2>
-                  <span class="live-badge" id="keyword-live-badge" hidden>3초 자동갱신</span>
+                  <span class="live-badge" id="keyword-live-badge" hidden>서버 자동갱신</span>
                 </div>
               </div>
               <div class="bar-row">
@@ -1815,36 +1828,13 @@ ADMIN_HTML = """
     }
 
     function armAutoPageRefresh() {
-      if (keywordHistoryMode || keywordAutoRefreshArmed) {
-        return;
-      }
-      keywordAutoRefreshArmed = true;
-      keywordAutoRefreshTimer = setTimeout(() => {
-        keywordAutoRefreshTimer = null;
-        keywordAutoRefreshArmed = false;
-
-        if (keywordHistoryMode) {
-          return;
-        }
-
-        if (!isPipelineTabActive()) {
-          armAutoPageRefresh();
-          return;
-        }
-
-        const url = new URL(window.location.href);
-        url.searchParams.set("tab", "pipeline");
-        url.searchParams.set("_ts", String(Date.now()));
-        window.location.assign(url.toString());
-      }, 3000);
+      /* 서버 HTML meta refresh 가 담당 (JS 타이머는 폴링에 의해 리셋되어 동작하지 않았음) */
     }
 
     function setAutoPageRefresh(enabled) {
       if (!enabled || keywordHistoryMode) {
         stopAutoPageRefresh();
-        return;
       }
-      armAutoPageRefresh();
     }
 
     function applyKeywordSourcingState(state) {
@@ -2242,15 +2232,12 @@ ADMIN_HTML = """
           if (selectedThemeId) {
             payload.theme_id = Number(selectedThemeId);
           }
-          const result = await apiFetch("/api/admin/keyword-sourcing/test", {
+          await apiFetch("/api/admin/keyword-sourcing/test", {
             method: "POST",
             body: JSON.stringify(payload)
           });
-          persistKeywordRunId(result.run_id || keywordSourcingRunId);
-          keywordWasRunning = false;
-          applyKeywordSourcingState(result);
-          startKeywordLiveUpdates();
-          await refreshKeywordSourcingStatus();
+          window.location.assign(`/admin?tab=pipeline&_started=${Date.now()}`);
+          return;
         } catch (error) {
           alert(`키워드 소싱 실패: ${error.message}`);
           keywordSourcingForm.submit();
@@ -2411,10 +2398,6 @@ ADMIN_HTML = """
         console.error(error);
       });
       startKeywordLiveUpdates();
-      if (keywordStatusText && keywordStatusText.textContent.trim() === "running") {
-        keywordWasRunning = false;
-        armAutoPageRefresh();
-      }
     } else {
       stopKeywordLiveUpdates();
     }
@@ -2445,7 +2428,11 @@ async def admin_console(
             history_date=history_date,
             page=page,
             page_size=page_size,
-        )
+        ),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
     )
 
 
@@ -2547,7 +2534,44 @@ def render_admin_html(
     )
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
     html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)
+    html = html.replace("__AUTO_REFRESH_META__", build_auto_refresh_meta(selected_tab, keyword_status, history_status))
+    html = html.replace("__AUTO_REFRESH_NOTICE__", build_auto_refresh_notice(selected_tab, keyword_status, history_status))
     return html
+
+
+def build_auto_refresh_meta(
+    selected_tab: str,
+    keyword_status: Dict[str, Any],
+    history_status: Optional[Dict[str, Any]],
+) -> str:
+    if history_status is not None:
+        return ""
+    if selected_tab != "pipeline":
+        return ""
+    if str(keyword_status.get("status") or "") != "running":
+        return ""
+    timestamp = int(time.time())
+    refresh_url = f"/admin?tab=pipeline&amp;_live={timestamp}"
+    return f'<meta http-equiv="refresh" content="3;url={refresh_url}">'
+
+
+def build_auto_refresh_notice(
+    selected_tab: str,
+    keyword_status: Dict[str, Any],
+    history_status: Optional[Dict[str, Any]],
+) -> str:
+    if history_status is not None:
+        return ""
+    if selected_tab != "pipeline":
+        return ""
+    if str(keyword_status.get("status") or "") != "running":
+        return ""
+    return (
+        '<div class="auto-refresh-notice">'
+        "키워드 소싱 진행 중 — 브라우저가 3초마다 이 페이지를 자동 새로고침합니다 "
+        "(수동 F5와 동일)."
+        "</div>"
+    )
 
 
 def load_admin_taxonomy_data() -> Dict[str, List[Dict[str, Any]]]:
