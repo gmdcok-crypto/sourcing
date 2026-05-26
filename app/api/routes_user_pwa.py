@@ -83,12 +83,6 @@ USER_PWA_HTML = """
       letter-spacing: -0.02em;
     }
 
-    .theme-detail {
-      margin-top: 6px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
     .row-track {
       display: grid;
       grid-template-columns: repeat(5, minmax(240px, 1fr));
@@ -804,7 +798,6 @@ def _render_theme_rows(payload: Dict[str, Any]) -> str:
               <div class="theme-header">
                 <div>
                   <h2 class="theme-title">{escape(str(theme.get("theme_name") or ""))}</h2>
-                  <div class="theme-detail">{escape(str(theme.get("theme_detail") or ""))}</div>
                 </div>
               </div>
               <div class="row-track">{cards}</div>
