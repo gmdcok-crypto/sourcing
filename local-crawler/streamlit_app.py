@@ -11,6 +11,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from config import get_settings
+from services.naver_keyword_scoring import compute_naver_final_score
 from ui_runner import (
     fetch_batch_keywords,
     get_ui_results,
@@ -445,37 +446,58 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     )
 
 
-TIER_BADGE_COLORS = {
-    "raw_gem": "#22c55e",
-    "gold": "#eab308",
-    "diamond": "#60a5fa",
-    "premium": "#f97316",
-}
-
-ENTRY_DECISION_LABELS = {
-    "recommend": ("진입 추천", "#16a34a"),
-    "selective": ("선별 검토", "#d97706"),
-    "hold": ("보류", "#dc2626"),
-}
-
-
-def _tier_badge_html(tier: str) -> str:
-    color = TIER_BADGE_COLORS.get(str(tier or "").strip(), "#6b7280")
-    label = str(tier or "-").upper()
-    return (
-        f'<span style="display:inline-block;padding:6px 12px;border-radius:999px;'
-        f"background:{color}22;color:{color};border:1px solid {color};"
-        f'font-weight:700;font-size:13px;">{label}</span>'
-    )
+def _format_score_cell(value: Any) -> str:
+    if value in (None, ""):
+        return "-"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    rounded = round(numeric, 1)
+    if rounded == int(rounded):
+        return str(int(rounded))
+    return f"{rounded:.1f}"
 
 
-def _entry_badge_html(decision: str) -> str:
-    label, color = ENTRY_DECISION_LABELS.get(str(decision or "").strip(), ("-", "#6b7280"))
-    return (
-        f'<span style="display:inline-block;padding:8px 14px;border-radius:10px;'
-        f"background:{color}22;color:{color};border:1px solid {color};"
-        f'font-weight:700;font-size:14px;">{label}</span>'
-    )
+def _enrich_keyword_scores(scores: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    keyword_lookup: Dict[str, Dict[str, Any]] = {}
+    try:
+        payload = fetch_batch_keywords(limit=200)
+        for row in payload.get("keywords") or []:
+            keyword = str(row.get("keyword") or "").strip()
+            if keyword:
+                keyword_lookup[keyword] = row
+    except Exception:
+        keyword_lookup = {}
+
+    enriched: List[Dict[str, Any]] = []
+    for row in scores:
+        merged = dict(row)
+        if merged.get("naver_score") is None:
+            source_row = keyword_lookup.get(str(merged.get("keyword") or "").strip())
+            if source_row:
+                merged["naver_score"] = compute_naver_final_score(source_row)
+        enriched.append(merged)
+    return enriched
+
+
+def _entry_score_dataframe(scores: List[Dict[str, Any]]) -> pd.DataFrame:
+    rows = []
+    for item in sorted(scores, key=lambda row: str(row.get("keyword") or "")):
+        keyword = str(item.get("keyword") or "").strip()
+        if not keyword:
+            continue
+        coupang_score = item.get("coupang_score")
+        if coupang_score is None:
+            coupang_score = item.get("final_score")
+        rows.append(
+            {
+                "키워드명": keyword,
+                "쿠팡점수": _format_score_cell(coupang_score),
+                "네이버점수": _format_score_cell(item.get("naver_score")),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 @st.fragment(run_every=timedelta(seconds=1.5))
@@ -533,90 +555,30 @@ def _render_product_results() -> None:
 @st.fragment(run_every=timedelta(seconds=1.5))
 def _render_entry_scoring_tab() -> None:
     results = get_ui_results()
-    scores = list(results.get("keyword_scores") or [])
+    scores = _enrich_keyword_scores(list(results.get("keyword_scores") or []))
     if not scores:
-        st.info("크롤링이 완료된 키워드가 있으면 진입 점수가 여기에 표시됩니다.")
+        st.info("크롤링이 완료된 키워드가 있으면 점수 테이블이 표시됩니다.")
         return
 
-    keywords = [str(row.get("keyword") or "") for row in scores if row.get("keyword")]
-    selected_keyword = st.selectbox("키워드 선택", options=keywords, index=0)
-    row = next((item for item in scores if item.get("keyword") == selected_keyword), scores[0])
+    st.markdown("### 시장 진입 점수")
+    score_df = _entry_score_dataframe(scores)
+    if score_df.empty:
+        st.info("표시할 키워드 점수가 없습니다.")
+        return
 
-    final_score = float(row.get("final_score") or 0)
-    final_grade = str(row.get("final_grade") or "-")
-    keyword_tier = str(row.get("keyword_tier") or "-")
-    entry_decision = str(row.get("entry_decision") or "hold")
-
-    st.markdown("### 시장 진입 가능성")
-    gauge_col, badge_col = st.columns([2, 1])
-    with gauge_col:
-        st.progress(min(max(final_score / 100.0, 0.0), 1.0))
-        st.markdown(
-            f"<div style='font-size:32px;font-weight:800;color:#f9fafb;'>"
-            f"{final_score:.1f}점 <span style='font-size:18px;color:#9ca3af;'>/ 100 "
-            f"(등급 {final_grade})</span></div>",
-            unsafe_allow_html=True,
-        )
-    with badge_col:
-        st.markdown(_tier_badge_html(keyword_tier), unsafe_allow_html=True)
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        st.markdown(_entry_badge_html(entry_decision), unsafe_allow_html=True)
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("리뷰 진입점수", f"{row.get('coupang_review_score', 0)} ({row.get('coupang_review_grade', '-')})")
-    m2.metric("배송 점수", row.get("coupang_delivery_score", 0))
-    m3.metric("로켓 점유율", f"{row.get('rocket_ratio', 0)}%")
-    m4.metric("리뷰 중앙값", _to_display_int(row.get("review_median")))
-
-    m5, m6, m7, m8 = st.columns(4)
-    m5.metric("티어 점수", row.get("tier_score", 0))
-    m6.metric("로켓 패널티", row.get("rocket_penalty_score", 0))
-    m7.metric("평점 품질", row.get("rating_quality_score", 0))
-    m8.metric("리뷰≤500", row.get("review_under_500_count", 0))
-
-    chart_col, detail_col = st.columns([1, 1])
-    with chart_col:
-        st.markdown("#### 리뷰 분포 (Top10)")
-        distribution = list(row.get("review_distribution") or [])
-        if distribution:
-            chart_df = pd.DataFrame(
-                {
-                    "순위": [f"#{item.get('rank')}" for item in distribution],
-                    "리뷰수": [
-                        int(item.get("review_count") or 0) for item in distribution
-                    ],
-                }
-            )
-            st.bar_chart(chart_df, x="순위", y="리뷰수", use_container_width=True)
-        else:
-            st.caption("리뷰 분포 데이터 없음")
-
-    with detail_col:
-        st.markdown("#### 배송 유형 breakdown")
-        delivery_rows = list(row.get("delivery_breakdown") or [])
-        if delivery_rows:
-            st.dataframe(
-                _style_dark_dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "순위": item.get("rank"),
-                                "배송유형": item.get("delivery_type"),
-                                "배송점수": item.get("delivery_score"),
-                            }
-                            for item in delivery_rows
-                        ]
-                    )
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-    if row.get("top10_incomplete"):
-        st.warning(f"Top10 미만 수집 ({row.get('top10_count', 0)}건) — 미수집 슬롯은 일반배송 점수로 보정됩니다.")
-
-    with st.expander("점수 산출 상세 JSON"):
-        st.json(row)
+    st.dataframe(
+        _style_dark_dataframe(score_df),
+        use_container_width=True,
+        hide_index=True,
+    )
+    csv_bytes = score_df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "점수 CSV 다운로드",
+        data=csv_bytes,
+        file_name="market-entry-scores.csv",
+        mime="text/csv",
+        key=f"score-csv-{results.get('job_id') or 'idle'}",
+    )
 
 
 def main() -> None:
@@ -678,7 +640,7 @@ def main() -> None:
         _render_product_results()
 
     with tab_scoring:
-        st.caption("쿠팡 Top10 크롤 데이터 기반 OEM/사입 시장 진입 가능성 점수 (100점 만점)")
+        st.caption("쿠팡점수: Top10 크롤 기반 진입 가능성 / 네이버점수: 검색량·CTR 최종 점수 (100점 만점)")
         _render_entry_scoring_tab()
 
 

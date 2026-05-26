@@ -17,6 +17,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from config import LocalCrawlerSettings, get_settings
 from railway_client import RailwayKeywordClient
 from services.coupang_entry_scoring import CoupangEntryScoringEngine
+from services.naver_keyword_scoring import compute_naver_final_score
 
 LOCAL_ROOT = Path(__file__).resolve().parent
 PORTING_DB_PATH = LOCAL_ROOT.parent / "porting" / "coupang_crawl_core" / "db.py"
@@ -287,6 +288,8 @@ def _upsert_keyword_score(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
             "theme_detail": keyword_row.get("theme_detail") or "",
         },
     )
+    score_payload["coupang_score"] = score_payload.get("final_score")
+    score_payload["naver_score"] = compute_naver_final_score(keyword_row)
     score_payload["scored_at"] = _now_iso()
 
     payload = get_ui_results()
