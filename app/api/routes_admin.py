@@ -1,5 +1,4 @@
 import json
-import time
 from datetime import date, timedelta
 from html import escape
 from typing import Any, Dict, List, Optional
@@ -947,7 +946,7 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div>
                   <h2>키워드 소싱 진행 현황</h2>
-                  <span class="live-badge" id="keyword-live-badge" hidden>서버 자동갱신</span>
+                  <span class="live-badge" id="keyword-live-badge" hidden>실시간</span>
                 </div>
               </div>
               <div class="bar-row">
@@ -1320,7 +1319,6 @@ ADMIN_HTML = """
     let keywordLastServerUpdatedAt = "";
     let keywordLastLogCount = 0;
     const KEYWORD_RUN_STORAGE_KEY = "sourcing.admin.keywordRunId";
-    let keywordWasRunning = false;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1653,12 +1651,10 @@ ADMIN_HTML = """
       setKeywordStatusText(keywordCurrentQuery, `현재 Query: ${state.current_query || "-"}`);
       if (keywordLogBox) {
         keywordLastLogCount = existingLogs.length;
-        const shouldStickToBottom =
-          keywordLogBox.scrollHeight - keywordLogBox.scrollTop - keywordLogBox.clientHeight < 48;
         keywordLogBox.textContent = logText;
-        if (shouldStickToBottom) {
+        requestAnimationFrame(() => {
           keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
-        }
+        });
       }
       setKeywordStatusText(keywordTop150Count, String(state.top150_count || 0));
       setKeywordStatusText(keywordTop100Count, String(state.top100_count || 0));
@@ -1811,30 +1807,9 @@ ADMIN_HTML = """
       return `${path}?${params.toString()}`;
     }
 
-    let keywordAutoRefreshTimer = null;
-    let keywordAutoRefreshArmed = false;
-
     function isPipelineTabActive() {
       const pipelinePanel = document.getElementById("pipeline");
       return Boolean(pipelinePanel && pipelinePanel.classList.contains("active"));
-    }
-
-    function stopAutoPageRefresh() {
-      keywordAutoRefreshArmed = false;
-      if (keywordAutoRefreshTimer) {
-        clearTimeout(keywordAutoRefreshTimer);
-        keywordAutoRefreshTimer = null;
-      }
-    }
-
-    function armAutoPageRefresh() {
-      /* 서버 HTML meta refresh 가 담당 (JS 타이머는 폴링에 의해 리셋되어 동작하지 않았음) */
-    }
-
-    function setAutoPageRefresh(enabled) {
-      if (!enabled || keywordHistoryMode) {
-        stopAutoPageRefresh();
-      }
     }
 
     function applyKeywordSourcingState(state) {
@@ -1848,19 +1823,13 @@ ADMIN_HTML = """
       if (status === "running") {
         keywordDetailLoadedRunId = null;
         setKeywordLivePolling(true);
-        if (!keywordWasRunning) {
-          armAutoPageRefresh();
-        }
-        keywordWasRunning = true;
         runKeywordSourcingBtn.disabled = true;
         runKeywordSourcingBtn.textContent = "수집 중...";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = false;
         }
       } else {
-        keywordWasRunning = false;
         setKeywordLivePolling(false);
-        stopAutoPageRefresh();
         stopKeywordEventStream();
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
@@ -1915,9 +1884,7 @@ ADMIN_HTML = """
     function stopKeywordLiveUpdates() {
       stopKeywordEventStream();
       stopKeywordStatusPolling();
-      stopAutoPageRefresh();
       setKeywordLivePolling(false);
-      keywordWasRunning = false;
     }
 
     function startKeywordLiveUpdates() {
@@ -1929,7 +1896,7 @@ ADMIN_HTML = """
     }
 
     async function refreshKeywordSourcingStatus() {
-      if (keywordHistoryMode) {
+      if (keywordHistoryMode || !isPipelineTabActive()) {
         return;
       }
       const state = await apiFetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/status"), {
@@ -1950,7 +1917,9 @@ ADMIN_HTML = """
         let nextDelay = keywordHistoryMode ? 5000 : 4000;
         if (!keywordHistoryMode) {
           try {
-            await refreshKeywordSourcingStatus();
+            if (isPipelineTabActive()) {
+              await refreshKeywordSourcingStatus();
+            }
             const status = (keywordStatusText && keywordStatusText.textContent
               ? keywordStatusText.textContent
               : ""
@@ -2232,11 +2201,16 @@ ADMIN_HTML = """
           if (selectedThemeId) {
             payload.theme_id = Number(selectedThemeId);
           }
-          await apiFetch("/api/admin/keyword-sourcing/test", {
+          const state = await apiFetch("/api/admin/keyword-sourcing/test", {
             method: "POST",
             body: JSON.stringify(payload)
           });
-          window.location.assign(`/admin?tab=pipeline&_started=${Date.now()}`);
+          switchAdminTab("pipeline");
+          const pipelineUrl = new URL(window.location.href);
+          pipelineUrl.searchParams.set("tab", "pipeline");
+          history.pushState({ tab: "pipeline" }, "", pipelineUrl.pathname + pipelineUrl.search);
+          applyKeywordSourcingState(state);
+          startKeywordLiveUpdates();
           return;
         } catch (error) {
           alert(`키워드 소싱 실패: ${error.message}`);
@@ -2544,15 +2518,7 @@ def build_auto_refresh_meta(
     keyword_status: Dict[str, Any],
     history_status: Optional[Dict[str, Any]],
 ) -> str:
-    if history_status is not None:
-        return ""
-    if selected_tab != "pipeline":
-        return ""
-    if str(keyword_status.get("status") or "") != "running":
-        return ""
-    timestamp = int(time.time())
-    refresh_url = f"/admin?tab=pipeline&amp;_live={timestamp}"
-    return f'<meta http-equiv="refresh" content="3;url={refresh_url}">'
+    return ""
 
 
 def build_auto_refresh_notice(
@@ -2560,18 +2526,7 @@ def build_auto_refresh_notice(
     keyword_status: Dict[str, Any],
     history_status: Optional[Dict[str, Any]],
 ) -> str:
-    if history_status is not None:
-        return ""
-    if selected_tab != "pipeline":
-        return ""
-    if str(keyword_status.get("status") or "") != "running":
-        return ""
-    return (
-        '<div class="auto-refresh-notice">'
-        "키워드 소싱 진행 중 — 브라우저가 3초마다 이 페이지를 자동 새로고침합니다 "
-        "(수동 F5와 동일)."
-        "</div>"
-    )
+    return ""
 
 
 def load_admin_taxonomy_data() -> Dict[str, List[Dict[str, Any]]]:
