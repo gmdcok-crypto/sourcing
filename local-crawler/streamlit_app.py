@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from html import escape
 from typing import Any, Dict, List
 from zoneinfo import ZoneInfo
 
@@ -80,6 +81,32 @@ def _apply_dark_theme() -> None:
             color: #e5e7eb;
             border: 1px solid #2b3243;
         }
+        [data-testid="stCodeBlock"] {
+            background: #111827;
+            border: 1px solid #2b3243;
+            border-radius: 12px;
+        }
+        [data-testid="stCodeBlock"] pre,
+        [data-testid="stCodeBlock"] code {
+            background: #111827 !important;
+            color: #e5e7eb !important;
+            border: none !important;
+        }
+        .crawler-log-box {
+            background: #111827;
+            color: #e5e7eb;
+            border: 1px solid #2b3243;
+            border-radius: 12px;
+            padding: 14px 16px;
+            max-height: 260px;
+            overflow: auto;
+            font-size: 12px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin: 0;
+            font-family: Consolas, "Courier New", monospace;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -110,6 +137,13 @@ def _logs_to_lines(logs: List[Dict[str, Any]]) -> str:
         message = str(row.get("message") or "")
         lines.append(f"[{timestamp}] [{level}] {message}")
     return "\n".join(lines)
+
+
+def _render_dark_log_box(log_text: str) -> None:
+    st.markdown(
+        f'<pre class="crawler-log-box">{escape(log_text)}</pre>',
+        unsafe_allow_html=True,
+    )
 
 
 def _to_display_int(value: Any) -> Any:
@@ -455,7 +489,7 @@ def _render_live_runtime() -> None:
     st.markdown("### 로그")
     log_text = _logs_to_lines(list(state.get("logs") or []))
     if log_text.strip():
-        st.code(log_text, language="text")
+        _render_dark_log_box(log_text)
     else:
         st.caption("로그 수집 중…")
 
