@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,10 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "gemini_trend_
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "model": "gemini-2.5-flash",
+    "fallback_models": ["gemini-2.0-flash", "gemini-2.5-flash-lite"],
+    "retry_max_attempts": 3,
+    "retry_base_delay_sec": 2,
+    "keyword_delay_sec": 1.5,
     "temperature": 0.1,
     "reference_month": "2026년 5월",
     "weights": {"velocity": 0.30, "viral": 0.30, "conversion": 0.20, "seasonality": 0.20},
@@ -115,17 +120,46 @@ def normalize_trend_payload(keyword: str, raw: Dict[str, Any], config: Dict[str,
     }
 
 
+def shorten_ai_error_message(message: str) -> str:
+    text = str(message or "").strip()
+    upper = text.upper()
+    if "503" in upper or "UNAVAILABLE" in upper:
+        return "Gemini 503 일시 오류 — 1~2분 후 재시도"
+    if "429" in upper or "RESOURCE_EXHAUSTED" in upper:
+        return "Gemini 요청 한도 초과 — 잠시 후 재시도"
+    if len(text) > 80:
+        return text[:77] + "..."
+    return text or "AI 점수 산출 실패"
+
+
 def build_error_payload(keyword: str, message: str) -> Dict[str, Any]:
+    short_message = shorten_ai_error_message(message)
     return {
         "keyword": keyword,
         "ai_score": None,
         "ai_tier": "ERROR",
         "ai_breakdown": {},
-        "ai_brief_reason": message,
+        "ai_brief_reason": short_message,
         "ai_model_total": None,
         "ai_scoring_ready": False,
-        "ai_scoring_error": message,
+        "ai_scoring_error": short_message,
     }
+
+
+def _is_retryable_gemini_error(exc: Exception) -> bool:
+    text = str(exc).upper()
+    tokens = ("503", "429", "500", "502", "504", "UNAVAILABLE", "OVERLOADED", "RESOURCE_EXHAUSTED")
+    return any(token in text for token in tokens)
+
+
+def _model_candidates(config: Dict[str, Any]) -> List[str]:
+    primary = str(config.get("model") or "gemini-2.5-flash").strip()
+    fallbacks = [str(item).strip() for item in (config.get("fallback_models") or []) if str(item).strip()]
+    candidates: List[str] = []
+    for name in [primary, *fallbacks]:
+        if name and name not in candidates:
+            candidates.append(name)
+    return candidates or ["gemini-2.5-flash"]
 
 
 def _build_prompt(keyword: str, config: Dict[str, Any]) -> str:
@@ -191,22 +225,43 @@ class GeminiTrendScoringService:
 
         client = genai.Client(api_key=self.api_key)
         prompt = _build_prompt(keyword_text, self.config)
-        try:
-            response = client.models.generate_content(
-                model=str(self.config.get("model") or "gemini-2.5-flash"),
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    temperature=float(self.config.get("temperature") or 0.1),
-                ),
-            )
-            raw_text = str(getattr(response, "text", "") or "").strip()
-            if not raw_text:
-                return build_error_payload(keyword_text, "empty_gemini_response")
-            raw_payload = _extract_json_object(raw_text)
-            return normalize_trend_payload(keyword_text, raw_payload, self.config)
-        except Exception as exc:  # noqa: BLE001
-            return build_error_payload(keyword_text, str(exc))
+        max_attempts = max(1, int(self.config.get("retry_max_attempts") or 3))
+        base_delay = max(1.0, float(self.config.get("retry_base_delay_sec") or 2))
+        last_error: Optional[Exception] = None
+
+        for model_name in _model_candidates(self.config):
+            for attempt in range(max_attempts):
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())],
+                            temperature=float(self.config.get("temperature") or 0.1),
+                        ),
+                    )
+                    raw_text = str(getattr(response, "text", "") or "").strip()
+                    if not raw_text:
+                        return build_error_payload(keyword_text, "empty_gemini_response")
+                    raw_payload = _extract_json_object(raw_text)
+                    result = normalize_trend_payload(keyword_text, raw_payload, self.config)
+                    if model_name != _model_candidates(self.config)[0]:
+                        result["ai_brief_reason"] = (
+                            f"[{model_name}] " + str(result.get("ai_brief_reason") or "")
+                        ).strip()
+                    return result
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    if not _is_retryable_gemini_error(exc):
+                        return build_error_payload(keyword_text, str(exc))
+                    if attempt < max_attempts - 1:
+                        time.sleep(base_delay * (2**attempt))
+                        continue
+                    break
+
+        if last_error is not None:
+            return build_error_payload(keyword_text, str(last_error))
+        return build_error_payload(keyword_text, "gemini_request_failed")
 
 
 def verify_keyword_trend_score(

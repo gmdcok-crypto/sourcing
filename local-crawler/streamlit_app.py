@@ -11,12 +11,12 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from config import get_settings
+from services.gemini_trend_scoring import shorten_ai_error_message
 from services.naver_keyword_scoring import compute_naver_final_score
 from ui_runner import (
     fetch_batch_keywords,
     get_ui_results,
     get_ui_state,
-    refresh_gemini_trend_scores,
     request_stop,
     start_batch_run,
 )
@@ -77,6 +77,78 @@ def _apply_dark_theme() -> None:
             background: #111827;
             border: 1px solid #2b3243;
             border-radius: 12px;
+        }
+        [data-testid="stDataFrame"],
+        [data-testid="stDataFrame"] * {
+            color: #f3f4f6 !important;
+        }
+        [data-testid="stDataFrame"] th,
+        [data-testid="stDataFrame"] [role="columnheader"],
+        [data-testid="stDataFrame"] [data-testid="stHeaderCell"] {
+            background-color: #1f2937 !important;
+            color: #f9fafb !important;
+            font-weight: 700 !important;
+        }
+        [data-testid="stDataFrame"] td,
+        [data-testid="stDataFrame"] [data-testid="stDataFrameCell"] {
+            background-color: #111827 !important;
+            color: #f3f4f6 !important;
+        }
+        [data-testid="stDataFrame"] button,
+        [data-testid="stDataFrame"] svg,
+        [data-testid="stDataFrame"] [data-testid="stIconMaterial"] {
+            color: #f3f4f6 !important;
+            fill: #f3f4f6 !important;
+        }
+        /* 컬럼 헤더 ⋮ 메뉴 (body 포털 — 배치 미리보기·시장진입점수 공통) */
+        div[data-baseweb="popover"],
+        div[data-baseweb="popover"] > div {
+            background-color: #1f2937 !important;
+            color: #f9fafb !important;
+            border: 1px solid #374151 !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+        }
+        div[data-baseweb="popover"] *,
+        div[data-baseweb="menu"] *,
+        div[role="menu"] *,
+        div[role="listbox"] * {
+            color: #f3f4f6 !important;
+        }
+        div[data-baseweb="menu"],
+        div[data-baseweb="menu"] ul,
+        ul[role="listbox"],
+        div[role="menu"] {
+            background-color: #1f2937 !important;
+            border: 1px solid #374151 !important;
+        }
+        div[data-baseweb="menu"] li,
+        li[role="option"],
+        div[role="menuitem"],
+        div[role="menuitemradio"] {
+            background-color: #1f2937 !important;
+            color: #f9fafb !important;
+        }
+        div[data-baseweb="menu"] li:hover,
+        li[role="option"]:hover,
+        div[role="menuitem"]:hover,
+        li[aria-selected="true"],
+        div[aria-selected="true"] {
+            background-color: #374151 !important;
+            color: #ffffff !important;
+        }
+        div[data-baseweb="popover"] svg,
+        div[data-baseweb="menu"] svg,
+        div[role="menu"] svg {
+            fill: #f9fafb !important;
+            color: #f9fafb !important;
+        }
+        /* Glide Data Grid 컬럼 메뉴 (st.dataframe) */
+        div[class*="glideDataEditor"] [role="menu"],
+        div[class*="glideDataEditor"] [role="menuitem"],
+        #portal [role="menu"],
+        #portal [role="menuitem"] {
+            background-color: #1f2937 !important;
+            color: #f9fafb !important;
         }
         [data-testid="stAlert"] {
             background: #171b26;
@@ -449,8 +521,8 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
 
 def _format_ai_score_cell(item: Dict[str, Any]) -> str:
     if not item.get("ai_scoring_ready"):
-        error = str(item.get("ai_scoring_error") or "").strip()
-        return error[:40] if error else "-"
+        error = shorten_ai_error_message(str(item.get("ai_scoring_error") or ""))
+        return error if error else "-"
     score = item.get("ai_score")
     tier = str(item.get("ai_tier") or "").strip()
     if score in (None, ""):
@@ -578,24 +650,15 @@ def _render_entry_scoring_tab() -> None:
     gemini_ready = bool(str(settings.gemini_api_key or "").strip())
     if not gemini_ready:
         st.warning(
-            "AI점수 사용 시 `local-crawler/.env`에 **GEMINI_API_KEY** 를 설정하세요. "
-            "(Google AI Studio API 키, Google Search Grounding 과금 발생)"
+            "AI점수는 크롤 완료 시 자동 산출됩니다. `local-crawler/.env`에 **GEMINI_API_KEY** 를 설정하세요."
+        )
+    elif settings.gemini_trend_auto_on_crawl:
+        st.caption(
+            f"배치 크롤 성공 시 Gemini 트렌드 검증 자동 실행 · "
+            f"{settings.gemini_trend_model} · {settings.gemini_trend_reference_month}"
         )
     else:
-        st.caption(f"Gemini 모델: {settings.gemini_trend_model} · 기준월: {settings.gemini_trend_reference_month}")
-
-    action_col1, action_col2 = st.columns([1, 3])
-    with action_col1:
-        if st.button("Gemini 트렌드 검증", type="primary", disabled=not gemini_ready):
-            with st.spinner("Gemini + Google Search 분석 중…"):
-                result = refresh_gemini_trend_scores()
-            updated = int(result.get("updated") or 0)
-            errors = list(result.get("errors") or [])
-            if updated:
-                st.success(f"AI점수 {updated}건 갱신")
-            if errors:
-                st.warning("일부 실패: " + " / ".join(errors[:3]))
-            st.rerun()
+        st.caption("GEMINI_TREND_AUTO_ON_CRAWL=false — AI점수 자동 검증 꺼짐")
 
     st.markdown("### 시장 진입 점수")
     score_df = _entry_score_dataframe(scores)
@@ -678,7 +741,7 @@ def main() -> None:
 
     with tab_scoring:
         st.caption(
-            "쿠팡점수·네이버점수: 크롤/소싱 데이터 기반 · AI점수: Gemini+Google Search 트렌드 (100점)"
+            "배치 크롤 시 쿠팡·네이버·AI 점수 자동 산출 (AI=Gemini+Google Search, 100점 만점)"
         )
         _render_entry_scoring_tab()
 

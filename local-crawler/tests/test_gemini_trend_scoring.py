@@ -2,9 +2,11 @@ import unittest
 
 from services.gemini_trend_scoring import (
     _extract_json_object,
+    _is_retryable_gemini_error,
     compute_weighted_total,
     normalize_trend_payload,
     score_to_tier,
+    shorten_ai_error_message,
 )
 
 
@@ -63,6 +65,13 @@ class GeminiTrendScoringTests(unittest.TestCase):
         self.assertEqual(result["ai_score"], 85.0)
         self.assertEqual(result["ai_tier"], "GOLD")
         self.assertTrue(result["ai_scoring_ready"])
+
+    def test_shorten_503_error(self) -> None:
+        message = "503 UNAVAILABLE. {'error': {'code': 503}}"
+        self.assertIn("503", shorten_ai_error_message(message))
+
+    def test_retryable_error_detection(self) -> None:
+        self.assertTrue(_is_retryable_gemini_error(Exception("503 UNAVAILABLE")))
 
     def test_score_to_tier(self) -> None:
         config = {

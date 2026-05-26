@@ -247,6 +247,12 @@ def _reset_results(job_id: str) -> None:
 _SCORING_ENGINE = CoupangEntryScoringEngine()
 
 
+def _gemini_trend_enabled(settings: LocalCrawlerSettings) -> bool:
+    if not str(settings.gemini_api_key or "").strip():
+        return False
+    return bool(settings.gemini_trend_auto_on_crawl)
+
+
 def _gemini_trend_service() -> GeminiTrendScoringService:
     settings = get_settings()
     config = load_trend_config()
@@ -278,7 +284,10 @@ def refresh_gemini_trend_scores(*, keywords: Optional[List[str]] = None) -> Dict
     updated = 0
     score_map = {str(row.get("keyword") or "").strip(): dict(row) for row in existing}
 
-    for keyword in target_keywords:
+    delay_sec = max(0.0, float((service.config or {}).get("keyword_delay_sec") or 1.5))
+    for index, keyword in enumerate(target_keywords):
+        if index > 0 and delay_sec > 0:
+            time.sleep(delay_sec)
         ai_payload = service.verify_keyword_trend_score(keyword)
         row = score_map.get(keyword) or {"keyword": keyword}
         row.update(ai_payload)
@@ -340,7 +349,7 @@ def _upsert_keyword_score(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
     score_payload["coupang_score"] = score_payload.get("final_score")
     score_payload["naver_score"] = compute_naver_final_score(keyword_row)
     settings = get_settings()
-    if settings.gemini_trend_auto_on_crawl and str(settings.gemini_api_key or "").strip():
+    if _gemini_trend_enabled(settings):
         score_payload.update(score_keyword_ai_trend(keyword))
         score_payload["ai_scored_at"] = _now_iso()
     score_payload["scored_at"] = _now_iso()
@@ -589,19 +598,28 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
 
             state = get_ui_state()
             if success:
+                settings = get_settings()
+                if _gemini_trend_enabled(settings):
+                    state["message"] = f"{keyword} Gemini 트렌드 검증 중"
+                    _write_json(STATE_PATH, state)
                 score_payload = _upsert_keyword_score(keyword_row)
                 state["success_count"] = int(state.get("success_count") or 0) + 1
-                final_score = score_payload.get("final_score")
-                final_grade = score_payload.get("final_grade")
-                entry_decision = score_payload.get("entry_decision")
-                _append_log(
-                    state,
-                    (
-                        f"{keyword} 완료 — 진입점수 {final_score} ({final_grade}) "
-                        f"/ {entry_decision}"
-                    ),
-                    level="success",
-                )
+                coupang_score = score_payload.get("coupang_score")
+                naver_score = score_payload.get("naver_score")
+                ai_score = score_payload.get("ai_score")
+                ai_tier = score_payload.get("ai_tier")
+                completion_parts = [
+                    f"{keyword} 완료",
+                    f"쿠팡 {coupang_score}",
+                    f"네이버 {naver_score}",
+                ]
+                if ai_score is not None:
+                    completion_parts.append(f"AI {ai_score} ({ai_tier or '-'})")
+                elif _gemini_trend_enabled(get_settings()):
+                    completion_parts.append(
+                        f"AI 실패: {score_payload.get('ai_scoring_error') or '-'}"
+                    )
+                _append_log(state, " — ".join(completion_parts), level="success")
                 synced = _sync_keyword_result_to_db(
                     settings=settings,
                     keyword=keyword,

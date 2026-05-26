@@ -49,7 +49,7 @@ class LocalCrawlerSettings(BaseSettings):
 
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     gemini_trend_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_TREND_MODEL")
-    gemini_trend_auto_on_crawl: bool = Field(default=False, alias="GEMINI_TREND_AUTO_ON_CRAWL")
+    gemini_trend_auto_on_crawl: bool = Field(default=True, alias="GEMINI_TREND_AUTO_ON_CRAWL")
     gemini_trend_reference_month: str = Field(
         default="2026년 5월",
         alias="GEMINI_TREND_REFERENCE_MONTH",
