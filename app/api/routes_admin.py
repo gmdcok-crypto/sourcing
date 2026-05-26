@@ -1307,6 +1307,7 @@ ADMIN_HTML = """
     let keywordLastServerUpdatedAt = "";
     let keywordLastLogCount = 0;
     const KEYWORD_RUN_STORAGE_KEY = "sourcing.admin.keywordRunId";
+    let keywordWasRunning = false;
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1798,29 +1799,52 @@ ADMIN_HTML = """
     }
 
     let keywordAutoRefreshTimer = null;
+    let keywordAutoRefreshArmed = false;
 
-    function setAutoPageRefresh(enabled) {
+    function isPipelineTabActive() {
+      const pipelinePanel = document.getElementById("pipeline");
+      return Boolean(pipelinePanel && pipelinePanel.classList.contains("active"));
+    }
+
+    function stopAutoPageRefresh() {
+      keywordAutoRefreshArmed = false;
       if (keywordAutoRefreshTimer) {
         clearTimeout(keywordAutoRefreshTimer);
         keywordAutoRefreshTimer = null;
       }
-      if (!enabled || keywordHistoryMode) {
+    }
+
+    function armAutoPageRefresh() {
+      if (keywordHistoryMode || keywordAutoRefreshArmed) {
         return;
       }
-      const scheduleReload = () => {
-        keywordAutoRefreshTimer = setTimeout(() => {
-          const tab = new URLSearchParams(window.location.search).get("tab") || "dashboard";
-          if (tab !== "pipeline" || keywordHistoryMode) {
-            scheduleReload();
-            return;
-          }
-          const url = new URL(window.location.href);
-          url.searchParams.set("tab", "pipeline");
-          url.searchParams.set("_ts", String(Date.now()));
-          window.location.replace(url.toString());
-        }, 3000);
-      };
-      scheduleReload();
+      keywordAutoRefreshArmed = true;
+      keywordAutoRefreshTimer = setTimeout(() => {
+        keywordAutoRefreshTimer = null;
+        keywordAutoRefreshArmed = false;
+
+        if (keywordHistoryMode) {
+          return;
+        }
+
+        if (!isPipelineTabActive()) {
+          armAutoPageRefresh();
+          return;
+        }
+
+        const url = new URL(window.location.href);
+        url.searchParams.set("tab", "pipeline");
+        url.searchParams.set("_ts", String(Date.now()));
+        window.location.assign(url.toString());
+      }, 3000);
+    }
+
+    function setAutoPageRefresh(enabled) {
+      if (!enabled || keywordHistoryMode) {
+        stopAutoPageRefresh();
+        return;
+      }
+      armAutoPageRefresh();
     }
 
     function applyKeywordSourcingState(state) {
@@ -1834,15 +1858,19 @@ ADMIN_HTML = """
       if (status === "running") {
         keywordDetailLoadedRunId = null;
         setKeywordLivePolling(true);
-        setAutoPageRefresh(true);
+        if (!keywordWasRunning) {
+          armAutoPageRefresh();
+        }
+        keywordWasRunning = true;
         runKeywordSourcingBtn.disabled = true;
         runKeywordSourcingBtn.textContent = "수집 중...";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = false;
         }
       } else {
+        keywordWasRunning = false;
         setKeywordLivePolling(false);
-        setAutoPageRefresh(false);
+        stopAutoPageRefresh();
         stopKeywordEventStream();
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
@@ -1897,8 +1925,9 @@ ADMIN_HTML = """
     function stopKeywordLiveUpdates() {
       stopKeywordEventStream();
       stopKeywordStatusPolling();
-      setAutoPageRefresh(false);
+      stopAutoPageRefresh();
       setKeywordLivePolling(false);
+      keywordWasRunning = false;
     }
 
     function startKeywordLiveUpdates() {
@@ -2218,6 +2247,7 @@ ADMIN_HTML = """
             body: JSON.stringify(payload)
           });
           persistKeywordRunId(result.run_id || keywordSourcingRunId);
+          keywordWasRunning = false;
           applyKeywordSourcingState(result);
           startKeywordLiveUpdates();
           await refreshKeywordSourcingStatus();
@@ -2382,7 +2412,8 @@ ADMIN_HTML = """
       });
       startKeywordLiveUpdates();
       if (keywordStatusText && keywordStatusText.textContent.trim() === "running") {
-        setAutoPageRefresh(true);
+        keywordWasRunning = false;
+        armAutoPageRefresh();
       }
     } else {
       stopKeywordLiveUpdates();
