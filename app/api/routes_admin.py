@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import date, timedelta
 from html import escape
@@ -1204,6 +1205,7 @@ ADMIN_HTML = """
         const nextUrl = new URL(button.href, window.location.href);
         history.pushState({ tab: tabId }, "", nextUrl.pathname + nextUrl.search);
         if (tabId === "pipeline" && !keywordHistoryMode) {
+          keywordLastFragmentSignature = "";
           refreshKeywordSourcingStatus().catch((error) => console.error(error));
           startKeywordLiveUpdates();
         }
@@ -1923,20 +1925,58 @@ ADMIN_HTML = """
       }
     }
 
-    async function refreshKeywordLiveFragment() {
-      if (keywordHistoryMode) {
+    async function refreshKeywordLiveFragmentFromStatus() {
+      const state = await apiFetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/status"), {
+        timeoutMs: 8000,
+      });
+      const signature = [
+        state.updated_at || "",
+        String(state.log_count || (state.logs || []).length),
+        String(state.progress_percent || 0),
+        String(state.processed_categories || 0),
+        String(state.status || ""),
+        String(state.message || ""),
+      ].join("|");
+      if (signature === keywordLastFragmentSignature) {
+        syncKeywordLiveControls(String(state.status || "idle"));
         return;
       }
-      const existingPanel = document.querySelector("#keyword-live-fragment .progress-panel");
-      const existingStatus = existingPanel ? String(existingPanel.dataset.status || "idle") : "idle";
-      if (!keywordLiveTracking && existingStatus !== "running") {
+      keywordLastFragmentSignature = signature;
+      renderKeywordSourcingStatus(state);
+      syncKeywordLiveControls(String(state.status || "idle"));
+      if (state.run_id) {
+        persistKeywordRunId(state.run_id);
+      }
+      const status = String(state.status || "idle");
+      if (status === "running") {
+        keywordLiveTracking = true;
+        if (keywordMonotonicStartedAt == null) {
+          keywordMonotonicStartedAt = performance.now();
+        }
+      } else if (status === "completed" || status === "failed") {
+        keywordLiveTracking = false;
+        keywordMonotonicStartedAt = null;
+        stopKeywordLiveFragmentLoop();
+        stopKeywordElapsedLoop();
+        if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
+          loadKeywordSourcingDetail(state.run_id).catch((error) => {
+            console.error(error);
+          });
+        }
+      }
+      markKeywordStatusHealthy(state);
+    }
+
+    async function refreshKeywordLiveFragment() {
+      if (keywordHistoryMode) {
         return;
       }
       const response = await fetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/live-panel"), {
         cache: "no-store",
       });
       if (!response.ok) {
-        throw new Error("진행 패널을 불러오지 못했습니다.");
+        await refreshKeywordLiveFragmentFromStatus();
+        return;
       }
       const signature = response.headers.get("X-Progress-Signature") || "";
       const html = await response.text();
@@ -1966,19 +2006,29 @@ ADMIN_HTML = """
       }
     }
 
+    function isAdminPipelineTab() {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get("tab") || "dashboard") === "pipeline";
+    }
+
     function startKeywordLiveFragmentLoop() {
       stopKeywordLiveFragmentLoop();
-      refreshKeywordLiveFragment().catch((error) => {
-        console.error(error);
-      });
-      keywordFragmentInterval = setInterval(() => {
+      if (!isAdminPipelineTab()) {
+        return;
+      }
+      const tick = () => {
         refreshKeywordLiveFragment().catch((error) => {
           console.error(error);
-          if (keywordProgressLabel) {
-            setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중…");
-          }
+          refreshKeywordLiveFragmentFromStatus().catch((fallbackError) => {
+            console.error(fallbackError);
+            if (keywordProgressLabel) {
+              setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중…");
+            }
+          });
         });
-      }, KEYWORD_LIVE_FRAGMENT_MS);
+      };
+      tick();
+      keywordFragmentInterval = setInterval(tick, KEYWORD_LIVE_FRAGMENT_MS);
     }
 
     function stopKeywordElapsedLoop() {
@@ -2429,7 +2479,7 @@ ADMIN_HTML = """
       keywordMonotonicStartedAt = performance.now();
       setKeywordLivePolling(true);
     }
-    if (!keywordHistoryMode) {
+    if (!keywordHistoryMode && isAdminPipelineTab()) {
       refreshKeywordSourcingStatus().catch((error) => {
         if (keywordLogBox) {
           keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
@@ -2440,6 +2490,8 @@ ADMIN_HTML = """
         console.error(error);
       });
       startKeywordLiveUpdates();
+    } else if (!keywordHistoryMode) {
+      stopKeywordLiveUpdates();
     } else {
       stopKeywordLiveUpdates();
     }
@@ -2626,8 +2678,9 @@ def render_keyword_live_fragment_html(state: Dict[str, Any]) -> str:
 
 
 def build_keyword_live_panel_signature(state: Dict[str, Any]) -> str:
+    """ASCII-only digest for response headers (Korean log/message breaks plain-text headers)."""
     logs = state.get("logs") or []
-    return "|".join(
+    raw = "|".join(
         [
             str(state.get("updated_at") or ""),
             str(len(logs)),
@@ -2637,6 +2690,7 @@ def build_keyword_live_panel_signature(state: Dict[str, Any]) -> str:
             str(state.get("message") or ""),
         ]
     )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def build_auto_refresh_meta(
