@@ -738,7 +738,7 @@ ADMIN_HTML = """
           <div class="section-title">
             <div><h2>소싱 운영</h2><p>테마별 키워드 수집 처리량과 배치 흐름</p></div>
             <div class="toolbar-inline">
-              <form class="history-toolbar" action="/admin" method="get">
+              <form class="history-toolbar" id="keyword-history-form" action="/admin" method="get">
                 <input type="hidden" name="tab" value="pipeline" />
                 <div class="field">
                   <label for="keyword-history-date">저장 결과 조회 날짜</label>
@@ -764,7 +764,7 @@ ADMIN_HTML = """
                     </div>
                   </div>
                 </div>
-                <button class="action-btn" id="keyword-history-load-btn" type="submit">조회</button>
+                <button class="action-btn" id="keyword-history-load-btn" type="button">조회</button>
               </form>
               <form class="history-toolbar" id="keyword-export-form" action="/api/admin/keyword-sourcing/export" method="get">
                 <input type="hidden" name="run_id" value="__EXPORT_RUN_ID__" />
@@ -899,13 +899,6 @@ ADMIN_HTML = """
             </div>
           </div>
           <div class="pipeline-stack">
-            <div class="bars">
-              <div class="bar-row"><span class="bar-label">생활용품</span><div class="bar-track"><div class="bar-fill" style="width:92%"></div></div><span class="bar-value">3,820</span></div>
-              <div class="bar-row"><span class="bar-label">책상 꾸미기</span><div class="bar-track"><div class="bar-fill" style="width:78%"></div></div><span class="bar-value">2,940</span></div>
-              <div class="bar-row"><span class="bar-label">주방 편의도구</span><div class="bar-track"><div class="bar-fill" style="width:85%"></div></div><span class="bar-value">3,210</span></div>
-              <div class="bar-row"><span class="bar-label">반려동물 소품</span><div class="bar-track"><div class="bar-fill" style="width:61%"></div></div><span class="bar-value">2,114</span></div>
-              <div class="bar-row"><span class="bar-label">차량 감성용품</span><div class="bar-track"><div class="bar-fill" style="width:56%"></div></div><span class="bar-value">1,902</span></div>
-            </div>
             <div class="progress-panel">
               <div class="section-title">
                 <div><h2>키워드 소싱 진행 현황</h2></div>
@@ -1257,11 +1250,10 @@ ADMIN_HTML = """
     let keywordSummaryPageIndex = 0;
     let keywordSummaryPageSize = Number(__INITIAL_KEYWORD_PAGE_SIZE__) || 15;
     let keywordSourcingRunId = null;
-    let keywordStatusPoller = null;
-    let keywordHistoryMode = false;
+    let keywordStatusPollTimer = null;
+    let keywordHistoryMode = __KEYWORD_HISTORY_MODE__ === "true";
     let keywordCalendarViewDate = new Date();
     let keywordDetailLoadedRunId = null;
-    let keywordStatusRefreshInFlight = false;
     let keywordStatusLastSuccessAt = Date.now();
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
@@ -1535,27 +1527,51 @@ ADMIN_HTML = """
       renderTaxonomy();
     }
 
+    function setKeywordStatusText(element, value) {
+      if (element) {
+        element.textContent = value;
+      }
+    }
+
     function renderKeywordSourcingStatus(state) {
       const progress = Number(state.progress_percent || 0);
       const existingLogs = Array.isArray(state.logs) ? [...state.logs] : ["실행 대기중입니다."];
-      keywordProgressLabel.textContent = state.message || "대기중";
-      keywordProgressFill.style.width = `${progress}%`;
-      keywordProgressValue.textContent = `${progress}%`;
-      keywordStatusText.textContent = state.status || "idle";
-      keywordProcessedCount.textContent = `${state.processed_categories || 0} / ${state.category_count || 0}`;
-      keywordRowCount.textContent = String(state.row_count || 0);
-      keywordSuccessFailure.textContent = `${state.success_count || 0} / ${state.failure_count || 0}`;
-      keywordCurrentTheme.textContent = `현재 테마: ${state.current_theme_name || "-"}`;
-      keywordCurrentCid.textContent = `현재 CID: ${state.current_cid || "-"}`;
-      keywordCurrentQuery.textContent = `현재 Query: ${state.current_query || "-"}`;
-      keywordLogBox.textContent = existingLogs.join("\n");
-      keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
-      keywordTop150Count.textContent = String(state.top150_count || 0);
-      keywordTop100Count.textContent = String(state.top100_count || 0);
-      keywordSearchadCount.textContent = String(state.searchad_count || 0);
-      keywordR2Status.textContent = state.r2_parquet_key ? "완료" : "대기";
+      const logText = existingLogs.join("\n");
+      setKeywordStatusText(keywordProgressLabel, state.message || "대기중");
+      if (keywordProgressFill) {
+        keywordProgressFill.style.width = `${progress}%`;
+      }
+      setKeywordStatusText(keywordProgressValue, `${progress}%`);
+      setKeywordStatusText(keywordStatusText, state.status || "idle");
+      setKeywordStatusText(
+        keywordProcessedCount,
+        `${state.processed_categories || 0} / ${state.category_count || 0}`,
+      );
+      setKeywordStatusText(keywordRowCount, String(state.row_count || 0));
+      setKeywordStatusText(
+        keywordSuccessFailure,
+        `${state.success_count || 0} / ${state.failure_count || 0}`,
+      );
+      setKeywordStatusText(keywordCurrentTheme, `현재 테마: ${state.current_theme_name || "-"}`);
+      setKeywordStatusText(keywordCurrentCid, `현재 CID: ${state.current_cid || "-"}`);
+      setKeywordStatusText(keywordCurrentQuery, `현재 Query: ${state.current_query || "-"}`);
+      if (keywordLogBox) {
+        const shouldStickToBottom =
+          keywordLogBox.scrollHeight - keywordLogBox.scrollTop - keywordLogBox.clientHeight < 48;
+        keywordLogBox.textContent = logText;
+        if (shouldStickToBottom) {
+          keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
+        }
+      }
+      setKeywordStatusText(keywordTop150Count, String(state.top150_count || 0));
+      setKeywordStatusText(keywordTop100Count, String(state.top100_count || 0));
+      setKeywordStatusText(keywordSearchadCount, String(state.searchad_count || 0));
+      setKeywordStatusText(keywordR2Status, state.r2_parquet_key ? "완료" : "대기");
       const groupCounts = state.group_counts || {};
-      keywordGroupCounts.textContent = `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`;
+      setKeywordStatusText(
+        keywordGroupCounts,
+        `${groupCounts["고효율"] || 0} / ${groupCounts["중간성장"] || 0} / ${groupCounts["대형"] || 0}`,
+      );
     }
 
     function buildKeywordSummaryRows(classifiedKeywords) {
@@ -1651,6 +1667,17 @@ ADMIN_HTML = """
       renderKeywordSummaryRows(fallbackRows);
     }
 
+    function bootstrapKeywordRunId() {
+      syncKeywordExportForm();
+      const runIdInput = keywordExportForm
+        ? keywordExportForm.querySelector('input[name="run_id"]')
+        : null;
+      const initialRunId = (runIdInput && runIdInput.value ? runIdInput.value : "").trim();
+      if (initialRunId) {
+        keywordSourcingRunId = initialRunId;
+      }
+    }
+
     async function refreshKeywordSourcingStatus() {
       if (keywordHistoryMode) {
         return;
@@ -1661,7 +1688,9 @@ ADMIN_HTML = """
       }
       params.set("_ts", String(Date.now()));
       const query = `?${params.toString()}`;
-      const state = await apiFetch(`/api/admin/keyword-sourcing/status${query}`);
+      const state = await apiFetch(`/api/admin/keyword-sourcing/status${query}`, {
+        timeoutMs: 8000,
+      });
       if (keywordHistoryMode) {
         return;
       }
@@ -1696,38 +1725,41 @@ ADMIN_HTML = """
       }
     }
 
-    function startKeywordStatusPolling() {
-      if (keywordStatusPoller) {
-        return;
+    function scheduleKeywordStatusPoll(delayMs) {
+      if (keywordStatusPollTimer) {
+        clearTimeout(keywordStatusPollTimer);
       }
-      keywordStatusPoller = setInterval(async () => {
-        if (keywordHistoryMode) {
-          return;
-        }
-        if (keywordStatusRefreshInFlight) {
-          return;
-        }
-        keywordStatusRefreshInFlight = true;
-        try {
-          await refreshKeywordSourcingStatus();
-        } catch (error) {
-          if (keywordProgressLabel) {
-            keywordProgressLabel.textContent = "진행 상태 재연결 중...";
+      keywordStatusPollTimer = setTimeout(async () => {
+        keywordStatusPollTimer = null;
+        let nextDelay = keywordHistoryMode ? 5000 : 4000;
+        if (!keywordHistoryMode) {
+          try {
+            await refreshKeywordSourcingStatus();
+            const status = (keywordStatusText && keywordStatusText.textContent
+              ? keywordStatusText.textContent
+              : ""
+            ).trim();
+            nextDelay = status === "running" ? 1000 : 4000;
+          } catch (error) {
+            setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중...");
+            setKeywordStatusText(keywordStatusText, "연결 재시도 중");
+            console.error(error);
+            nextDelay = 2000;
           }
-          if (keywordStatusText) {
-            keywordStatusText.textContent = "연결 재시도 중";
-          }
-          console.error(error);
-        } finally {
-          keywordStatusRefreshInFlight = false;
         }
-      }, 2000);
+        scheduleKeywordStatusPoll(nextDelay);
+      }, delayMs);
+    }
+
+    function startKeywordStatusPolling() {
+      stopKeywordStatusPolling();
+      scheduleKeywordStatusPoll(0);
     }
 
     function stopKeywordStatusPolling() {
-      if (keywordStatusPoller) {
-        clearInterval(keywordStatusPoller);
-        keywordStatusPoller = null;
+      if (keywordStatusPollTimer) {
+        clearTimeout(keywordStatusPollTimer);
+        keywordStatusPollTimer = null;
       }
     }
 
@@ -1976,6 +2008,7 @@ ADMIN_HTML = """
         try {
           event.preventDefault();
           keywordHistoryMode = false;
+          stopKeywordStatusPolling();
           keywordDetailLoadedRunId = null;
           const payload = {};
           const selectedThemeId = keywordSourcingThemeId ? keywordSourcingThemeId.value : "";
@@ -2017,7 +2050,14 @@ ADMIN_HTML = """
       });
     }
 
-    if (keywordHistoryLoadBtn && keywordHistoryLoadBtn.type === "button") {
+    const keywordHistoryForm = document.getElementById("keyword-history-form");
+    if (keywordHistoryForm) {
+      keywordHistoryForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+      });
+    }
+
+    if (keywordHistoryLoadBtn) {
       keywordHistoryLoadBtn.addEventListener("click", async () => {
         try {
           await loadKeywordSourcingHistoryByDate();
@@ -2130,20 +2170,22 @@ ADMIN_HTML = """
       cidTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">${error.message}</td></tr>`;
     });
     renderKeywordSummaryRows(keywordSummaryRows);
-    refreshKeywordSourcingStatus().catch((error) => {
-      if (keywordLogBox) {
-        keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
-      }
-      console.error(error);
-    });
-    loadKeywordSourcingDetail(keywordSourcingRunId).catch((error) => {
-      console.error(error);
-    });
-    startKeywordLastUpdatedTicker();
-    if (keywordStatusText && keywordStatusText.textContent === "running") {
+    bootstrapKeywordRunId();
+    if (!keywordHistoryMode) {
+      refreshKeywordSourcingStatus().catch((error) => {
+        if (keywordLogBox) {
+          keywordLogBox.textContent = `진행 상태를 불러오지 못했습니다: ${error.message}`;
+        }
+        console.error(error);
+      });
+      loadKeywordSourcingDetail(keywordSourcingRunId).catch((error) => {
+        console.error(error);
+      });
       startKeywordStatusPolling();
+    } else {
+      stopKeywordStatusPolling();
     }
-    startKeywordStatusPolling();
+    startKeywordLastUpdatedTicker();
   </script>
 </body>
 </html>
@@ -2266,6 +2308,10 @@ def render_admin_html(
     html = html.replace("__KEYWORD_THEME_OPTIONS__", build_theme_options_html(taxonomy_data["themes"]))
     html = html.replace("__DEFAULT_HISTORY_DATE__", default_history_date.isoformat())
     html = html.replace("__EXPORT_RUN_ID__", escape(str(keyword_status.get("run_id") or "")))
+    html = html.replace(
+        "__KEYWORD_HISTORY_MODE__",
+        "true" if history_status is not None else "false",
+    )
     html = html.replace("__HISTORY_CALENDAR_TITLE__", escape(history_title))
     html = html.replace("__HISTORY_CALENDAR_GRID__", history_grid)
     return html

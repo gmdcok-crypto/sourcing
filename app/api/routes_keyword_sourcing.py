@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Form
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from starlette.responses import StreamingResponse
@@ -45,8 +45,15 @@ async def stop_keyword_sourcing() -> Dict[str, Any]:
 
 
 @router.get("/keyword-sourcing/status")
-async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> Dict[str, Any]:
-    return KeywordSourcingService.get_progress_status(run_id=run_id)
+async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> JSONResponse:
+    payload = KeywordSourcingService.get_progress_status(run_id=run_id)
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @router.get("/keyword-sourcing/detail")
