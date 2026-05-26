@@ -81,18 +81,90 @@ class KeywordSourcingService:
         return normalized
 
     @classmethod
+    def _local_task_running(cls, run_id: Optional[str] = None) -> bool:
+        target_run_id = cls._normalize_run_id(run_id) or cls._active_run_id
+        if not target_run_id:
+            return False
+        return (
+            cls._active_run_id == target_run_id
+            and cls._active_task is not None
+            and not cls._active_task.done()
+            and target_run_id in cls._runs
+        )
+
+    @classmethod
+    def _parse_updated_at(cls, value: Any) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @classmethod
+    def _is_stale_running_state(cls, state: Dict[str, Any], *, max_age_seconds: int = 30) -> bool:
+        if str(state.get("status") or "") != "running":
+            return False
+        updated_at = cls._parse_updated_at(state.get("updated_at"))
+        if updated_at is None:
+            return True
+        age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
+        return age_seconds > max_age_seconds
+
+    @classmethod
+    def _mark_run_stale(cls, run_id: str, *, reason: str) -> None:
+        run_key = str(run_id or "").strip()
+        if not run_key:
+            return
+
+        state = cls._runs.get(run_key) or cls._load_state_from_db(run_id=run_key)
+        if not state or str(state.get("status") or "") != "running":
+            return
+
+        state = dict(state)
+        state["status"] = "failed"
+        state["message"] = reason
+        state["finished_at"] = datetime.now(timezone.utc).isoformat()
+        logs = list(state.get("logs") or [])
+        logs.append(reason)
+        state["logs"] = logs[-20:]
+        cls._touch_state(state)
+        cls._runs[run_key] = state
+        cls._persist_state(state)
+
+        if cls._active_run_id == run_key:
+            cls._active_run_id = None
+        if cls._active_task is not None and cls._active_task.done():
+            cls._active_task = None
+
+    @classmethod
     def get_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
         selected_run_id = cls._normalize_run_id(run_id)
         target_run_id = selected_run_id or cls._active_run_id or cls._latest_run_id
-        if target_run_id and target_run_id in cls._runs:
-            memory_state = cls._runs[target_run_id]
-            if memory_state.get("status") == "running":
-                return dict(memory_state)
+
+        if target_run_id and cls._local_task_running(target_run_id):
+            return dict(cls._runs[target_run_id])
 
         state = cls._load_state_from_db(run_id=selected_run_id)
+        if state is None and target_run_id and target_run_id != selected_run_id:
+            state = cls._load_state_from_db(run_id=target_run_id)
         if state:
-            cls._sync_runtime_state(state)
-            return state
+            if (
+                str(state.get("status") or "") == "running"
+                and not cls._local_task_running(state.get("run_id"))
+                and cls._is_stale_running_state(state)
+            ):
+                cls._mark_run_stale(
+                    str(state.get("run_id") or ""),
+                    reason="실행이 멈춘 것으로 보입니다. 키워드 소싱을 다시 시작해 주세요.",
+                )
+                state = cls._load_state_from_db(run_id=selected_run_id or state.get("run_id"))
+            if state:
+                cls._sync_runtime_state(state)
+                return state
 
         if target_run_id and target_run_id in cls._runs:
             return cls._runs[target_run_id]
@@ -374,14 +446,22 @@ class KeywordSourcingService:
         theme_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         current = cls.get_status()
-        if current.get("status") == "running":
-            active_task = cls._active_task
-            if active_task is not None and not active_task.done():
+        if str(current.get("status") or "") == "running":
+            current_run_id = str(current.get("run_id") or "")
+            if cls._local_task_running(current_run_id):
                 return current
-            if active_task is not None and active_task.done() and cls._active_run_id:
-                cls._mark_active_run_stale()
-            else:
+            if not cls._is_stale_running_state(current):
+                current = dict(current)
+                current["message"] = (
+                    f"{current.get('message') or '수집 중'} "
+                    "(다른 서버 인스턴스에서 실행 중일 수 있습니다)"
+                )
                 return current
+            if current_run_id:
+                cls._mark_run_stale(
+                    current_run_id,
+                    reason="이전 실행이 중단되어 새 실행으로 교체합니다.",
+                )
 
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         started_at = datetime.now(timezone.utc).isoformat()
@@ -1129,6 +1209,11 @@ class KeywordSourcingService:
                     break
                 elapsed = int(time.monotonic() - started)
                 state["message"] = f"{label} ({elapsed}초 경과)"
+                if elapsed > 0 and elapsed % 9 == 0:
+                    logs = list(state.get("logs") or [])
+                    tick = f"[진행] {label} ({elapsed}초 경과)"
+                    if not logs or logs[-1] != tick:
+                        state["logs"] = (logs + [tick])[-20:]
                 self._touch_state(state)
                 self._persist_state(state)
             return await task

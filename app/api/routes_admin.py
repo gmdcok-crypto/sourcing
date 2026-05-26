@@ -1305,6 +1305,7 @@ ADMIN_HTML = """
     let keywordStatusLastSuccessAt = Date.now();
     let keywordLastServerUpdatedAt = "";
     let keywordLastLogCount = 0;
+    let keywordStalePollCount = 0;
 
     const KEYWORD_RUN_STORAGE_KEY = "sourcing.admin.keywordRunId";
 
@@ -1804,11 +1805,24 @@ ADMIN_HTML = """
       if (state.run_id) {
         persistKeywordRunId(state.run_id);
       }
-      markKeywordStatusHealthy(state);
       renderKeywordSourcingStatus(state);
-      if (state.status === "running") {
+      if ((state.status || "") === "running") {
+        const serverUpdatedAt = String(state.updated_at || "");
+        if (serverUpdatedAt && serverUpdatedAt === keywordLastServerUpdatedAt) {
+          keywordStalePollCount += 1;
+        } else {
+          keywordStalePollCount = 0;
+        }
+        if (keywordStalePollCount >= 12) {
+          setKeywordStatusText(
+            keywordProgressLabel,
+            "서버 상태가 10초 이상 갱신되지 않습니다. 중지 후 키워드 소싱을 다시 시작해 주세요.",
+          );
+        }
         keywordDetailLoadedRunId = null;
-      } else if (state.run_id && keywordDetailLoadedRunId !== state.run_id) {
+      }
+      markKeywordStatusHealthy(state);
+      if ((state.status || "") !== "running" && state.run_id && keywordDetailLoadedRunId !== state.run_id) {
         try {
           await loadKeywordSourcingDetail(state.run_id);
         } catch (error) {
@@ -1816,17 +1830,26 @@ ADMIN_HTML = """
         }
       }
 
-      if (state.status === "running") {
+      if ((state.status || "") === "running") {
         runKeywordSourcingBtn.disabled = true;
         runKeywordSourcingBtn.textContent = "수집 중...";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = false;
         }
       } else {
+        keywordStalePollCount = 0;
+        setKeywordLivePolling(false);
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = true;
+        }
+        if ((state.status || "") === "failed") {
+          try {
+            sessionStorage.removeItem(KEYWORD_RUN_STORAGE_KEY);
+          } catch (error) {
+            console.warn("sessionStorage unavailable", error);
+          }
         }
       }
     }
