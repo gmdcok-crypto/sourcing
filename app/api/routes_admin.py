@@ -986,7 +986,10 @@ ADMIN_HTML = """
                     <th>키워드명</th>
                     <th>소속그룹</th>
                     <th>검색량</th>
+                    <th>검색량점수</th>
                     <th>클릭률</th>
+                    <th>CTR점수</th>
+                    <th>최종점수</th>
                     <th>경쟁강도</th>
                     <th>노출광고수</th>
                     <th>광고효율</th>
@@ -1681,16 +1684,88 @@ ADMIN_HTML = """
         const hasFraction = Math.abs(rounded % 1) > 0;
         return `${rounded.toFixed(hasFraction ? 2 : 1).replace(/\.?0+$/, hasFraction ? "" : ".0")}%`;
       };
+      const formatScoreValue = (value) => {
+        if (value == null || value === "") {
+          return "-";
+        }
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return String(value);
+        }
+        const rounded = Math.round(numeric * 10) / 10;
+        return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+      };
+      const volumeAnchors = [
+        [100, 40],
+        [500, 60],
+        [3000, 75],
+        [10000, 80],
+        [20000, 70],
+        [30000, 100],
+        [100000, 70],
+      ];
+      const scoreMonthlySearchVolume = (raw) => {
+        const volume = Number(raw);
+        if (!Number.isFinite(volume) || volume < 0) {
+          return null;
+        }
+        if (volume <= volumeAnchors[0][0]) {
+          return volumeAnchors[0][1];
+        }
+        if (volume >= volumeAnchors[volumeAnchors.length - 1][0]) {
+          return volumeAnchors[volumeAnchors.length - 1][1];
+        }
+        for (let i = 0; i < volumeAnchors.length - 1; i += 1) {
+          const [x0, y0] = volumeAnchors[i];
+          const [x1, y1] = volumeAnchors[i + 1];
+          if (volume >= x0 && volume <= x1) {
+            if (x1 === x0) {
+              return y0;
+            }
+            const ratio = (volume - x0) / (x1 - x0);
+            return Math.round((y0 + ratio * (y1 - y0)) * 100) / 100;
+          }
+        }
+        return volumeAnchors[volumeAnchors.length - 1][1];
+      };
+      const scoreCtrBands = (raw) => {
+        const ctr = Number(raw);
+        if (!Number.isFinite(ctr) || ctr < 0) {
+          return null;
+        }
+        if (ctr <= 1.0) return 30;
+        if (ctr <= 1.5) return 40;
+        if (ctr <= 3.0) return 60;
+        if (ctr <= 5.0) return 80;
+        return 100;
+      };
 
       const rows = [];
       classifiedKeywords.forEach((row, index) => {
         const keyword = row.keyword || row.query || row.seed_keyword || "-";
+        const rawSearches = row.monthly_mobile_searches ?? row.total_searches;
+        const rawCtr = row.monthly_mobile_ctr ?? row.avg_ctr;
+        const volumeScore =
+          row.search_volume_score != null && row.search_volume_score !== ""
+            ? row.search_volume_score
+            : scoreMonthlySearchVolume(rawSearches);
+        const ctrScore =
+          row.ctr_score != null && row.ctr_score !== "" ? row.ctr_score : scoreCtrBands(rawCtr);
+        const finalScore =
+          row.final_score != null && row.final_score !== ""
+            ? row.final_score
+            : volumeScore != null && ctrScore != null
+              ? Math.round(((Number(volumeScore) + Number(ctrScore)) / 2) * 100) / 100
+              : null;
         rows.push({
           themeDetail: row.shopping_category_path || row.full_path || row.category_name || row.theme_name || "-",
           keyword,
           group: row.group_name || (row.query || row.seed_keyword ? "이전 저장본" : "-"),
-          totalSearches: formatMetricValue(row.monthly_mobile_searches ?? row.total_searches),
-          clickRate: formatPercentValue(row.monthly_mobile_ctr),
+          totalSearches: formatMetricValue(rawSearches),
+          searchVolumeScore: formatScoreValue(volumeScore),
+          clickRate: formatPercentValue(rawCtr),
+          ctrScore: formatScoreValue(ctrScore),
+          finalScore: formatScoreValue(finalScore),
           competitionLevel: row.competition_level || "-",
           exposureAds: formatMetricValue(row.monthly_exposure_ads),
           adEfficiency: row.ad_efficiency || row.group_name || "-",
@@ -1705,7 +1780,7 @@ ADMIN_HTML = """
 
     function renderKeywordSummaryPageRows(pageRows) {
       if (!pageRows || pageRows.length === 0) {
-        keywordSummaryBody.innerHTML = '<tr><td colspan="12" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
+        keywordSummaryBody.innerHTML = '<tr><td colspan="15" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>';
         return;
       }
       keywordSummaryBody.innerHTML = pageRows
@@ -1715,7 +1790,10 @@ ADMIN_HTML = """
             <td class="keyword-col">${row.keyword}</td>
             <td class="metric-center">${row.group}</td>
             <td class="metric-cell">${row.totalSearches}</td>
+            <td class="metric-center">${row.searchVolumeScore}</td>
             <td class="metric-cell">${row.clickRate}</td>
+            <td class="metric-center">${row.ctrScore}</td>
+            <td class="metric-center"><strong>${row.finalScore}</strong></td>
             <td class="metric-center">${row.competitionLevel}</td>
             <td class="metric-center">${row.exposureAds}</td>
             <td class="metric-center">${row.adEfficiency}</td>
@@ -2879,7 +2957,10 @@ def build_keyword_summary_rows_html(
                 f"<td class=\"keyword-col\">{escape(str(row['keyword']))}</td>"
                 f"<td class=\"metric-center\">{escape(str(row['group']))}</td>"
                 f"<td class=\"metric-cell\">{escape(str(row['totalSearches']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['searchVolumeScore']))}</td>"
                 f"<td class=\"metric-cell\">{escape(str(row['clickRate']))}</td>"
+                f"<td class=\"metric-center\">{escape(str(row['ctrScore']))}</td>"
+                f"<td class=\"metric-center\"><strong>{escape(str(row['finalScore']))}</strong></td>"
                 f"<td class=\"metric-center\">{escape(str(row['competitionLevel']))}</td>"
                 f"<td class=\"metric-center\">{escape(str(row['exposureAds']))}</td>"
                 f"<td class=\"metric-center\">{escape(str(row['adEfficiency']))}</td>"
@@ -2892,7 +2973,7 @@ def build_keyword_summary_rows_html(
         )
 
     if not rows:
-        return '<tr><td colspan="12" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
+        return '<tr><td colspan="15" class="empty-state">아직 요약된 키워드가 없습니다.</td></tr>'
 
     return "".join(rows)
 
@@ -2953,6 +3034,13 @@ def build_keyword_summary_page_data(
 
 
 def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    from app.services.keyword_scoring import (
+        format_score_display,
+        score_ctr_bands,
+        score_keyword_final,
+        score_monthly_search_volume,
+    )
+
     classified_keywords = keyword_status.get("classified_keywords") or []
     if not classified_keywords:
         classified_keywords = keyword_status.get("preview_rows") or []
@@ -2969,6 +3057,23 @@ def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict
         if total_searches is None:
             total_searches = keyword_row.get("total_searches")
         monthly_mobile_ctr = keyword_row.get("monthly_mobile_ctr")
+        if monthly_mobile_ctr is None:
+            monthly_mobile_ctr = keyword_row.get("avg_ctr")
+        search_volume_score = keyword_row.get("search_volume_score")
+        if search_volume_score is None and total_searches is not None:
+            try:
+                search_volume_score = score_monthly_search_volume(int(float(str(total_searches).replace(",", ""))))
+            except (TypeError, ValueError):
+                search_volume_score = None
+        ctr_score = keyword_row.get("ctr_score")
+        if ctr_score is None and monthly_mobile_ctr is not None:
+            try:
+                ctr_score = score_ctr_bands(float(str(monthly_mobile_ctr).replace("%", "").strip()))
+            except (TypeError, ValueError):
+                ctr_score = None
+        final_score = keyword_row.get("final_score")
+        if final_score is None:
+            final_score = score_keyword_final(search_volume_score, ctr_score)
         competition_level = str(keyword_row.get("competition_level") or "-")
         ad_efficiency = str(keyword_row.get("ad_efficiency") or keyword_row.get("group_name") or "-")
         click_rate_text = format_percent_value(monthly_mobile_ctr)
@@ -2992,7 +3097,10 @@ def build_keyword_summary_rows_data(keyword_status: Dict[str, Any]) -> List[Dict
                     or ("이전 저장본" if keyword_row.get("query") or keyword_row.get("seed_keyword") else "-")
                 ),
                 "totalSearches": format_metric_value(total_searches),
+                "searchVolumeScore": format_score_display(search_volume_score),
                 "clickRate": click_rate_text,
+                "ctrScore": format_score_display(ctr_score),
+                "finalScore": format_score_display(final_score),
                 "competitionLevel": competition_level,
                 "exposureAds": format_metric_value(exposure_ads),
                 "adEfficiency": ad_efficiency,

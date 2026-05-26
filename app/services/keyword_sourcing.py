@@ -14,6 +14,11 @@ from app.services.db import get_mysql_connection
 from app.services.naver_datalab import NaverShoppingInsightService
 from app.services.keyword_noise import apply_step1_noise_flags, filter_noise
 from app.services.naver_api import NaverShoppingService
+from app.services.keyword_scoring import (
+    score_ctr_bands,
+    score_keyword_final,
+    score_monthly_search_volume,
+)
 from app.services.naver_searchad import NaverSearchAdService
 from app.services.naver_search_trend import NaverSearchTrendService
 from app.services.r2_storage import R2StorageService
@@ -931,6 +936,8 @@ class KeywordSourcingService:
             if not group_name:
                 continue
 
+            volume_score = score_monthly_search_volume(monthly_mobile_searches)
+            ctr_score = score_ctr_bands(monthly_mobile_ctr)
             enriched = {
                 **row,
                 **metrics,
@@ -945,6 +952,9 @@ class KeywordSourcingService:
                 "season_months": season_months,
                 "ad_efficiency": self._to_ad_efficiency_label(metrics.get("pl_avg_depth")),
                 "group_name": group_name,
+                "search_volume_score": volume_score,
+                "ctr_score": ctr_score,
+                "final_score": score_keyword_final(volume_score, ctr_score),
             }
             enriched_rows.append(enriched)
 
