@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, Depends, Form
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from starlette.responses import StreamingResponse
@@ -52,6 +52,25 @@ async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> JSONRespo
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate",
             "Pragma": "no-cache",
+        },
+    )
+
+
+@router.get("/keyword-sourcing/live-panel", response_class=HTMLResponse)
+async def get_keyword_sourcing_live_panel(run_id: Optional[str] = None) -> HTMLResponse:
+    """Streamlit fragment — 진행 패널 HTML만 DB 스냅샷으로 갱신 (전체 페이지 새로고침 없음)."""
+    from app.api.routes_admin import (
+        build_keyword_live_panel_signature,
+        render_keyword_live_fragment_html,
+    )
+
+    payload = KeywordSourcingService.get_progress_snapshot(run_id=run_id)
+    return HTMLResponse(
+        content=render_keyword_live_fragment_html(payload),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Progress-Signature": build_keyword_live_panel_signature(payload),
         },
     )
 

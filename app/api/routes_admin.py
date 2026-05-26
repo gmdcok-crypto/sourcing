@@ -314,6 +314,16 @@ ADMIN_HTML = """
       font-weight: 700;
       vertical-align: middle;
     }
+    .live-elapsed-banner {
+      margin: 0 0 12px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(124, 156, 255, 0.35);
+      background: rgba(124, 156, 255, 0.12);
+      color: #dce4ff;
+      font-size: 13px;
+      font-weight: 700;
+    }
     .live-badge::before {
       content: "";
       width: 7px;
@@ -942,53 +952,11 @@ ADMIN_HTML = """
           </div>
           <div class="pipeline-stack">
             __AUTO_REFRESH_NOTICE__
-            <div class="progress-panel">
-              <div class="section-title">
-                <div>
-                  <h2>키워드 소싱 진행 현황</h2>
-                  <span class="live-badge" id="keyword-live-badge" hidden>실시간</span>
-                </div>
+            <div id="keyword-live-shell">
+              <div id="keyword-elapsed-banner" class="live-elapsed-banner" hidden></div>
+              <div id="keyword-live-fragment">
+                __KEYWORD_LIVE_FRAGMENT__
               </div>
-              <div class="bar-row">
-                <span class="bar-label" id="keyword-progress-label">__KEYWORD_PROGRESS_LABEL__</span>
-                <div class="bar-track"><div class="bar-fill" id="keyword-progress-fill" style="width:__KEYWORD_PROGRESS_PERCENT__%"></div></div>
-                <span class="bar-value" id="keyword-progress-value">__KEYWORD_PROGRESS_PERCENT__%</span>
-              </div>
-              <div class="progress-grid">
-                <div class="progress-card"><p class="progress-card-label">상태</p><p class="progress-card-value" id="keyword-status-text">__KEYWORD_STATUS_TEXT__</p></div>
-                <div class="progress-card"><p class="progress-card-label">처리 CID</p><p class="progress-card-value" id="keyword-processed-count">__KEYWORD_PROCESSED_COUNT__</p></div>
-                <div class="progress-card"><p class="progress-card-label">키워드 수</p><p class="progress-card-value" id="keyword-row-count">__KEYWORD_ROW_COUNT__</p></div>
-                <div class="progress-card"><p class="progress-card-label">성공 / 실패</p><p class="progress-card-value" id="keyword-success-failure">__KEYWORD_SUCCESS_FAILURE__</p></div>
-              </div>
-              <div class="progress-meta">
-                <div id="keyword-current-theme">현재 테마: __KEYWORD_CURRENT_THEME__</div>
-                <div id="keyword-current-cid">현재 CID: __KEYWORD_CURRENT_CID__</div>
-                <div id="keyword-current-query">현재 Query: __KEYWORD_CURRENT_QUERY__</div>
-                <div id="keyword-last-updated">마지막 갱신: 방금 전</div>
-              </div>
-              <div class="log-box" id="keyword-log-box">__KEYWORD_LOG_TEXT__</div>
-            </div>
-            <div class="summary-grid">
-              <div class="summary-card">
-                <p class="summary-label">Top150 수집</p>
-                <p class="summary-value" id="keyword-top150-count">__KEYWORD_TOP150_COUNT__</p>
-              </div>
-              <div class="summary-card">
-                <p class="summary-label">유효키워드 확정</p>
-                <p class="summary-value" id="keyword-top100-count">__KEYWORD_TOP100_COUNT__</p>
-              </div>
-              <div class="summary-card">
-                <p class="summary-label">광고 지표 결합</p>
-                <p class="summary-value" id="keyword-searchad-count">__KEYWORD_SEARCHAD_COUNT__</p>
-                </div>
-                <div class="summary-card">
-                <p class="summary-label">R2 저장</p>
-                <p class="summary-value" id="keyword-r2-status">__KEYWORD_R2_STATUS__</p>
-              </div>
-                <div class="summary-card">
-                <p class="summary-label">고효율 / 중간 / 대형</p>
-                <p class="summary-value" id="keyword-group-counts">__KEYWORD_GROUP_COUNTS__</p>
-                </div>
             </div>
             <div class="keyword-table-wrap">
               <div class="section-title">
@@ -1310,8 +1278,11 @@ ADMIN_HTML = """
     let keywordSummaryPageIndex = 0;
     let keywordSummaryPageSize = Number(__INITIAL_KEYWORD_PAGE_SIZE__) || 15;
     let keywordSourcingRunId = null;
-    let keywordStatusPollTimer = null;
-    let keywordEventSource = null;
+    let keywordFragmentInterval = null;
+    let keywordElapsedInterval = null;
+    let keywordMonotonicStartedAt = null;
+    let keywordLastFragmentSignature = "";
+    const KEYWORD_LIVE_FRAGMENT_MS = 1500;
     let keywordHistoryMode = __KEYWORD_HISTORY_MODE__ === "true";
     let keywordCalendarViewDate = new Date();
     let keywordDetailLoadedRunId = null;
@@ -1812,20 +1783,42 @@ ADMIN_HTML = """
       return `${path}?${params.toString()}`;
     }
 
-    function applyKeywordSourcingState(state) {
-      if (state.run_id) {
-        persistKeywordRunId(state.run_id);
+    function formatElapsedSec(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      if (hours > 0) {
+        return `${hours}시간 ${minutes}분 ${secs}초`;
       }
-
-      renderKeywordSourcingStatus(state);
-
-      const status = String(state.status || "idle");
-      if (status === "running") {
-        keywordLiveTracking = true;
-      } else if (status === "completed" || status === "failed") {
-        keywordLiveTracking = false;
+      if (minutes > 0) {
+        return `${minutes}분 ${secs}초`;
       }
+      return `${secs}초`;
+    }
 
+    function rebindKeywordFragmentRefs() {
+      keywordProgressLabel = document.getElementById("keyword-progress-label");
+      keywordProgressFill = document.getElementById("keyword-progress-fill");
+      keywordProgressValue = document.getElementById("keyword-progress-value");
+      keywordStatusText = document.getElementById("keyword-status-text");
+      keywordProcessedCount = document.getElementById("keyword-processed-count");
+      keywordRowCount = document.getElementById("keyword-row-count");
+      keywordSuccessFailure = document.getElementById("keyword-success-failure");
+      keywordCurrentTheme = document.getElementById("keyword-current-theme");
+      keywordCurrentCid = document.getElementById("keyword-current-cid");
+      keywordCurrentQuery = document.getElementById("keyword-current-query");
+      keywordLastUpdated = document.getElementById("keyword-last-updated");
+      keywordLogBox = document.getElementById("keyword-log-box");
+      keywordLiveBadge = document.getElementById("keyword-live-badge");
+      keywordTop150Count = document.getElementById("keyword-top150-count");
+      keywordTop100Count = document.getElementById("keyword-top100-count");
+      keywordSearchadCount = document.getElementById("keyword-searchad-count");
+      keywordR2Status = document.getElementById("keyword-r2-status");
+      keywordGroupCounts = document.getElementById("keyword-group-counts");
+    }
+
+    function syncKeywordLiveControls(status) {
       if (status === "running") {
         keywordDetailLoadedRunId = null;
         setKeywordLivePolling(true);
@@ -1836,32 +1829,93 @@ ADMIN_HTML = """
         }
       } else if (status === "completed" || status === "failed") {
         setKeywordLivePolling(false);
-        stopKeywordEventStream();
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = true;
-        }
-        if (state.run_id) {
-          persistKeywordRunId(state.run_id);
         }
       } else if (keywordLiveTracking) {
         setKeywordLivePolling(true);
       } else {
         setKeywordLivePolling(false);
-        stopKeywordEventStream();
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = true;
         }
-        if (state.run_id) {
-          persistKeywordRunId(state.run_id);
+      }
+    }
+
+    function syncKeywordLiveStateFromFragment() {
+      const panel = document.querySelector("#keyword-live-fragment .progress-panel");
+      if (!panel) {
+        return;
+      }
+      const status = String(panel.dataset.status || "idle");
+      const runId = String(panel.dataset.runId || "").trim();
+      const updatedAt = String(panel.dataset.updatedAt || "");
+      if (runId) {
+        persistKeywordRunId(runId);
+      }
+      if (status === "running") {
+        keywordLiveTracking = true;
+        if (keywordMonotonicStartedAt == null) {
+          keywordMonotonicStartedAt = performance.now();
+        }
+      } else if (status === "completed" || status === "failed") {
+        keywordLiveTracking = false;
+        keywordMonotonicStartedAt = null;
+        keywordLastFragmentSignature = "";
+        stopKeywordLiveFragmentLoop();
+        stopKeywordElapsedLoop();
+        if (runId && keywordDetailLoadedRunId !== runId) {
+          loadKeywordSourcingDetail(runId).catch((error) => {
+            console.error(error);
+          });
         }
       }
+      syncKeywordLiveControls(status);
+      if (updatedAt) {
+        markKeywordStatusHealthy({ updated_at: updatedAt });
+      }
+    }
 
+    function updateKeywordElapsedBanner() {
+      const banner = document.getElementById("keyword-elapsed-banner");
+      if (!banner) {
+        return;
+      }
+      if (!keywordLiveTracking || keywordMonotonicStartedAt == null) {
+        banner.hidden = true;
+        return;
+      }
+      const elapsed = Math.max(0, (performance.now() - keywordMonotonicStartedAt) / 1000);
+      banner.hidden = false;
+      banner.textContent = `⏱ ${formatElapsedSec(elapsed)} 경과 · 키워드 소싱 실행 중…`;
+    }
+
+    function applyKeywordSourcingState(state) {
+      if (state.run_id) {
+        persistKeywordRunId(state.run_id);
+      }
+      const status = String(state.status || "idle");
+      if (status === "running") {
+        keywordLiveTracking = true;
+        if (keywordMonotonicStartedAt == null) {
+          keywordMonotonicStartedAt = performance.now();
+        }
+      } else if (status === "completed" || status === "failed") {
+        keywordLiveTracking = false;
+        keywordMonotonicStartedAt = null;
+        keywordLastFragmentSignature = "";
+      }
+      syncKeywordLiveControls(status);
       markKeywordStatusHealthy(state);
-
+      if (!keywordHistoryMode) {
+        refreshKeywordLiveFragment().catch((error) => {
+          console.error(error);
+        });
+      }
       if (status !== "running" && state.run_id && keywordDetailLoadedRunId !== state.run_id) {
         loadKeywordSourcingDetail(state.run_id).catch((error) => {
           console.error(error);
@@ -1869,40 +1923,84 @@ ADMIN_HTML = """
       }
     }
 
-    function stopKeywordEventStream() {
-      if (keywordEventSource) {
-        keywordEventSource.close();
-        keywordEventSource = null;
+    async function refreshKeywordLiveFragment() {
+      if (keywordHistoryMode) {
+        return;
+      }
+      const existingPanel = document.querySelector("#keyword-live-fragment .progress-panel");
+      const existingStatus = existingPanel ? String(existingPanel.dataset.status || "idle") : "idle";
+      if (!keywordLiveTracking && existingStatus !== "running") {
+        return;
+      }
+      const response = await fetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/live-panel"), {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error("진행 패널을 불러오지 못했습니다.");
+      }
+      const signature = response.headers.get("X-Progress-Signature") || "";
+      const html = await response.text();
+      const box = document.getElementById("keyword-live-fragment");
+      if (!box) {
+        return;
+      }
+      if (signature && signature === keywordLastFragmentSignature) {
+        syncKeywordLiveStateFromFragment();
+        return;
+      }
+      keywordLastFragmentSignature = signature;
+      box.innerHTML = html;
+      rebindKeywordFragmentRefs();
+      syncKeywordLiveStateFromFragment();
+      if (keywordLogBox) {
+        requestAnimationFrame(() => {
+          keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
+        });
       }
     }
 
-    function startKeywordEventStream() {
-      if (keywordHistoryMode || typeof EventSource === "undefined") {
-        return false;
+    function stopKeywordLiveFragmentLoop() {
+      if (keywordFragmentInterval) {
+        clearInterval(keywordFragmentInterval);
+        keywordFragmentInterval = null;
       }
-      stopKeywordEventStream();
-      keywordEventSource = new EventSource(buildKeywordLiveUrl("/api/admin/keyword-sourcing/events"));
-      keywordEventSource.onmessage = (event) => {
-        try {
-          const state = JSON.parse(event.data);
-          applyKeywordSourcingState(state);
-          if (["completed", "failed"].includes(String(state.status || ""))) {
-            stopKeywordEventStream();
-          }
-        } catch (error) {
+    }
+
+    function startKeywordLiveFragmentLoop() {
+      stopKeywordLiveFragmentLoop();
+      refreshKeywordLiveFragment().catch((error) => {
+        console.error(error);
+      });
+      keywordFragmentInterval = setInterval(() => {
+        refreshKeywordLiveFragment().catch((error) => {
           console.error(error);
-        }
-      };
-      keywordEventSource.onerror = () => {
-        stopKeywordEventStream();
-        startKeywordStatusPolling();
-      };
-      return true;
+          if (keywordProgressLabel) {
+            setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중…");
+          }
+        });
+      }, KEYWORD_LIVE_FRAGMENT_MS);
+    }
+
+    function stopKeywordElapsedLoop() {
+      if (keywordElapsedInterval) {
+        clearInterval(keywordElapsedInterval);
+        keywordElapsedInterval = null;
+      }
+      const banner = document.getElementById("keyword-elapsed-banner");
+      if (banner) {
+        banner.hidden = true;
+      }
+    }
+
+    function startKeywordElapsedLoop() {
+      stopKeywordElapsedLoop();
+      updateKeywordElapsedBanner();
+      keywordElapsedInterval = setInterval(updateKeywordElapsedBanner, 1000);
     }
 
     function stopKeywordLiveUpdates() {
-      stopKeywordEventStream();
-      stopKeywordStatusPolling();
+      stopKeywordLiveFragmentLoop();
+      stopKeywordElapsedLoop();
       setKeywordLivePolling(false);
     }
 
@@ -1910,56 +2008,12 @@ ADMIN_HTML = """
       if (keywordHistoryMode) {
         return;
       }
-      stopKeywordEventStream();
-      startKeywordStatusPolling();
-      startKeywordEventStream();
+      startKeywordLiveFragmentLoop();
+      startKeywordElapsedLoop();
     }
 
     async function refreshKeywordSourcingStatus() {
-      if (keywordHistoryMode) {
-        return;
-      }
-      const state = await apiFetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/status"), {
-        timeoutMs: 8000,
-      });
-      if (keywordHistoryMode) {
-        return;
-      }
-      applyKeywordSourcingState(state);
-    }
-
-    function scheduleKeywordStatusPoll(delayMs) {
-      if (keywordStatusPollTimer) {
-        clearTimeout(keywordStatusPollTimer);
-      }
-      keywordStatusPollTimer = setTimeout(async () => {
-        keywordStatusPollTimer = null;
-        let nextDelay = keywordHistoryMode ? 5000 : 4000;
-        if (!keywordHistoryMode) {
-          try {
-            await refreshKeywordSourcingStatus();
-            nextDelay = keywordLiveTracking ? 1000 : 4000;
-          } catch (error) {
-            setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중...");
-            setKeywordStatusText(keywordStatusText, "연결 재시도 중");
-            console.error(error);
-            nextDelay = keywordLiveTracking ? 1000 : 2000;
-          }
-        }
-        scheduleKeywordStatusPoll(nextDelay);
-      }, delayMs);
-    }
-
-    function startKeywordStatusPolling() {
-      stopKeywordStatusPolling();
-      scheduleKeywordStatusPoll(0);
-    }
-
-    function stopKeywordStatusPolling() {
-      if (keywordStatusPollTimer) {
-        clearTimeout(keywordStatusPollTimer);
-        keywordStatusPollTimer = null;
-      }
+      await refreshKeywordLiveFragment();
     }
 
     function startKeywordLastUpdatedTicker() {
@@ -2239,7 +2293,7 @@ ADMIN_HTML = """
           const state = await apiFetch("/api/admin/keyword-sourcing/stop", {
             method: "POST"
           });
-          renderKeywordSourcingStatus(state);
+          applyKeywordSourcingState(state);
           if (state.run_id) {
             await loadKeywordSourcingDetail(state.run_id);
           }
@@ -2372,6 +2426,7 @@ ADMIN_HTML = """
     bootstrapKeywordRunId();
     if (keywordStatusText && keywordStatusText.textContent.trim() === "running") {
       keywordLiveTracking = true;
+      keywordMonotonicStartedAt = performance.now();
       setKeywordLivePolling(true);
     }
     if (!keywordHistoryMode) {
@@ -2481,33 +2536,9 @@ def render_admin_html(
         json.dumps(paginated_keyword_data["rows"], ensure_ascii=False),
     )
     html = html.replace("__INITIAL_KEYWORD_PAGE_SIZE__", str(page_size))
-    html = html.replace("__KEYWORD_PROGRESS_LABEL__", escape(str(keyword_status["message"])))
-    html = html.replace("__KEYWORD_PROGRESS_PERCENT__", str(keyword_status["progress_percent"]))
-    html = html.replace("__KEYWORD_STATUS_TEXT__", escape(str(keyword_status["status"])))
     html = html.replace(
-        "__KEYWORD_PROCESSED_COUNT__",
-        escape(f'{keyword_status["processed_categories"]} / {keyword_status["category_count"]}'),
-    )
-    html = html.replace("__KEYWORD_ROW_COUNT__", escape(str(keyword_status["row_count"])))
-    html = html.replace(
-        "__KEYWORD_SUCCESS_FAILURE__",
-        escape(f'{keyword_status["success_count"]} / {keyword_status["failure_count"]}'),
-    )
-    html = html.replace("__KEYWORD_CURRENT_THEME__", escape(str(keyword_status["current_theme_name"] or "-")))
-    html = html.replace("__KEYWORD_CURRENT_CID__", escape(str(keyword_status["current_cid"] or "-")))
-    html = html.replace("__KEYWORD_CURRENT_QUERY__", escape(str(keyword_status["current_query"] or "-")))
-    html = html.replace("__KEYWORD_LOG_TEXT__", escape(keyword_status["log_text"]))
-    html = html.replace("__KEYWORD_TOP150_COUNT__", escape(str(keyword_status["top150_count"])))
-    html = html.replace("__KEYWORD_TOP100_COUNT__", escape(str(keyword_status["top100_count"])))
-    html = html.replace("__KEYWORD_SEARCHAD_COUNT__", escape(str(keyword_status["searchad_count"])))
-    html = html.replace("__KEYWORD_R2_STATUS__", "완료" if keyword_status["r2_parquet_key"] else "대기")
-    html = html.replace(
-        "__KEYWORD_GROUP_COUNTS__",
-        escape(
-            f'{keyword_status["group_counts"].get("고효율", 0)} / '
-            f'{keyword_status["group_counts"].get("중간성장", 0)} / '
-            f'{keyword_status["group_counts"].get("대형", 0)}'
-        ),
+        "__KEYWORD_LIVE_FRAGMENT__",
+        render_keyword_live_fragment_html(keyword_status),
     )
     html = html.replace("__KEYWORD_SUMMARY_ROWS__", build_keyword_summary_rows_html(keyword_status, page=page, page_size=page_size))
     html = html.replace("__KEYWORD_PAGE_BUTTONS__", build_keyword_summary_page_buttons_html(paginated_keyword_data))
@@ -2524,6 +2555,88 @@ def render_admin_html(
     html = html.replace("__AUTO_REFRESH_META__", build_auto_refresh_meta(selected_tab, keyword_status, history_status))
     html = html.replace("__AUTO_REFRESH_NOTICE__", build_auto_refresh_notice(selected_tab, keyword_status, history_status))
     return html
+
+
+def render_keyword_live_fragment_html(state: Dict[str, Any]) -> str:
+    """Streamlit @st.fragment와 동일 — 진행 패널+요약만 서버 렌더 (DB 스냅샷)."""
+    progress = int(state.get("progress_percent") or 0)
+    status = str(state.get("status") or "idle")
+    run_id = str(state.get("run_id") or "")
+    message = str(state.get("message") or "대기중")
+    logs = state.get("logs")
+    if isinstance(logs, list):
+        log_text = "\n".join(str(line) for line in logs) if logs else "실행 대기중입니다."
+    else:
+        log_text = str(state.get("log_text") or "실행 대기중입니다.")
+    group_counts = state.get("group_counts") or {}
+    log_live_class = " live" if status == "running" else ""
+    badge_hidden = "" if status == "running" else " hidden"
+    updated_at = str(state.get("updated_at") or "")
+    r2_status = "완료" if state.get("r2_parquet_key") else "대기"
+    return f"""
+<div class="progress-panel" data-status="{escape(status)}" data-run-id="{escape(run_id)}" data-updated-at="{escape(updated_at)}">
+  <div class="section-title">
+    <div>
+      <h2>키워드 소싱 진행 현황</h2>
+      <span class="live-badge{badge_hidden}" id="keyword-live-badge">실시간</span>
+    </div>
+  </div>
+  <div class="bar-row">
+    <span class="bar-label" id="keyword-progress-label">{escape(message)}</span>
+    <div class="bar-track"><div class="bar-fill" id="keyword-progress-fill" style="width:{progress}%"></div></div>
+    <span class="bar-value" id="keyword-progress-value">{progress}%</span>
+  </div>
+  <div class="progress-grid">
+    <div class="progress-card"><p class="progress-card-label">상태</p><p class="progress-card-value" id="keyword-status-text">{escape(status)}</p></div>
+    <div class="progress-card"><p class="progress-card-label">처리 CID</p><p class="progress-card-value" id="keyword-processed-count">{int(state.get("processed_categories") or 0)} / {int(state.get("category_count") or 0)}</p></div>
+    <div class="progress-card"><p class="progress-card-label">키워드 수</p><p class="progress-card-value" id="keyword-row-count">{int(state.get("row_count") or 0)}</p></div>
+    <div class="progress-card"><p class="progress-card-label">성공 / 실패</p><p class="progress-card-value" id="keyword-success-failure">{int(state.get("success_count") or 0)} / {int(state.get("failure_count") or 0)}</p></div>
+  </div>
+  <div class="progress-meta">
+    <div id="keyword-current-theme">현재 테마: {escape(str(state.get("current_theme_name") or "-"))}</div>
+    <div id="keyword-current-cid">현재 CID: {escape(str(state.get("current_cid") or "-"))}</div>
+    <div id="keyword-current-query">현재 Query: {escape(str(state.get("current_query") or "-"))}</div>
+    <div id="keyword-last-updated">마지막 갱신: 방금 전</div>
+  </div>
+  <div class="log-box{log_live_class}" id="keyword-log-box">{escape(log_text)}</div>
+</div>
+<div class="summary-grid">
+  <div class="summary-card">
+    <p class="summary-label">Top150 수집</p>
+    <p class="summary-value" id="keyword-top150-count">{int(state.get("top150_count") or 0)}</p>
+  </div>
+  <div class="summary-card">
+    <p class="summary-label">유효키워드 확정</p>
+    <p class="summary-value" id="keyword-top100-count">{int(state.get("top100_count") or 0)}</p>
+  </div>
+  <div class="summary-card">
+    <p class="summary-label">광고 지표 결합</p>
+    <p class="summary-value" id="keyword-searchad-count">{int(state.get("searchad_count") or 0)}</p>
+  </div>
+  <div class="summary-card">
+    <p class="summary-label">R2 저장</p>
+    <p class="summary-value" id="keyword-r2-status">{r2_status}</p>
+  </div>
+  <div class="summary-card">
+    <p class="summary-label">고효율 / 중간 / 대형</p>
+    <p class="summary-value" id="keyword-group-counts">{int(group_counts.get("고효율", 0))} / {int(group_counts.get("중간성장", 0))} / {int(group_counts.get("대형", 0))}</p>
+  </div>
+</div>
+""".strip()
+
+
+def build_keyword_live_panel_signature(state: Dict[str, Any]) -> str:
+    logs = state.get("logs") or []
+    return "|".join(
+        [
+            str(state.get("updated_at") or ""),
+            str(len(logs)),
+            str(state.get("progress_percent") or 0),
+            str(state.get("processed_categories") or 0),
+            str(state.get("status") or ""),
+            str(state.get("message") or ""),
+        ]
+    )
 
 
 def build_auto_refresh_meta(
