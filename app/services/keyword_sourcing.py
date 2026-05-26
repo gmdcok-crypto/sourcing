@@ -141,7 +141,7 @@ class KeywordSourcingService:
             cls._active_task = None
 
     @classmethod
-    def get_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_status(cls, run_id: Optional[str] = None, *, mark_stale: bool = True) -> Dict[str, Any]:
         selected_run_id = cls._normalize_run_id(run_id)
         target_run_id = selected_run_id or cls._active_run_id or cls._latest_run_id
 
@@ -153,7 +153,8 @@ class KeywordSourcingService:
             state = cls._load_state_from_db(run_id=target_run_id)
         if state:
             if (
-                str(state.get("status") or "") == "running"
+                mark_stale
+                and str(state.get("status") or "") == "running"
                 and not cls._local_task_running(state.get("run_id"))
                 and cls._is_stale_running_state(state)
             ):
@@ -223,8 +224,7 @@ class KeywordSourcingService:
         return export_state
 
     @classmethod
-    def get_progress_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
-        state = cls.get_status(run_id=run_id)
+    def _progress_payload_from_state(cls, state: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "run_id": state.get("run_id"),
             "status": state.get("status") or "idle",
@@ -251,6 +251,25 @@ class KeywordSourcingService:
             "searchad_count": int(state.get("searchad_count") or 0),
             "group_counts": state.get("group_counts") or {},
         }
+
+    @classmethod
+    def get_progress_snapshot(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
+        """Admin live polling: DB-first, read-only, never marks runs stale."""
+        selected_run_id = cls._normalize_run_id(run_id)
+        if selected_run_id and cls._local_task_running(selected_run_id):
+            return cls._progress_payload_from_state(dict(cls._runs[selected_run_id]))
+
+        state = cls._load_state_from_db(run_id=selected_run_id)
+        if state is None:
+            return cls._progress_payload_from_state(cls._empty_state())
+        return cls._progress_payload_from_state(state)
+
+    @classmethod
+    def get_progress_status(cls, run_id: Optional[str] = None, *, mark_stale: bool = True) -> Dict[str, Any]:
+        if not mark_stale:
+            return cls.get_progress_snapshot(run_id=run_id)
+        state = cls.get_status(run_id=run_id, mark_stale=mark_stale)
+        return cls._progress_payload_from_state(state)
 
     @classmethod
     def get_final_keyword_rows(

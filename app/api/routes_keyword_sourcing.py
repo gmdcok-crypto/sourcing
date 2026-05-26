@@ -46,7 +46,7 @@ async def stop_keyword_sourcing() -> Dict[str, Any]:
 
 @router.get("/keyword-sourcing/status")
 async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> JSONResponse:
-    payload = KeywordSourcingService.get_progress_status(run_id=run_id)
+    payload = KeywordSourcingService.get_progress_snapshot(run_id=run_id)
     return JSONResponse(
         content=payload,
         headers={
@@ -66,7 +66,7 @@ async def stream_keyword_sourcing_events(run_id: Optional[str] = None) -> Stream
         idle_ticks = 0
 
         while idle_ticks < 6:
-            state = KeywordSourcingService.get_progress_status(run_id=resolved_run_id)
+            state = KeywordSourcingService.get_progress_snapshot(run_id=resolved_run_id)
             if state.get("run_id"):
                 resolved_run_id = str(state["run_id"])
 

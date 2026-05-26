@@ -1318,6 +1318,7 @@ ADMIN_HTML = """
     let keywordStatusLastSuccessAt = Date.now();
     let keywordLastServerUpdatedAt = "";
     let keywordLastLogCount = 0;
+    let keywordLiveTracking = false;
     const KEYWORD_RUN_STORAGE_KEY = "sourcing.admin.keywordRunId";
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
@@ -1804,12 +1805,11 @@ ADMIN_HTML = """
     function buildKeywordLiveUrl(path) {
       const params = new URLSearchParams();
       params.set("_ts", String(Date.now()));
+      const runId = String(keywordSourcingRunId || "").trim();
+      if (runId) {
+        params.set("run_id", runId);
+      }
       return `${path}?${params.toString()}`;
-    }
-
-    function isPipelineTabActive() {
-      const pipelinePanel = document.getElementById("pipeline");
-      return Boolean(pipelinePanel && pipelinePanel.classList.contains("active"));
     }
 
     function applyKeywordSourcingState(state) {
@@ -1821,6 +1821,12 @@ ADMIN_HTML = """
 
       const status = String(state.status || "idle");
       if (status === "running") {
+        keywordLiveTracking = true;
+      } else if (status === "completed" || status === "failed") {
+        keywordLiveTracking = false;
+      }
+
+      if (status === "running") {
         keywordDetailLoadedRunId = null;
         setKeywordLivePolling(true);
         runKeywordSourcingBtn.disabled = true;
@@ -1828,6 +1834,19 @@ ADMIN_HTML = """
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = false;
         }
+      } else if (status === "completed" || status === "failed") {
+        setKeywordLivePolling(false);
+        stopKeywordEventStream();
+        runKeywordSourcingBtn.disabled = false;
+        runKeywordSourcingBtn.textContent = "키워드 소싱";
+        if (stopKeywordSourcingBtn) {
+          stopKeywordSourcingBtn.disabled = true;
+        }
+        if (state.run_id) {
+          persistKeywordRunId(state.run_id);
+        }
+      } else if (keywordLiveTracking) {
+        setKeywordLivePolling(true);
       } else {
         setKeywordLivePolling(false);
         stopKeywordEventStream();
@@ -1893,10 +1912,11 @@ ADMIN_HTML = """
       }
       stopKeywordEventStream();
       startKeywordStatusPolling();
+      startKeywordEventStream();
     }
 
     async function refreshKeywordSourcingStatus() {
-      if (keywordHistoryMode || !isPipelineTabActive()) {
+      if (keywordHistoryMode) {
         return;
       }
       const state = await apiFetch(buildKeywordLiveUrl("/api/admin/keyword-sourcing/status"), {
@@ -1917,19 +1937,13 @@ ADMIN_HTML = """
         let nextDelay = keywordHistoryMode ? 5000 : 4000;
         if (!keywordHistoryMode) {
           try {
-            if (isPipelineTabActive()) {
-              await refreshKeywordSourcingStatus();
-            }
-            const status = (keywordStatusText && keywordStatusText.textContent
-              ? keywordStatusText.textContent
-              : ""
-            ).trim();
-            nextDelay = status === "running" ? 1000 : 4000;
+            await refreshKeywordSourcingStatus();
+            nextDelay = keywordLiveTracking ? 1000 : 4000;
           } catch (error) {
             setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중...");
             setKeywordStatusText(keywordStatusText, "연결 재시도 중");
             console.error(error);
-            nextDelay = 2000;
+            nextDelay = keywordLiveTracking ? 1000 : 2000;
           }
         }
         scheduleKeywordStatusPoll(nextDelay);
@@ -2201,16 +2215,11 @@ ADMIN_HTML = """
           if (selectedThemeId) {
             payload.theme_id = Number(selectedThemeId);
           }
-          const state = await apiFetch("/api/admin/keyword-sourcing/test", {
+          await apiFetch("/api/admin/keyword-sourcing/test", {
             method: "POST",
             body: JSON.stringify(payload)
           });
-          switchAdminTab("pipeline");
-          const pipelineUrl = new URL(window.location.href);
-          pipelineUrl.searchParams.set("tab", "pipeline");
-          history.pushState({ tab: "pipeline" }, "", pipelineUrl.pathname + pipelineUrl.search);
-          applyKeywordSourcingState(state);
-          startKeywordLiveUpdates();
+          window.location.assign(`/admin?tab=pipeline&_started=${Date.now()}`);
           return;
         } catch (error) {
           alert(`키워드 소싱 실패: ${error.message}`);
@@ -2361,6 +2370,10 @@ ADMIN_HTML = """
     });
     renderKeywordSummaryRows(keywordSummaryRows);
     bootstrapKeywordRunId();
+    if (keywordStatusText && keywordStatusText.textContent.trim() === "running") {
+      keywordLiveTracking = true;
+      setKeywordLivePolling(true);
+    }
     if (!keywordHistoryMode) {
       refreshKeywordSourcingStatus().catch((error) => {
         if (keywordLogBox) {
