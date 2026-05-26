@@ -9,3 +9,4 @@ pandas
 pytest
 streamlit
 boto3
+pyyaml

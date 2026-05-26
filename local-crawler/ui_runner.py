@@ -16,6 +16,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from config import LocalCrawlerSettings, get_settings
 from railway_client import RailwayKeywordClient
+from services.coupang_entry_scoring import CoupangEntryScoringEngine
 
 LOCAL_ROOT = Path(__file__).resolve().parent
 PORTING_DB_PATH = LOCAL_ROOT.parent / "porting" / "coupang_crawl_core" / "db.py"
@@ -201,10 +202,11 @@ def get_ui_state() -> Dict[str, Any]:
 
 
 def get_ui_results() -> Dict[str, Any]:
-    payload = _read_json(RESULTS_PATH, {"job_id": None, "items": []})
+    payload = _read_json(RESULTS_PATH, {"job_id": None, "items": [], "keyword_scores": []})
     if not isinstance(payload, dict):
-        return {"job_id": None, "items": []}
+        return {"job_id": None, "items": [], "keyword_scores": []}
     payload.setdefault("items", [])
+    payload.setdefault("keyword_scores", [])
     return payload
 
 
@@ -235,8 +237,69 @@ def _reset_results(job_id: str) -> None:
             "job_id": job_id,
             "generated_at": _now_iso(),
             "items": [],
+            "keyword_scores": [],
         },
     )
+
+
+_SCORING_ENGINE = CoupangEntryScoringEngine()
+
+
+def _collect_keyword_top10_items(keyword: str) -> List[Dict[str, Any]]:
+    payload = get_ui_results()
+    rows = [
+        row
+        for row in (payload.get("items") or [])
+        if str(row.get("keyword") or "").strip() == keyword
+    ]
+    rows.sort(key=lambda row: int(row.get("rank") or 999))
+    top10: List[Dict[str, Any]] = []
+    for row in rows:
+        if row.get("rank") is None:
+            continue
+        top10.append(
+            {
+                "rank": row.get("rank"),
+                "title": row.get("title") or "",
+                "price": row.get("price"),
+                "review_count": row.get("review_count"),
+                "rating": row.get("review_score"),
+                "delivery_type": row.get("delivery_type") or "",
+            }
+        )
+        if len(top10) >= 10:
+            break
+    return top10
+
+
+def _upsert_keyword_score(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
+    keyword = str(keyword_row.get("keyword") or "").strip()
+    if not keyword:
+        return {}
+
+    top10_items = _collect_keyword_top10_items(keyword)
+    score_payload = _SCORING_ENGINE.score_keyword(
+        keyword,
+        top10_items,
+        metadata={
+            "group_name": keyword_row.get("group_name") or "",
+            "theme_name": keyword_row.get("theme_name") or "",
+            "theme_detail": keyword_row.get("theme_detail") or "",
+        },
+    )
+    score_payload["scored_at"] = _now_iso()
+
+    payload = get_ui_results()
+    scores = [
+        row
+        for row in (payload.get("keyword_scores") or [])
+        if str(row.get("keyword") or "").strip() != keyword
+    ]
+    scores.append(score_payload)
+    payload["keyword_scores"] = scores
+    payload["generated_at"] = _now_iso()
+    _write_json(RESULTS_PATH, payload)
+    return score_payload
 
 
 def _append_result_row(row: Dict[str, Any]) -> None:
@@ -470,8 +533,19 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
 
             state = get_ui_state()
             if success:
+                score_payload = _upsert_keyword_score(keyword_row)
                 state["success_count"] = int(state.get("success_count") or 0) + 1
-                _append_log(state, f"{keyword} 완료", level="success")
+                final_score = score_payload.get("final_score")
+                final_grade = score_payload.get("final_grade")
+                entry_decision = score_payload.get("entry_decision")
+                _append_log(
+                    state,
+                    (
+                        f"{keyword} 완료 — 진입점수 {final_score} ({final_grade}) "
+                        f"/ {entry_decision}"
+                    ),
+                    level="success",
+                )
                 synced = _sync_keyword_result_to_db(
                     settings=settings,
                     keyword=keyword,

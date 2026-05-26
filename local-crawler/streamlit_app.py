@@ -445,12 +445,43 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     )
 
 
+TIER_BADGE_COLORS = {
+    "raw_gem": "#22c55e",
+    "gold": "#eab308",
+    "diamond": "#60a5fa",
+    "premium": "#f97316",
+}
+
+ENTRY_DECISION_LABELS = {
+    "recommend": ("진입 추천", "#16a34a"),
+    "selective": ("선별 검토", "#d97706"),
+    "hold": ("보류", "#dc2626"),
+}
+
+
+def _tier_badge_html(tier: str) -> str:
+    color = TIER_BADGE_COLORS.get(str(tier or "").strip(), "#6b7280")
+    label = str(tier or "-").upper()
+    return (
+        f'<span style="display:inline-block;padding:6px 12px;border-radius:999px;'
+        f"background:{color}22;color:{color};border:1px solid {color};"
+        f'font-weight:700;font-size:13px;">{label}</span>'
+    )
+
+
+def _entry_badge_html(decision: str) -> str:
+    label, color = ENTRY_DECISION_LABELS.get(str(decision or "").strip(), ("-", "#6b7280"))
+    return (
+        f'<span style="display:inline-block;padding:8px 14px;border-radius:10px;'
+        f"background:{color}22;color:{color};border:1px solid {color};"
+        f'font-weight:700;font-size:14px;">{label}</span>'
+    )
+
+
 @st.fragment(run_every=timedelta(seconds=1.5))
 def _render_live_runtime() -> None:
-    """Streamlit fragment — 진행 지표·상태·상품 결과·로그만 주기 갱신."""
-    settings = get_settings()
+    """Streamlit fragment — 진행 지표·상태·로그 주기 갱신."""
     state = get_ui_state()
-    results = get_ui_results()
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("실행 상태", str(state.get("status") or "idle"))
@@ -466,6 +497,18 @@ def _render_live_runtime() -> None:
 
     _render_status_panel(state)
 
+    st.markdown("### 로그")
+    log_text = _logs_to_lines(list(state.get("logs") or []))
+    if log_text.strip():
+        _render_dark_log_box(log_text)
+    else:
+        st.caption("로그 수집 중…")
+
+
+@st.fragment(run_every=timedelta(seconds=1.5))
+def _render_product_results() -> None:
+    state = get_ui_state()
+    results = get_ui_results()
     st.markdown("### 상품 결과 테이블")
     result_items = list(results.get("items") or [])
     if result_items:
@@ -486,12 +529,94 @@ def _render_live_runtime() -> None:
     else:
         st.info("아직 표시할 상품 결과가 없습니다.")
 
-    st.markdown("### 로그")
-    log_text = _logs_to_lines(list(state.get("logs") or []))
-    if log_text.strip():
-        _render_dark_log_box(log_text)
-    else:
-        st.caption("로그 수집 중…")
+
+@st.fragment(run_every=timedelta(seconds=1.5))
+def _render_entry_scoring_tab() -> None:
+    results = get_ui_results()
+    scores = list(results.get("keyword_scores") or [])
+    if not scores:
+        st.info("크롤링이 완료된 키워드가 있으면 진입 점수가 여기에 표시됩니다.")
+        return
+
+    keywords = [str(row.get("keyword") or "") for row in scores if row.get("keyword")]
+    selected_keyword = st.selectbox("키워드 선택", options=keywords, index=0)
+    row = next((item for item in scores if item.get("keyword") == selected_keyword), scores[0])
+
+    final_score = float(row.get("final_score") or 0)
+    final_grade = str(row.get("final_grade") or "-")
+    keyword_tier = str(row.get("keyword_tier") or "-")
+    entry_decision = str(row.get("entry_decision") or "hold")
+
+    st.markdown("### 시장 진입 가능성")
+    gauge_col, badge_col = st.columns([2, 1])
+    with gauge_col:
+        st.progress(min(max(final_score / 100.0, 0.0), 1.0))
+        st.markdown(
+            f"<div style='font-size:32px;font-weight:800;color:#f9fafb;'>"
+            f"{final_score:.1f}점 <span style='font-size:18px;color:#9ca3af;'>/ 100 "
+            f"(등급 {final_grade})</span></div>",
+            unsafe_allow_html=True,
+        )
+    with badge_col:
+        st.markdown(_tier_badge_html(keyword_tier), unsafe_allow_html=True)
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.markdown(_entry_badge_html(entry_decision), unsafe_allow_html=True)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("리뷰 진입점수", f"{row.get('coupang_review_score', 0)} ({row.get('coupang_review_grade', '-')})")
+    m2.metric("배송 점수", row.get("coupang_delivery_score", 0))
+    m3.metric("로켓 점유율", f"{row.get('rocket_ratio', 0)}%")
+    m4.metric("리뷰 중앙값", _to_display_int(row.get("review_median")))
+
+    m5, m6, m7, m8 = st.columns(4)
+    m5.metric("티어 점수", row.get("tier_score", 0))
+    m6.metric("로켓 패널티", row.get("rocket_penalty_score", 0))
+    m7.metric("평점 품질", row.get("rating_quality_score", 0))
+    m8.metric("리뷰≤500", row.get("review_under_500_count", 0))
+
+    chart_col, detail_col = st.columns([1, 1])
+    with chart_col:
+        st.markdown("#### 리뷰 분포 (Top10)")
+        distribution = list(row.get("review_distribution") or [])
+        if distribution:
+            chart_df = pd.DataFrame(
+                {
+                    "순위": [f"#{item.get('rank')}" for item in distribution],
+                    "리뷰수": [
+                        int(item.get("review_count") or 0) for item in distribution
+                    ],
+                }
+            )
+            st.bar_chart(chart_df, x="순위", y="리뷰수", use_container_width=True)
+        else:
+            st.caption("리뷰 분포 데이터 없음")
+
+    with detail_col:
+        st.markdown("#### 배송 유형 breakdown")
+        delivery_rows = list(row.get("delivery_breakdown") or [])
+        if delivery_rows:
+            st.dataframe(
+                _style_dark_dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "순위": item.get("rank"),
+                                "배송유형": item.get("delivery_type"),
+                                "배송점수": item.get("delivery_score"),
+                            }
+                            for item in delivery_rows
+                        ]
+                    )
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    if row.get("top10_incomplete"):
+        st.warning(f"Top10 미만 수집 ({row.get('top10_count', 0)}건) — 미수집 슬롯은 일반배송 점수로 보정됩니다.")
+
+    with st.expander("점수 산출 상세 JSON"):
+        st.json(row)
 
 
 def main() -> None:
@@ -526,23 +651,35 @@ def main() -> None:
 
         st.caption("실행 중 진행·로그·상품 결과는 약 1.5초마다 자동 갱신됩니다.")
 
-    st.markdown("### 배치 대상 미리보기")
-    try:
-        keyword_payload = fetch_batch_keywords(limit=int(keyword_limit))
-        preview_rows = keyword_payload.get("keywords") or []
-        if preview_rows:
-            preview_df = _preview_dataframe(preview_rows)
-            st.dataframe(
-                _style_dark_dataframe(preview_df),
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            st.info("불러올 final keywords가 없습니다.")
-    except Exception as exc:
-        st.warning(f"키워드 조회 실패: {exc}")
+    tab_batch, tab_products, tab_scoring = st.tabs(
+        ["1. 배치 실행", "2. 상품 결과", "3. 시장 진입 점수"]
+    )
 
-    _render_live_runtime()
+    with tab_batch:
+        st.markdown("### 배치 대상 미리보기")
+        try:
+            keyword_payload = fetch_batch_keywords(limit=int(keyword_limit))
+            preview_rows = keyword_payload.get("keywords") or []
+            if preview_rows:
+                preview_df = _preview_dataframe(preview_rows)
+                st.dataframe(
+                    _style_dark_dataframe(preview_df),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("불러올 final keywords가 없습니다.")
+        except Exception as exc:
+            st.warning(f"키워드 조회 실패: {exc}")
+
+        _render_live_runtime()
+
+    with tab_products:
+        _render_product_results()
+
+    with tab_scoring:
+        st.caption("쿠팡 Top10 크롤 데이터 기반 OEM/사입 시장 진입 가능성 점수 (100점 만점)")
+        _render_entry_scoring_tab()
 
 
 if __name__ == "__main__":

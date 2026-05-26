@@ -1,0 +1,104 @@
+# OEM/사입 셀러 시장 진입 가능성 점수 — threshold·가중치 (수정 시 재시작)
+
+top10_slots: 10
+
+delivery_types:
+  general: 90
+  seller_rocket: 60
+  rocket_growth: 60
+  rocket: 30
+
+delivery_aliases:
+  일반배송: general
+  판매자배송: general
+  로켓배송: rocket
+  로켓프레시: rocket
+  판매자로켓: seller_rocket
+  로켓그로스: rocket_growth
+
+rocket_delivery_types:
+  - rocket
+  - seller_rocket
+  - rocket_growth
+
+review_entry:
+  thresholds:
+    - min_count: 7
+      score: 100
+      grade: 진입우선
+    - min_count: 6
+      score: 80
+      grade: 양호
+    - min_count: 5
+      score: 70
+      grade: 보통
+    - min_count: 4
+      score: 60
+      grade: 주의
+    - min_count: 0
+      score: 40
+      grade: 협소
+  review_under_limit: 500
+
+tier:
+  premium_min_median: 1000
+  diamond_min_median: 700
+  gold_min_median: 400
+  scores:
+    raw_gem: 100
+    gold: 75
+    diamond: 45
+    premium: 20
+
+rocket_penalty:
+  bands:
+    - max_ratio: 30
+      score: 100
+    - max_ratio: 50
+      score: 80
+    - max_ratio: 70
+      score: 60
+    - max_ratio: 100
+      score: 30
+
+rating_quality:
+  bands:
+    - min_avg: 4.7
+      score: 100
+    - min_avg: 4.5
+      score: 85
+    - min_avg: 4.3
+      score: 70
+    - min_avg: 0
+      score: 50
+
+final_weights:
+  review_score: 0.35
+  delivery_score: 0.20
+  tier_score: 0.25
+  rocket_penalty: 0.15
+  rating_quality: 0.05
+
+final_grades:
+  - min_score: 90
+    grade: S
+  - min_score: 80
+    grade: A
+  - min_score: 70
+    grade: B
+  - min_score: 60
+    grade: C
+  - min_score: 0
+    grade: D
+
+entry_decision:
+  recommend_min_final: 80
+  recommend_max_rocket_ratio: 55
+  recommend_tiers:
+    - raw_gem
+    - gold
+  selective_min_final: 65
+  hold_max_final: 65
+  hold_tiers:
+    - premium
+  hold_min_rocket_ratio: 70
