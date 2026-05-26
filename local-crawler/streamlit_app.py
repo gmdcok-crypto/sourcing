@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -87,12 +86,18 @@ def _apply_dark_theme() -> None:
     )
 
 
+KST = ZoneInfo("Asia/Seoul")
+
+
 def _format_timestamp(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
         return "-"
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M:%S")
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S")
     except ValueError:
         return raw
 
@@ -406,47 +411,58 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     )
 
 
-def _auto_refresh_when_active(state: Dict[str, Any], refresh_seconds: int) -> None:
-    status = str(state.get("status") or "").strip().lower()
-    if status not in {"starting", "running"}:
-        st.session_state.pop("crawler_refresh_signature", None)
-        return
+@st.fragment(run_every=timedelta(seconds=1.5))
+def _render_live_runtime() -> None:
+    """Streamlit fragment — 진행 지표·상태·상품 결과·로그만 주기 갱신."""
+    settings = get_settings()
+    state = get_ui_state()
+    results = get_ui_results()
 
-    signature = "|".join(
-        [
-            status,
-            str(state.get("current_index") or 0),
-            str(state.get("success_count") or 0),
-            str(state.get("failure_count") or 0),
-            str(state.get("current_keyword") or ""),
-            str(state.get("last_run_at") or ""),
-        ]
-    )
-    previous_signature = str(st.session_state.get("crawler_refresh_signature") or "")
-    st.session_state["crawler_refresh_signature"] = signature
-    poll_ms = max(800, int(refresh_seconds or 5) * 1000)
-    components.html(
-        f"""
-        <script>
-        const previousSignature = {json.dumps(previous_signature)};
-        const currentSignature = {json.dumps(signature)};
-        setTimeout(function() {{
-            if (previousSignature && previousSignature !== currentSignature) {{
-                window.parent.location.reload();
-            }}
-        }}, {poll_ms});
-        </script>
-        """,
-        height=0,
-    )
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("실행 상태", str(state.get("status") or "idle"))
+    col2.metric("현재 키워드", str(state.get("current_keyword") or "-"))
+    col3.metric("진행", f"{int(state.get('current_index') or 0)} / {int(state.get('total_count') or 0)}")
+    col4.metric("마지막 실행", _format_timestamp(state.get("last_run_at")))
+
+    col5, col6, col7, col8 = st.columns(4)
+    col5.metric("성공", int(state.get("success_count") or 0))
+    col6.metric("실패", int(state.get("failure_count") or 0))
+    col7.metric("Bright Data", "ON" if state.get("bright_data_enabled") else "OFF")
+    col8.metric("결과 저장", "R2 / Local" if state.get("result_locations", {}).get("r2_key") else "Local")
+
+    _render_status_panel(state)
+
+    st.markdown("### 상품 결과 테이블")
+    result_items = list(results.get("items") or [])
+    if result_items:
+        df = _result_dataframe(result_items)
+        st.dataframe(
+            _style_dark_dataframe(df),
+            use_container_width=True,
+            hide_index=True,
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "CSV 다운로드",
+            data=csv_bytes,
+            file_name="local-crawler-results.csv",
+            mime="text/csv",
+            key=f"csv-download-{state.get('job_id') or 'idle'}",
+        )
+    else:
+        st.info("아직 표시할 상품 결과가 없습니다.")
+
+    st.markdown("### 로그")
+    log_text = _logs_to_lines(list(state.get("logs") or []))
+    if log_text.strip():
+        st.code(log_text, language="text")
+    else:
+        st.caption("로그 수집 중…")
 
 
 def main() -> None:
     settings = get_settings()
-    state = get_ui_state()
-    results = get_ui_results()
     _apply_dark_theme()
-    _auto_refresh_when_active(state, int(settings.ui_refresh_seconds))
 
     st.title("Local Crawler Console")
     st.caption("로컬 PC에서 final keywords 배치를 실행하고 상태, 로그, 상품 결과를 확인합니다.")
@@ -472,23 +488,9 @@ def main() -> None:
             st.rerun()
 
         st.divider()
-        _render_environment_panel(settings, state)
+        _render_environment_panel(settings, get_ui_state())
 
-        st.caption("실행 중에는 키워드 단위 상태 변화가 있을 때만 화면이 자동 새로고침됩니다.")
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("실행 상태", str(state.get("status") or "idle"))
-    col2.metric("현재 키워드", str(state.get("current_keyword") or "-"))
-    col3.metric("진행", f"{int(state.get('current_index') or 0)} / {int(state.get('total_count') or 0)}")
-    col4.metric("마지막 실행", _format_timestamp(state.get("last_run_at")))
-
-    col5, col6, col7, col8 = st.columns(4)
-    col5.metric("성공", int(state.get("success_count") or 0))
-    col6.metric("실패", int(state.get("failure_count") or 0))
-    col7.metric("Bright Data", "ON" if state.get("bright_data_enabled") else "OFF")
-    col8.metric("결과 저장", "R2 / Local" if state.get("result_locations", {}).get("r2_key") else "Local")
-
-    _render_status_panel(state)
+        st.caption("실행 중 진행·로그·상품 결과는 약 1.5초마다 자동 갱신됩니다.")
 
     st.markdown("### 배치 대상 미리보기")
     try:
@@ -506,31 +508,7 @@ def main() -> None:
     except Exception as exc:
         st.warning(f"키워드 조회 실패: {exc}")
 
-    st.markdown("### 상품 결과 테이블")
-    result_items = list(results.get("items") or [])
-    if result_items:
-        df = _result_dataframe(result_items)
-        st.dataframe(
-            _style_dark_dataframe(df),
-            use_container_width=True,
-            hide_index=True,
-        )
-        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            "CSV 다운로드",
-            data=csv_bytes,
-            file_name="local-crawler-results.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("아직 표시할 상품 결과가 없습니다.")
-
-    st.markdown("### 로그")
-    st.text_area(
-        "실시간 로그",
-        value=_logs_to_lines(list(state.get("logs") or [])),
-        height=260,
-    )
+    _render_live_runtime()
 
 
 if __name__ == "__main__":

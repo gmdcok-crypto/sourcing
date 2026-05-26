@@ -534,18 +534,32 @@ def start_batch_run(*, retry_failed_only: bool = False, limit: Optional[int] = N
         return state
     STOP_PATH.unlink(missing_ok=True)
     job_id = uuid.uuid4().hex[:12]
-    _update_state(
-        job_id=job_id,
-        status="starting",
-        message="배치 시작 준비 중",
-        started_at=_now_iso(),
-        finished_at=None,
-        last_error="",
-        current_keyword="",
-        current_index=0,
-        success_count=0,
-        failure_count=0,
+    fresh_state = _default_state()
+    fresh_state.update(
+        {
+            "job_id": job_id,
+            "status": "starting",
+            "message": "배치 시작 준비 중",
+            "run_id": state.get("run_id"),
+            "current_keyword": "",
+            "current_index": 0,
+            "total_count": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "last_error": "",
+            "started_at": _now_iso(),
+            "finished_at": None,
+            "last_run_at": _now_iso(),
+            "logs": [],
+        }
     )
+    _append_log(
+        fresh_state,
+        "실패건 재실행 준비" if retry_failed_only else "배치 시작 준비",
+        level="info",
+    )
+    _write_json(STATE_PATH, fresh_state)
+    _reset_results(job_id)
     _RUNNER_THREAD = threading.Thread(
         target=_runner_main,
         kwargs={"retry_failed_only": retry_failed_only, "limit": limit},
