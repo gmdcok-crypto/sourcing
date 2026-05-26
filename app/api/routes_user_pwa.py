@@ -170,16 +170,38 @@ USER_PWA_HTML = """
       margin: 0 0 8px;
     }
 
-    .card-title {
-      font-size: 13px;
-      line-height: 1.55;
-      color: #dce4ff;
-      min-height: 40px;
+    .card-scores {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-bottom: 14px;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+    }
+
+    .score-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      font-size: 12px;
+      line-height: 1;
+      color: #c7d2fe;
+    }
+
+    .score-pill strong {
+      color: #f8fbff;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .score-pill.ai-error {
+      border-radius: 12px;
+      max-width: 100%;
+      white-space: normal;
+      line-height: 1.35;
     }
 
     .top-line {
@@ -699,6 +721,46 @@ DRAG_IMAGE_HELPER_HTML = """
 """
 
 
+def _format_score_value(value: Any) -> str:
+    if value in (None, ""):
+        return "-"
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _format_ai_score_display(card: Dict[str, Any]) -> str:
+    ai_score = card.get("ai_score")
+    if ai_score not in (None, ""):
+        text = _format_score_value(ai_score)
+        tier = str(card.get("ai_tier") or "").strip()
+        return f"{text} ({tier})" if tier else text
+    error = str(card.get("ai_scoring_error") or "").strip()
+    if error:
+        return error[:36]
+    return "-"
+
+
+def _render_card_scores(card: Dict[str, Any]) -> str:
+    coupang_text = escape(_format_score_value(card.get("coupang_score")))
+    naver_text = escape(_format_score_value(card.get("naver_score")))
+    ai_raw = _format_ai_score_display(card)
+    ai_error = card.get("ai_score") in (None, "") and bool(str(card.get("ai_scoring_error") or "").strip())
+    ai_text = escape(ai_raw)
+    if ai_error:
+        ai_markup = f'<span class="score-pill ai-error">AI {ai_text}</span>'
+    else:
+        ai_markup = f'<span class="score-pill">AI <strong>{ai_text}</strong></span>'
+    return f"""
+        <div class="card-scores">
+          <span class="score-pill">네이버 <strong>{naver_text}</strong></span>
+          <span class="score-pill">쿠팡 <strong>{coupang_text}</strong></span>
+          {ai_markup}
+        </div>
+    """
+
+
 def _render_delivery_mix(items: Any) -> str:
     values = list(items or [])
     if not values:
@@ -723,7 +785,6 @@ def _render_card(card: Dict[str, Any]) -> str:
     tier_key = escape(str(card.get("tier_key") or "unknown"))
     tier_label = escape(str(card.get("tier_label") or "⚪ 미검증"))
     tier_reason = escape(str(card.get("tier_reason") or "데이터 없음"))
-    top_title = escape(str(card.get("top_product_title") or "상위 상품 데이터 없음"))
     keyword = escape(str(card.get("keyword") or ""))
     product_url = escape(str(card.get("top_product_url") or "#"))
     raw_image_url = escape(image_url)
@@ -736,7 +797,7 @@ def _render_card(card: Dict[str, Any]) -> str:
       </div>
       <div class="card-body">
         <h3 class="card-keyword">{keyword}</h3>
-        <div class="card-title">{top_title}</div>
+        {_render_card_scores(card)}
         <div class="top-line">
           <span class="chip tier-{tier_key}">{tier_label}</span>
           <span class="chip">1위 {price_text}</span>

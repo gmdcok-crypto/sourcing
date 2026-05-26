@@ -19,10 +19,11 @@ class UserPwaFeedService:
 
     @classmethod
     def build_feed(cls) -> Dict[str, Any]:
+        score_map = cls._build_keyword_score_map()
         try:
             crawled_rows = cls._load_latest_crawled_rows()
         except Exception:
-            fallback_themes = cls._build_local_only_themes()
+            fallback_themes = cls._build_local_only_themes(score_map=score_map)
             return {
                 "status": "ok",
                 "run_id": None,
@@ -30,7 +31,7 @@ class UserPwaFeedService:
             }
 
         if not crawled_rows:
-            fallback_themes = cls._build_local_only_themes()
+            fallback_themes = cls._build_local_only_themes(score_map=score_map)
             return {
                 "status": "ok",
                 "run_id": None,
@@ -40,12 +41,165 @@ class UserPwaFeedService:
         return {
             "status": "ok",
             "run_id": None,
-            "themes": cls._group_crawled_rows_by_theme(crawled_rows),
+            "themes": cls._group_crawled_rows_by_theme(crawled_rows, score_map=score_map),
         }
 
     @classmethod
-    def _build_local_only_themes(cls) -> List[Dict[str, Any]]:
+    def _build_keyword_score_map(cls) -> Dict[str, Dict[str, Any]]:
+        merged: Dict[str, Dict[str, Any]] = {}
+        for row in cls._load_local_keyword_scores():
+            keyword = str(row.get("keyword") or "").strip()
+            if keyword:
+                merged[keyword] = cls._normalize_score_row(row)
+        for row in cls._load_r2_keyword_scores():
+            keyword = str(row.get("keyword") or "").strip()
+            if keyword:
+                merged[keyword] = cls._normalize_score_row(row)
+        missing = [keyword for keyword, payload in merged.items() if payload.get("naver_score") is None]
+        if missing:
+            for keyword, naver_score in cls._load_naver_scores_from_db(missing).items():
+                if keyword in merged and merged[keyword].get("naver_score") is None:
+                    merged[keyword]["naver_score"] = naver_score
+        return merged
+
+    @classmethod
+    def _load_r2_keyword_scores(cls) -> List[Dict[str, Any]]:
+        settings = get_settings()
+        service = R2StorageService(settings)
+        key = service.find_latest_local_crawler_result_key()
+        if not key:
+            return []
+        payload = service.read_json(key=key) or {}
+        scores = payload.get("keyword_scores") or []
+        return [row for row in scores if isinstance(row, dict)]
+
+    @classmethod
+    def _load_local_keyword_scores(cls) -> List[Dict[str, Any]]:
+        path = cls.LOCAL_UI_RESULTS_PATH
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        scores = payload.get("keyword_scores") or []
+        return [row for row in scores if isinstance(row, dict)]
+
+    @classmethod
+    def _normalize_score_row(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        coupang_score = cls._parse_score(row.get("coupang_score"))
+        if coupang_score is None:
+            coupang_score = cls._parse_score(row.get("final_score"))
+        return {
+            "coupang_score": coupang_score,
+            "naver_score": cls._parse_score(row.get("naver_score")),
+            "ai_score": cls._parse_score(row.get("ai_score")),
+            "ai_tier": str(row.get("ai_tier") or "").strip(),
+            "ai_scoring_ready": bool(row.get("ai_scoring_ready")),
+            "ai_scoring_error": str(row.get("ai_scoring_error") or "").strip(),
+        }
+
+    @classmethod
+    def _load_naver_scores_from_db(cls, keywords: List[str]) -> Dict[str, Optional[float]]:
+        keyword_list = [str(keyword or "").strip() for keyword in keywords if str(keyword or "").strip()]
+        if not keyword_list:
+            return {}
+
+        placeholders = ", ".join(["%s"] * len(keyword_list))
+        connection = get_mysql_connection()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT keyword, source_payload_json
+                    FROM keyword_sourcing_final_keywords
+                    WHERE keyword IN ({placeholders})
+                    """,
+                    tuple(keyword_list),
+                )
+                rows = cursor.fetchall() or []
+        finally:
+            connection.close()
+
+        scores: Dict[str, Optional[float]] = {}
+        for row in rows:
+            keyword = str(row.get("keyword") or "").strip()
+            if not keyword:
+                continue
+            payload = cls._json_loads(row.get("source_payload_json"), {})
+            if not isinstance(payload, dict):
+                continue
+            final_score = cls._parse_score(payload.get("final_score"))
+            if final_score is not None:
+                scores[keyword] = final_score
+                continue
+            volume_score = cls._parse_score(payload.get("search_volume_score"))
+            ctr_score = cls._parse_score(payload.get("ctr_score"))
+            if volume_score is not None and ctr_score is not None:
+                scores[keyword] = round((volume_score + ctr_score) / 2, 1)
+        return scores
+
+    @staticmethod
+    def _json_loads(raw: Any, default: Any) -> Any:
+        if isinstance(raw, dict):
+            return raw
+        text = str(raw or "").strip()
+        if not text:
+            return default
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return default
+
+    @staticmethod
+    def _parse_score(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        try:
+            return round(float(str(value).replace(",", "").strip()), 1)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _enrich_score_map_with_db_naver(
+        cls,
+        score_map: Dict[str, Dict[str, Any]],
+        keywords: List[str],
+    ) -> None:
+        missing = [
+            keyword
+            for keyword in keywords
+            if keyword and (score_map.get(keyword) or {}).get("naver_score") is None
+        ]
+        if not missing:
+            return
+        for keyword, naver_score in cls._load_naver_scores_from_db(missing).items():
+            entry = score_map.setdefault(keyword, {})
+            if entry.get("naver_score") is None:
+                entry["naver_score"] = naver_score
+
+    @classmethod
+    def _apply_scores_to_card(cls, card: Dict[str, Any], score_map: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        keyword = str(card.get("keyword") or "").strip()
+        scores = score_map.get(keyword) or {}
+        card["coupang_score"] = scores.get("coupang_score")
+        card["naver_score"] = scores.get("naver_score")
+        card["ai_score"] = scores.get("ai_score")
+        card["ai_tier"] = scores.get("ai_tier") or ""
+        card["ai_scoring_ready"] = scores.get("ai_scoring_ready")
+        card["ai_scoring_error"] = scores.get("ai_scoring_error") or ""
+        return card
+
+    @classmethod
+    def _build_local_only_themes(cls, *, score_map: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        score_map = score_map or cls._build_keyword_score_map()
         items = cls._load_local_ui_items()
+        preview_keywords = [
+            str(item.get("keyword") or "").strip()
+            for item in items
+            if isinstance(item, dict) and cls._parse_int(item.get("rank")) == 1
+        ]
+        cls._enrich_score_map_with_db_naver(score_map, preview_keywords)
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         seen_keywords: Dict[str, set[str]] = defaultdict(set)
         for item in items:
@@ -64,7 +218,10 @@ class UserPwaFeedService:
 
         themes = []
         for theme_name, rows in grouped.items():
-            cards = [cls._build_local_card(row) for row in rows[: cls.THEME_KEYWORD_LIMIT]]
+            cards = [
+                cls._apply_scores_to_card(cls._build_local_card(row), score_map)
+                for row in rows[: cls.THEME_KEYWORD_LIMIT]
+            ]
             themes.append(
                 {
                     "theme_name": theme_name,
@@ -152,7 +309,19 @@ class UserPwaFeedService:
         return list(rows)
 
     @classmethod
-    def _group_crawled_rows_by_theme(cls, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _group_crawled_rows_by_theme(
+        cls,
+        rows: List[Dict[str, Any]],
+        *,
+        score_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        score_map = score_map or cls._build_keyword_score_map()
+        preview_keywords = [
+            str(row.get("keyword") or "").strip()
+            for row in rows
+            if cls._parse_int(row.get("rank")) in (None, 1) and str(row.get("keyword") or "").strip()
+        ]
+        cls._enrich_score_map_with_db_naver(score_map, preview_keywords)
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         seen_keywords: Dict[str, set[str]] = defaultdict(set)
         for row in rows:
@@ -168,21 +337,24 @@ class UserPwaFeedService:
             if len(grouped[theme_name]) >= cls.THEME_KEYWORD_LIMIT:
                 continue
             grouped[theme_name].append(
-                cls._build_local_card(
-                    {
-                        "keyword": keyword,
-                        "theme_name": theme_name,
-                        "theme_detail": row.get("theme_detail") or theme_name,
-                        "group_name": row.get("group_name") or "-",
-                        "title": row.get("title") or row.get("top_product_title") or "",
-                        "product_url": row.get("product_url") or row.get("top_product_url") or "",
-                        "price": row.get("price") or row.get("top_product_price"),
-                        "image_url": row.get("image_url") or "",
-                        "review_count": row.get("review_count"),
-                        "avg_reviews": row.get("avg_reviews"),
-                        "delivery_type": row.get("delivery_type") or "",
-                        "shipping_fee": row.get("shipping_fee"),
-                    }
+                cls._apply_scores_to_card(
+                    cls._build_local_card(
+                        {
+                            "keyword": keyword,
+                            "theme_name": theme_name,
+                            "theme_detail": row.get("theme_detail") or theme_name,
+                            "group_name": row.get("group_name") or "-",
+                            "title": row.get("title") or row.get("top_product_title") or "",
+                            "product_url": row.get("product_url") or row.get("top_product_url") or "",
+                            "price": row.get("price") or row.get("top_product_price"),
+                            "image_url": row.get("image_url") or "",
+                            "review_count": row.get("review_count"),
+                            "avg_reviews": row.get("avg_reviews"),
+                            "delivery_type": row.get("delivery_type") or "",
+                            "shipping_fee": row.get("shipping_fee"),
+                        }
+                    ),
+                    score_map,
                 )
             )
             seen_keywords[theme_name].add(keyword)
