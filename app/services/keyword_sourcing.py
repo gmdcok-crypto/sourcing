@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from statistics import median
@@ -82,12 +83,17 @@ class KeywordSourcingService:
     @classmethod
     def get_status(cls, run_id: Optional[str] = None) -> Dict[str, Any]:
         selected_run_id = cls._normalize_run_id(run_id)
+        target_run_id = selected_run_id or cls._active_run_id or cls._latest_run_id
+        if target_run_id and target_run_id in cls._runs:
+            memory_state = cls._runs[target_run_id]
+            if memory_state.get("status") == "running":
+                return dict(memory_state)
+
         state = cls._load_state_from_db(run_id=selected_run_id)
         if state:
             cls._sync_runtime_state(state)
             return state
 
-        target_run_id = selected_run_id or cls._active_run_id or cls._latest_run_id
         if target_run_id and target_run_id in cls._runs:
             return cls._runs[target_run_id]
         return cls._empty_state()
@@ -162,6 +168,8 @@ class KeywordSourcingService:
             "current_cid": state.get("current_cid"),
             "current_query": state.get("current_query"),
             "logs": state.get("logs") or [],
+            "log_count": len(state.get("logs") or []),
+            "updated_at": state.get("updated_at"),
             "started_at": state.get("started_at"),
             "finished_at": state.get("finished_at"),
             "r2_json_key": state.get("r2_json_key"),
@@ -376,9 +384,11 @@ class KeywordSourcingService:
                 return current
 
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        started_at = datetime.now(timezone.utc).isoformat()
         state = {
             "run_id": run_id,
             "status": "running",
+            "updated_at": started_at,
             "message": "키워드 소싱을 시작했습니다.",
             "theme_count": 0,
             "category_count": 0,
@@ -391,7 +401,7 @@ class KeywordSourcingService:
             "current_cid": None,
             "current_query": None,
             "logs": ["키워드 소싱을 시작했습니다."],
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": started_at,
             "finished_at": None,
             "r2_json_key": None,
             "r2_parquet_key": None,
@@ -476,6 +486,7 @@ class KeywordSourcingService:
                 state["current_cid"] = category["cid"]
                 state["current_query"] = query
                 state["message"] = f"{category['theme_name']} / {category['category_name']} 수집 중"
+                self._touch_state(state)
                 self._persist_state(state)
                 self._append_log(
                     state,
@@ -490,10 +501,14 @@ class KeywordSourcingService:
                     continue
 
                 try:
-                    top_keyword_result = await self.datalab_service.fetch_category_top_keywords(
-                        cid=str(category["cid"]),
-                        seed_keywords=[query],
-                        limit=150,
+                    top_keyword_result = await self._await_with_heartbeat(
+                        state,
+                        label=state.get("message") or f"{category['category_name']} 수집 중",
+                        coro=self.datalab_service.fetch_category_top_keywords(
+                            cid=str(category["cid"]),
+                            seed_keywords=[query],
+                            limit=150,
+                        ),
                     )
                     top_keywords = top_keyword_result.keywords
                     state["top150_count"] += len(top_keywords)
@@ -576,7 +591,11 @@ class KeywordSourcingService:
                         f"SearchAd 지표 수집 시작 ({len(valid_keywords)}개 키워드)",
                     )
                     self._persist_state(state)
-                    metrics_map = await self.searchad_service.fetch_keyword_metrics(valid_keywords)
+                    metrics_map = await self._await_with_heartbeat(
+                        state,
+                        label="광고 API 지표를 수집 중입니다.",
+                        coro=self.searchad_service.fetch_keyword_metrics(valid_keywords),
+                    )
                     self._append_log(
                         state,
                         f"SearchAd 지표 수집 완료 ({len(metrics_map)}개 키워드)",
@@ -594,7 +613,11 @@ class KeywordSourcingService:
                         f"쇼핑 상품수 수집 시작 ({len(valid_keywords)}개 키워드)",
                     )
                     self._persist_state(state)
-                    product_info_map = await self.shopping_service.fetch_product_infos(valid_keywords)
+                    product_info_map = await self._await_with_heartbeat(
+                        state,
+                        label="네이버 쇼핑 상품수를 수집 중입니다.",
+                        coro=self.shopping_service.fetch_product_infos(valid_keywords),
+                    )
                     self._append_log(
                         state,
                         f"쇼핑 상품수 수집 완료 ({len(product_info_map)}개 키워드)",
@@ -1085,8 +1108,38 @@ class KeywordSourcingService:
         return int((processed / total) * 100)
 
     @staticmethod
+    def _touch_state(state: Dict[str, Any]) -> None:
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    async def _await_with_heartbeat(
+        self,
+        state: Dict[str, Any],
+        *,
+        label: str,
+        coro,
+        interval_seconds: float = 3.0,
+    ) -> Any:
+        """긴 외부 API 대기 중에도 status 폴링이 진행 중임을 알 수 있게 DB/메모리 갱신."""
+        task = asyncio.create_task(coro)
+        started = time.monotonic()
+        try:
+            while not task.done():
+                done, _pending = await asyncio.wait({task}, timeout=interval_seconds)
+                if done:
+                    break
+                elapsed = int(time.monotonic() - started)
+                state["message"] = f"{label} ({elapsed}초 경과)"
+                self._touch_state(state)
+                self._persist_state(state)
+            return await task
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+
+    @staticmethod
     def _append_log(state: Dict[str, Any], message: str) -> None:
         state["logs"] = (state.get("logs", []) + [message])[-20:]
+        KeywordSourcingService._touch_state(state)
         KeywordSourcingService._persist_state(state)
 
     @staticmethod
@@ -1194,6 +1247,7 @@ class KeywordSourcingService:
         run_id = state.get("run_id")
         if not run_id:
             return
+        cls._touch_state(state)
 
         connection = get_mysql_connection()
         try:
@@ -1520,6 +1574,7 @@ class KeywordSourcingService:
                 "dataframe_columns": cls._json_loads(row.get("dataframe_columns_json"), []),
                 "preview_rows": cls._json_loads(row.get("preview_rows_json"), []),
                 "selected_theme_id": cls._to_int(row.get("selected_theme_id")),
+                "updated_at": cls._from_db_datetime(row.get("updated_at")),
             }
         )
         return state

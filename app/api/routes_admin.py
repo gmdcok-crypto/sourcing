@@ -295,6 +295,37 @@ ADMIN_HTML = """
       color: #dce4ff;
       white-space: pre-wrap;
     }
+    .log-box.live {
+      border-color: rgba(124, 156, 255, 0.35);
+      box-shadow: inset 0 0 0 1px rgba(124, 156, 255, 0.12);
+    }
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(46, 204, 113, 0.35);
+      background: rgba(46, 204, 113, 0.12);
+      color: #cbffde;
+      font-size: 11px;
+      font-weight: 700;
+      vertical-align: middle;
+    }
+    .live-badge::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #2ecc71;
+      box-shadow: 0 0 8px rgba(46, 204, 113, 0.8);
+      animation: live-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes live-pulse {
+      0%, 100% { opacity: 0.45; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.1); }
+    }
     .summary-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -901,7 +932,10 @@ ADMIN_HTML = """
           <div class="pipeline-stack">
             <div class="progress-panel">
               <div class="section-title">
-                <div><h2>키워드 소싱 진행 현황</h2></div>
+                <div>
+                  <h2>키워드 소싱 진행 현황</h2>
+                  <span class="live-badge" id="keyword-live-badge" hidden>실시간</span>
+                </div>
               </div>
               <div class="bar-row">
                 <span class="bar-label" id="keyword-progress-label">__KEYWORD_PROGRESS_LABEL__</span>
@@ -1183,9 +1217,22 @@ ADMIN_HTML = """
     window.switchAdminTab = switchAdminTab;
 
     navButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        switchAdminTab(button.dataset.tab);
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        const tabId = button.dataset.tab;
+        switchAdminTab(tabId);
+        const nextUrl = new URL(button.href, window.location.href);
+        history.pushState({ tab: tabId }, "", nextUrl.pathname + nextUrl.search);
+        if (tabId === "pipeline" && !keywordHistoryMode) {
+          refreshKeywordSourcingStatus().catch((error) => console.error(error));
+          startKeywordStatusPolling();
+        }
       });
+    });
+
+    window.addEventListener("popstate", () => {
+      const tabId = new URLSearchParams(window.location.search).get("tab") || "dashboard";
+      switchAdminTab(tabId);
     });
 
     let editingThemeId = null;
@@ -1237,6 +1284,7 @@ ADMIN_HTML = """
     const keywordCurrentQuery = document.getElementById("keyword-current-query");
     const keywordLastUpdated = document.getElementById("keyword-last-updated");
     const keywordLogBox = document.getElementById("keyword-log-box");
+    const keywordLiveBadge = document.getElementById("keyword-live-badge");
     const keywordTop150Count = document.getElementById("keyword-top150-count");
     const keywordTop100Count = document.getElementById("keyword-top100-count");
     const keywordSearchadCount = document.getElementById("keyword-searchad-count");
@@ -1255,6 +1303,10 @@ ADMIN_HTML = """
     let keywordCalendarViewDate = new Date();
     let keywordDetailLoadedRunId = null;
     let keywordStatusLastSuccessAt = Date.now();
+    let keywordLastServerUpdatedAt = "";
+    let keywordLastLogCount = 0;
+
+    const KEYWORD_RUN_STORAGE_KEY = "sourcing.admin.keywordRunId";
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
       keywordHistoryDateInput.value = new Date().toISOString().slice(0, 10);
@@ -1390,13 +1442,43 @@ ADMIN_HTML = """
       return response.json();
     }
 
-    function markKeywordStatusHealthy() {
+    function formatServerUpdatedAt(value) {
+      if (!value) {
+        return "";
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return String(value);
+      }
+      return parsed.toLocaleString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    }
+
+    function markKeywordStatusHealthy(state) {
       keywordStatusLastSuccessAt = Date.now();
+      if (state && state.updated_at) {
+        keywordLastServerUpdatedAt = String(state.updated_at);
+      }
       if (keywordStatusText && keywordStatusText.textContent === "연결 재시도 중") {
         keywordStatusText.textContent = "running";
       }
       if (keywordLastUpdated) {
-        keywordLastUpdated.textContent = "마지막 갱신: 방금 전";
+        const serverLabel = keywordLastServerUpdatedAt
+          ? `서버 ${formatServerUpdatedAt(keywordLastServerUpdatedAt)}`
+          : "방금 전";
+        keywordLastUpdated.textContent = `마지막 갱신: ${serverLabel}`;
+      }
+    }
+
+    function setKeywordLivePolling(active) {
+      if (keywordLiveBadge) {
+        keywordLiveBadge.hidden = !active;
+      }
+      if (keywordLogBox) {
+        keywordLogBox.classList.toggle("live", active);
       }
     }
 
@@ -1556,13 +1638,19 @@ ADMIN_HTML = """
       setKeywordStatusText(keywordCurrentCid, `현재 CID: ${state.current_cid || "-"}`);
       setKeywordStatusText(keywordCurrentQuery, `현재 Query: ${state.current_query || "-"}`);
       if (keywordLogBox) {
+        const logCount = existingLogs.length;
+        const logsChanged = logCount !== keywordLastLogCount || logText !== keywordLogBox.textContent;
+        keywordLastLogCount = logCount;
         const shouldStickToBottom =
           keywordLogBox.scrollHeight - keywordLogBox.scrollTop - keywordLogBox.clientHeight < 48;
-        keywordLogBox.textContent = logText;
+        if (logsChanged) {
+          keywordLogBox.textContent = logText;
+        }
         if (shouldStickToBottom) {
           keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
         }
       }
+      setKeywordLivePolling((state.status || "") === "running");
       setKeywordStatusText(keywordTop150Count, String(state.top150_count || 0));
       setKeywordStatusText(keywordTop100Count, String(state.top100_count || 0));
       setKeywordStatusText(keywordSearchadCount, String(state.searchad_count || 0));
@@ -1657,7 +1745,7 @@ ADMIN_HTML = """
       params.set("_ts", String(Date.now()));
       const state = await apiFetch(`/api/admin/keyword-sourcing/detail?${params.toString()}`);
       if (state.run_id) {
-        keywordSourcingRunId = state.run_id;
+        persistKeywordRunId(state.run_id);
       }
       keywordDetailLoadedRunId = state.run_id || runId || null;
       syncKeywordExportForm();
@@ -1667,14 +1755,33 @@ ADMIN_HTML = """
       renderKeywordSummaryRows(fallbackRows);
     }
 
-    function bootstrapKeywordRunId() {
+    function persistKeywordRunId(runId) {
+      const normalized = String(runId || "").trim();
+      if (!normalized) {
+        return;
+      }
+      keywordSourcingRunId = normalized;
+      try {
+        sessionStorage.setItem(KEYWORD_RUN_STORAGE_KEY, normalized);
+      } catch (error) {
+        console.warn("sessionStorage unavailable", error);
+      }
       syncKeywordExportForm();
-      const runIdInput = keywordExportForm
-        ? keywordExportForm.querySelector('input[name="run_id"]')
-        : null;
-      const initialRunId = (runIdInput && runIdInput.value ? runIdInput.value : "").trim();
+    }
+
+    function bootstrapKeywordRunId() {
+      let initialRunId = "";
+      try {
+        initialRunId = sessionStorage.getItem(KEYWORD_RUN_STORAGE_KEY) || "";
+      } catch (error) {
+        console.warn("sessionStorage unavailable", error);
+      }
+      if (!initialRunId && keywordExportForm) {
+        const runIdInput = keywordExportForm.querySelector('input[name="run_id"]');
+        initialRunId = (runIdInput && runIdInput.value ? runIdInput.value : "").trim();
+      }
       if (initialRunId) {
-        keywordSourcingRunId = initialRunId;
+        persistKeywordRunId(initialRunId);
       }
     }
 
@@ -1695,10 +1802,9 @@ ADMIN_HTML = """
         return;
       }
       if (state.run_id) {
-        keywordSourcingRunId = state.run_id;
+        persistKeywordRunId(state.run_id);
       }
-      syncKeywordExportForm();
-      markKeywordStatusHealthy();
+      markKeywordStatusHealthy(state);
       renderKeywordSourcingStatus(state);
       if (state.status === "running") {
         keywordDetailLoadedRunId = null;
@@ -1739,7 +1845,7 @@ ADMIN_HTML = """
               ? keywordStatusText.textContent
               : ""
             ).trim();
-            nextDelay = status === "running" ? 1000 : 4000;
+            nextDelay = status === "running" ? 800 : 4000;
           } catch (error) {
             setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중...");
             setKeywordStatusText(keywordStatusText, "연결 재시도 중");
@@ -1791,8 +1897,9 @@ ADMIN_HTML = """
         keywordSourcingRunId = state.run_id;
       }
       syncKeywordExportForm();
-      markKeywordStatusHealthy();
+      markKeywordStatusHealthy(state);
       renderKeywordSourcingStatus(state);
+      setKeywordLivePolling(false);
     }
 
     function syncKeywordExportForm() {
@@ -2019,7 +2126,8 @@ ADMIN_HTML = """
             method: "POST",
             body: JSON.stringify(payload)
           });
-          keywordSourcingRunId = result.run_id || keywordSourcingRunId;
+          persistKeywordRunId(result.run_id || keywordSourcingRunId);
+          setKeywordLivePolling(true);
           startKeywordStatusPolling();
           await refreshKeywordSourcingStatus();
         } catch (error) {
