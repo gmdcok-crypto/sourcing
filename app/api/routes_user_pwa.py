@@ -103,7 +103,6 @@ USER_PWA_HTML = """
 
     .card {
       position: relative;
-      min-height: 340px;
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: var(--radius);
       background: linear-gradient(180deg, rgba(19, 27, 48, 0.98), rgba(10, 15, 28, 1));
@@ -113,11 +112,16 @@ USER_PWA_HTML = """
       transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
     }
 
-    .card:hover {
-      transform: translateY(-10px) scale(1.035);
-      box-shadow: 0 36px 64px rgba(0,0,0,0.5);
-      border-color: rgba(255,255,255,0.16);
-      z-index: 4;
+    .card-media-wrap {
+      position: relative;
+      display: block;
+    }
+
+    @media (hover: none) {
+      .card-media-wrap {
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
     }
 
     .media {
@@ -137,11 +141,6 @@ USER_PWA_HTML = """
       transition: transform 0.28s ease, filter 0.28s ease;
     }
 
-    .card:hover .media img {
-      transform: scale(1.08);
-      filter: saturate(1.06);
-    }
-
     .media-empty {
       width: 100%;
       height: 100%;
@@ -156,18 +155,104 @@ USER_PWA_HTML = """
     .media-overlay {
       position: absolute;
       inset: 0;
-      background: linear-gradient(180deg, rgba(5, 9, 18, 0.02) 0%, rgba(5, 9, 18, 0.06) 25%, rgba(5, 9, 18, 0.78) 100%);
-    }
-
-    .card-body {
-      padding: 16px 16px 18px;
+      pointer-events: none;
+      background: linear-gradient(
+        180deg,
+        rgba(5, 9, 18, 0.02) 0%,
+        rgba(5, 9, 18, 0.08) 40%,
+        rgba(5, 9, 18, 0.88) 100%
+      );
     }
 
     .card-keyword {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 2;
+      margin: 0;
+      padding: 42px 16px 14px;
       font-size: 22px;
       font-weight: 800;
       letter-spacing: -0.03em;
-      margin: 0 0 8px;
+      line-height: 1.2;
+      color: #f8fbff;
+      text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+    }
+
+    @media (hover: none) {
+      .card-media-wrap::after {
+        content: "탭하여 상세";
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        z-index: 3;
+        padding: 5px 9px;
+        border-radius: 999px;
+        background: rgba(10, 15, 28, 0.72);
+        border: 1px solid rgba(255,255,255,0.12);
+        color: #c7d2fe;
+        font-size: 11px;
+        font-weight: 700;
+        pointer-events: none;
+      }
+
+      .card.is-revealed .card-media-wrap::after {
+        content: "닫기";
+      }
+    }
+
+    .card-details {
+      max-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      padding: 0 16px;
+      pointer-events: none;
+      transition:
+        max-height 0.32s ease,
+        opacity 0.22s ease,
+        padding 0.22s ease;
+    }
+
+    @media (hover: hover) {
+      .card:has(.card-media-wrap:hover) .card-details,
+      .card:hover .card-details {
+        max-height: 520px;
+        opacity: 1;
+        padding: 14px 16px 18px;
+        pointer-events: auto;
+      }
+
+      .card:has(.card-media-wrap:hover),
+      .card:hover {
+        transform: translateY(-10px) scale(1.035);
+        box-shadow: 0 36px 64px rgba(0,0,0,0.5);
+        border-color: rgba(255,255,255,0.16);
+        z-index: 4;
+      }
+
+      .card:has(.card-media-wrap:hover) .media img,
+      .card:hover .media img {
+        transform: scale(1.08);
+        filter: saturate(1.06);
+      }
+    }
+
+    @media (hover: none) {
+      .card.is-revealed .card-details {
+        max-height: 520px;
+        opacity: 1;
+        padding: 14px 16px 18px;
+        pointer-events: auto;
+      }
+
+      .card.is-revealed {
+        transform: translateY(-6px);
+        box-shadow: 0 28px 52px rgba(0,0,0,0.46);
+        border-color: rgba(255,255,255,0.14);
+        z-index: 4;
+      }
     }
 
     .card-scores {
@@ -525,6 +610,38 @@ USER_PWA_HTML = """
     document.querySelectorAll(".btn-1688-manual").forEach((btn) => {
       btn.addEventListener("click", () => open1688Manual(btn));
     });
+
+    function initCardReveal() {
+      const cards = Array.from(document.querySelectorAll("article.card"));
+      const touchQuery = window.matchMedia("(hover: none)");
+
+      function closeAll(except) {
+        cards.forEach((card) => {
+          if (card !== except) card.classList.remove("is-revealed");
+        });
+      }
+
+      cards.forEach((card) => {
+        const mediaWrap = card.querySelector(".card-media-wrap");
+        if (!mediaWrap) return;
+
+        mediaWrap.addEventListener("click", (event) => {
+          if (!touchQuery.matches) return;
+          event.preventDefault();
+          const wasRevealed = card.classList.contains("is-revealed");
+          closeAll(card);
+          if (!wasRevealed) card.classList.add("is-revealed");
+        });
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!touchQuery.matches) return;
+        if (event.target.closest("article.card")) return;
+        closeAll(null);
+      });
+    }
+
+    initCardReveal();
   </script>
 </body>
 </html>
@@ -791,12 +908,14 @@ def _render_card(card: Dict[str, Any]) -> str:
 
     return f"""
     <article class="card">
-      <div class="media">
-        {image_markup}
-        <div class="media-overlay"></div>
-      </div>
-      <div class="card-body">
+      <div class="card-media-wrap" role="button" tabindex="0" aria-label="{keyword} 상세 보기">
+        <div class="media">
+          {image_markup}
+          <div class="media-overlay"></div>
+        </div>
         <h3 class="card-keyword">{keyword}</h3>
+      </div>
+      <div class="card-details">
         {_render_card_scores(card)}
         <div class="top-line">
           <span class="chip tier-{tier_key}">{tier_label}</span>
