@@ -16,6 +16,7 @@ from ui_runner import (
     fetch_batch_keywords,
     get_ui_results,
     get_ui_state,
+    refresh_gemini_trend_scores,
     request_stop,
     start_batch_run,
 )
@@ -446,6 +447,18 @@ def _render_environment_panel(settings: Any, state: Dict[str, Any]) -> None:
     )
 
 
+def _format_ai_score_cell(item: Dict[str, Any]) -> str:
+    if not item.get("ai_scoring_ready"):
+        error = str(item.get("ai_scoring_error") or "").strip()
+        return error[:40] if error else "-"
+    score = item.get("ai_score")
+    tier = str(item.get("ai_tier") or "").strip()
+    if score in (None, ""):
+        return "-"
+    score_text = _format_score_cell(score)
+    return f"{score_text} ({tier})" if tier else score_text
+
+
 def _format_score_cell(value: Any) -> str:
     if value in (None, ""):
         return "-"
@@ -495,6 +508,7 @@ def _entry_score_dataframe(scores: List[Dict[str, Any]]) -> pd.DataFrame:
                 "키워드명": keyword,
                 "쿠팡점수": _format_score_cell(coupang_score),
                 "네이버점수": _format_score_cell(item.get("naver_score")),
+                "AI점수": _format_ai_score_cell(item),
             }
         )
     return pd.DataFrame(rows)
@@ -559,6 +573,29 @@ def _render_entry_scoring_tab() -> None:
     if not scores:
         st.info("크롤링이 완료된 키워드가 있으면 점수 테이블이 표시됩니다.")
         return
+
+    settings = get_settings()
+    gemini_ready = bool(str(settings.gemini_api_key or "").strip())
+    if not gemini_ready:
+        st.warning(
+            "AI점수 사용 시 `local-crawler/.env`에 **GEMINI_API_KEY** 를 설정하세요. "
+            "(Google AI Studio API 키, Google Search Grounding 과금 발생)"
+        )
+    else:
+        st.caption(f"Gemini 모델: {settings.gemini_trend_model} · 기준월: {settings.gemini_trend_reference_month}")
+
+    action_col1, action_col2 = st.columns([1, 3])
+    with action_col1:
+        if st.button("Gemini 트렌드 검증", type="primary", disabled=not gemini_ready):
+            with st.spinner("Gemini + Google Search 분석 중…"):
+                result = refresh_gemini_trend_scores()
+            updated = int(result.get("updated") or 0)
+            errors = list(result.get("errors") or [])
+            if updated:
+                st.success(f"AI점수 {updated}건 갱신")
+            if errors:
+                st.warning("일부 실패: " + " / ".join(errors[:3]))
+            st.rerun()
 
     st.markdown("### 시장 진입 점수")
     score_df = _entry_score_dataframe(scores)
@@ -640,7 +677,9 @@ def main() -> None:
         _render_product_results()
 
     with tab_scoring:
-        st.caption("쿠팡점수: Top10 크롤 기반 진입 가능성 / 네이버점수: 검색량·CTR 최종 점수 (100점 만점)")
+        st.caption(
+            "쿠팡점수·네이버점수: 크롤/소싱 데이터 기반 · AI점수: Gemini+Google Search 트렌드 (100점)"
+        )
         _render_entry_scoring_tab()
 
 

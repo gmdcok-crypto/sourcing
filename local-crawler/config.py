@@ -47,6 +47,14 @@ class LocalCrawlerSettings(BaseSettings):
     crawler_sleep_max_seconds: int = Field(default=5, alias="CRAWLER_SLEEP_MAX_SECONDS")
     ui_refresh_seconds: int = Field(default=5, alias="UI_REFRESH_SECONDS")
 
+    gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_trend_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_TREND_MODEL")
+    gemini_trend_auto_on_crawl: bool = Field(default=False, alias="GEMINI_TREND_AUTO_ON_CRAWL")
+    gemini_trend_reference_month: str = Field(
+        default="2026년 5월",
+        alias="GEMINI_TREND_REFERENCE_MONTH",
+    )
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parent / ".env"),
         env_file_encoding="utf-8",

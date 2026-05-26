@@ -1,0 +1,21 @@
+# Gemini + Google Search 트렌드 마켓 스코어 (0~100)
+
+model: gemini-2.5-flash
+temperature: 0.1
+reference_month: "2026년 5월"
+
+weights:
+  velocity: 0.30
+  viral: 0.30
+  conversion: 0.20
+  seasonality: 0.20
+
+tiers:
+  - min_score: 85
+    label: GOLD
+  - min_score: 70
+    label: SILVER
+  - min_score: 55
+    label: BRONZE
+  - min_score: 0
+    label: WATCH

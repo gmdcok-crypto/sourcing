@@ -10,3 +10,4 @@ pytest
 streamlit
 boto3
 pyyaml
+google-genai

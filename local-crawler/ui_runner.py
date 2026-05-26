@@ -17,6 +17,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from config import LocalCrawlerSettings, get_settings
 from railway_client import RailwayKeywordClient
 from services.coupang_entry_scoring import CoupangEntryScoringEngine
+from services.gemini_trend_scoring import GeminiTrendScoringService, load_trend_config
 from services.naver_keyword_scoring import compute_naver_final_score
 
 LOCAL_ROOT = Path(__file__).resolve().parent
@@ -246,6 +247,54 @@ def _reset_results(job_id: str) -> None:
 _SCORING_ENGINE = CoupangEntryScoringEngine()
 
 
+def _gemini_trend_service() -> GeminiTrendScoringService:
+    settings = get_settings()
+    config = load_trend_config()
+    config["model"] = str(settings.gemini_trend_model or config.get("model") or "gemini-2.5-flash")
+    config["reference_month"] = str(
+        settings.gemini_trend_reference_month or config.get("reference_month") or ""
+    )
+    return GeminiTrendScoringService(api_key=str(settings.gemini_api_key or ""), config=config)
+
+
+def score_keyword_ai_trend(keyword: str) -> Dict[str, Any]:
+    return _gemini_trend_service().verify_keyword_trend_score(keyword)
+
+
+def refresh_gemini_trend_scores(*, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
+    service = _gemini_trend_service()
+    if not service.is_configured():
+        return {
+            "updated": 0,
+            "errors": ["GEMINI_API_KEY가 설정되지 않았습니다."],
+        }
+
+    payload = get_ui_results()
+    existing = list(payload.get("keyword_scores") or [])
+    target_keywords = keywords or [str(row.get("keyword") or "").strip() for row in existing]
+    target_keywords = [keyword for keyword in target_keywords if keyword]
+
+    errors: List[str] = []
+    updated = 0
+    score_map = {str(row.get("keyword") or "").strip(): dict(row) for row in existing}
+
+    for keyword in target_keywords:
+        ai_payload = service.verify_keyword_trend_score(keyword)
+        row = score_map.get(keyword) or {"keyword": keyword}
+        row.update(ai_payload)
+        row["ai_scored_at"] = _now_iso()
+        score_map[keyword] = row
+        if ai_payload.get("ai_scoring_ready"):
+            updated += 1
+        else:
+            errors.append(f"{keyword}: {ai_payload.get('ai_scoring_error') or 'failed'}")
+
+    payload["keyword_scores"] = list(score_map.values())
+    payload["generated_at"] = _now_iso()
+    _write_json(RESULTS_PATH, payload)
+    return {"updated": updated, "errors": errors}
+
+
 def _collect_keyword_top10_items(keyword: str) -> List[Dict[str, Any]]:
     payload = get_ui_results()
     rows = [
@@ -290,6 +339,10 @@ def _upsert_keyword_score(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
     )
     score_payload["coupang_score"] = score_payload.get("final_score")
     score_payload["naver_score"] = compute_naver_final_score(keyword_row)
+    settings = get_settings()
+    if settings.gemini_trend_auto_on_crawl and str(settings.gemini_api_key or "").strip():
+        score_payload.update(score_keyword_ai_trend(keyword))
+        score_payload["ai_scored_at"] = _now_iso()
     score_payload["scored_at"] = _now_iso()
 
     payload = get_ui_results()
