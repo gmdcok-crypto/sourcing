@@ -1465,12 +1465,23 @@ ADMIN_HTML = """
       }
     }
 
-    function setKeywordLivePolling(active) {
-      if (keywordLiveBadge) {
-        keywordLiveBadge.hidden = !active;
+    function setKeywordLiveBadge(status) {
+      if (!keywordLiveBadge) {
+        return;
+      }
+      const normalized = String(status || "idle");
+      if (normalized === "running") {
+        keywordLiveBadge.hidden = false;
+        keywordLiveBadge.textContent = "소싱중";
+      } else if (normalized === "completed") {
+        keywordLiveBadge.hidden = false;
+        keywordLiveBadge.textContent = "소싱완료";
+      } else {
+        keywordLiveBadge.hidden = true;
+        keywordLiveBadge.textContent = "";
       }
       if (keywordLogBox) {
-        keywordLogBox.classList.toggle("live", active);
+        keywordLogBox.classList.toggle("live", normalized === "running");
       }
     }
 
@@ -1827,25 +1838,21 @@ ADMIN_HTML = """
     }
 
     function syncKeywordLiveControls(status) {
+      setKeywordLiveBadge(status);
       if (status === "running") {
         keywordDetailLoadedRunId = null;
-        setKeywordLivePolling(true);
         runKeywordSourcingBtn.disabled = true;
         runKeywordSourcingBtn.textContent = "수집 중...";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = false;
         }
       } else if (status === "completed" || status === "failed") {
-        setKeywordLivePolling(false);
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = true;
         }
-      } else if (keywordLiveTracking) {
-        setKeywordLivePolling(true);
       } else {
-        setKeywordLivePolling(false);
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
         if (stopKeywordSourcingBtn) {
@@ -1920,7 +1927,7 @@ ADMIN_HTML = """
       syncKeywordLiveControls(status);
       markKeywordStatusHealthy(state);
       if (!keywordHistoryMode) {
-        refreshKeywordLiveFragment().catch((error) => {
+        refreshKeywordLiveTick().catch((error) => {
           console.error(error);
         });
       }
@@ -2029,7 +2036,7 @@ ADMIN_HTML = """
     function stopKeywordLiveUpdates() {
       stopKeywordLiveFragmentLoop();
       stopKeywordElapsedLoop();
-      setKeywordLivePolling(false);
+      setKeywordLiveBadge("idle");
     }
 
     function startKeywordLiveUpdates() {
@@ -2076,7 +2083,7 @@ ADMIN_HTML = """
       syncKeywordExportForm();
       markKeywordStatusHealthy(state);
       renderKeywordSourcingStatus(state);
-      setKeywordLivePolling(false);
+      setKeywordLiveBadge("idle");
     }
 
     function syncKeywordExportForm() {
@@ -2454,10 +2461,15 @@ ADMIN_HTML = """
     });
     renderKeywordSummaryRows(keywordSummaryRows);
     bootstrapKeywordRunId();
-    if (keywordStatusText && keywordStatusText.textContent.trim() === "running") {
-      keywordLiveTracking = true;
-      keywordMonotonicStartedAt = performance.now();
-      setKeywordLivePolling(true);
+    if (keywordStatusText) {
+      const initialStatus = keywordStatusText.textContent.trim();
+      if (initialStatus === "running") {
+        keywordLiveTracking = true;
+        keywordMonotonicStartedAt = performance.now();
+        setKeywordLiveBadge("running");
+      } else if (initialStatus === "completed") {
+        setKeywordLiveBadge("completed");
+      }
     }
     if (!keywordHistoryMode) {
       refreshKeywordLiveFragmentFromStatus().catch((error) => {
@@ -2600,7 +2612,15 @@ def render_keyword_live_fragment_html(state: Dict[str, Any]) -> str:
         log_text = str(state.get("log_text") or "실행 대기중입니다.")
     group_counts = state.get("group_counts") or {}
     log_live_class = " live" if status == "running" else ""
-    badge_hidden = "" if status == "running" else " hidden"
+    if status == "running":
+        badge_label = "소싱중"
+        badge_hidden = ""
+    elif status == "completed":
+        badge_label = "소싱완료"
+        badge_hidden = ""
+    else:
+        badge_label = ""
+        badge_hidden = " hidden"
     updated_at = str(state.get("updated_at") or "")
     r2_status = "완료" if state.get("r2_parquet_key") else "대기"
     return f"""
@@ -2608,7 +2628,7 @@ def render_keyword_live_fragment_html(state: Dict[str, Any]) -> str:
   <div class="section-title">
     <div>
       <h2>키워드 소싱 진행 현황</h2>
-      <span class="live-badge{badge_hidden}" id="keyword-live-badge">실시간</span>
+      <span class="live-badge{badge_hidden}" id="keyword-live-badge">{escape(badge_label)}</span>
     </div>
   </div>
   <div class="bar-row">
