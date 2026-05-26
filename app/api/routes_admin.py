@@ -934,7 +934,7 @@ ADMIN_HTML = """
               <div class="section-title">
                 <div>
                   <h2>키워드 소싱 진행 현황</h2>
-                  <span class="live-badge" id="keyword-live-badge" hidden>실시간</span>
+                  <span class="live-badge" id="keyword-live-badge" hidden>3초 자동갱신</span>
                 </div>
               </div>
               <div class="bar-row">
@@ -1306,9 +1306,6 @@ ADMIN_HTML = """
     let keywordStatusLastSuccessAt = Date.now();
     let keywordLastServerUpdatedAt = "";
     let keywordLastLogCount = 0;
-    let keywordStalePollCount = 0;
-    let keywordReconnecting = false;
-
     const KEYWORD_RUN_STORAGE_KEY = "sourcing.admin.keywordRunId";
 
     if (keywordHistoryDateInput && !keywordHistoryDateInput.value) {
@@ -1641,19 +1638,14 @@ ADMIN_HTML = """
       setKeywordStatusText(keywordCurrentCid, `현재 CID: ${state.current_cid || "-"}`);
       setKeywordStatusText(keywordCurrentQuery, `현재 Query: ${state.current_query || "-"}`);
       if (keywordLogBox) {
-        const logCount = existingLogs.length;
-        const logsChanged = logCount !== keywordLastLogCount || logText !== keywordLogBox.textContent;
-        keywordLastLogCount = logCount;
+        keywordLastLogCount = existingLogs.length;
         const shouldStickToBottom =
           keywordLogBox.scrollHeight - keywordLogBox.scrollTop - keywordLogBox.clientHeight < 48;
-        if (logsChanged) {
-          keywordLogBox.textContent = logText;
-        }
+        keywordLogBox.textContent = logText;
         if (shouldStickToBottom) {
           keywordLogBox.scrollTop = keywordLogBox.scrollHeight;
         }
       }
-      setKeywordLivePolling((state.status || "") === "running");
       setKeywordStatusText(keywordTop150Count, String(state.top150_count || 0));
       setKeywordStatusText(keywordTop100Count, String(state.top100_count || 0));
       setKeywordStatusText(keywordSearchadCount, String(state.searchad_count || 0));
@@ -1783,42 +1775,52 @@ ADMIN_HTML = """
     }
 
     function bootstrapKeywordRunId() {
+      try {
+        sessionStorage.removeItem(KEYWORD_RUN_STORAGE_KEY);
+      } catch (error) {
+        console.warn("sessionStorage unavailable", error);
+      }
+
       let domRunId = "";
       if (keywordExportForm) {
         const runIdInput = keywordExportForm.querySelector('input[name="run_id"]');
         domRunId = (runIdInput && runIdInput.value ? runIdInput.value : "").trim();
       }
-
       if (domRunId) {
-        try {
-          const stored = sessionStorage.getItem(KEYWORD_RUN_STORAGE_KEY) || "";
-          if (stored && stored !== domRunId) {
-            sessionStorage.removeItem(KEYWORD_RUN_STORAGE_KEY);
-          }
-        } catch (error) {
-          console.warn("sessionStorage unavailable", error);
-        }
         persistKeywordRunId(domRunId);
-        return;
-      }
-
-      try {
-        const stored = sessionStorage.getItem(KEYWORD_RUN_STORAGE_KEY) || "";
-        if (stored) {
-          persistKeywordRunId(stored);
-        }
-      } catch (error) {
-        console.warn("sessionStorage unavailable", error);
       }
     }
 
     function buildKeywordLiveUrl(path) {
       const params = new URLSearchParams();
-      if (keywordSourcingRunId) {
-        params.set("run_id", keywordSourcingRunId);
-      }
       params.set("_ts", String(Date.now()));
       return `${path}?${params.toString()}`;
+    }
+
+    let keywordAutoRefreshTimer = null;
+
+    function setAutoPageRefresh(enabled) {
+      if (keywordAutoRefreshTimer) {
+        clearTimeout(keywordAutoRefreshTimer);
+        keywordAutoRefreshTimer = null;
+      }
+      if (!enabled || keywordHistoryMode) {
+        return;
+      }
+      const scheduleReload = () => {
+        keywordAutoRefreshTimer = setTimeout(() => {
+          const tab = new URLSearchParams(window.location.search).get("tab") || "dashboard";
+          if (tab !== "pipeline" || keywordHistoryMode) {
+            scheduleReload();
+            return;
+          }
+          const url = new URL(window.location.href);
+          url.searchParams.set("tab", "pipeline");
+          url.searchParams.set("_ts", String(Date.now()));
+          window.location.replace(url.toString());
+        }, 3000);
+      };
+      scheduleReload();
     }
 
     function applyKeywordSourcingState(state) {
@@ -1830,46 +1832,25 @@ ADMIN_HTML = """
 
       const status = String(state.status || "idle");
       if (status === "running") {
-        const serverUpdatedAt = String(state.updated_at || "");
-        if (serverUpdatedAt && serverUpdatedAt === keywordLastServerUpdatedAt) {
-          keywordStalePollCount += 1;
-        } else {
-          keywordStalePollCount = 0;
-        }
-        if (keywordStalePollCount >= 8 && !keywordReconnecting) {
-          keywordReconnecting = true;
-          keywordStalePollCount = 0;
-          clearKeywordRunId();
-          setKeywordStatusText(
-            keywordProgressLabel,
-            "연결된 실행이 멈춘 것 같습니다. 최신 실행으로 다시 연결합니다...",
-          );
-          refreshKeywordSourcingStatus()
-            .catch((error) => console.error(error))
-            .finally(() => {
-              keywordReconnecting = false;
-              startKeywordLiveUpdates();
-            });
-          return;
-        }
         keywordDetailLoadedRunId = null;
         setKeywordLivePolling(true);
+        setAutoPageRefresh(true);
         runKeywordSourcingBtn.disabled = true;
         runKeywordSourcingBtn.textContent = "수집 중...";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = false;
         }
       } else {
-        keywordStalePollCount = 0;
         setKeywordLivePolling(false);
+        setAutoPageRefresh(false);
         stopKeywordEventStream();
         runKeywordSourcingBtn.disabled = false;
         runKeywordSourcingBtn.textContent = "키워드 소싱";
         if (stopKeywordSourcingBtn) {
           stopKeywordSourcingBtn.disabled = true;
         }
-        if (status === "failed") {
-          clearKeywordRunId();
+        if (state.run_id) {
+          persistKeywordRunId(state.run_id);
         }
       }
 
@@ -1916,6 +1897,7 @@ ADMIN_HTML = """
     function stopKeywordLiveUpdates() {
       stopKeywordEventStream();
       stopKeywordStatusPolling();
+      setAutoPageRefresh(false);
       setKeywordLivePolling(false);
     }
 
@@ -1923,10 +1905,8 @@ ADMIN_HTML = """
       if (keywordHistoryMode) {
         return;
       }
-      stopKeywordStatusPolling();
-      if (!startKeywordEventStream()) {
-        startKeywordStatusPolling();
-      }
+      stopKeywordEventStream();
+      startKeywordStatusPolling();
     }
 
     async function refreshKeywordSourcingStatus() {
@@ -1940,9 +1920,6 @@ ADMIN_HTML = """
         return;
       }
       applyKeywordSourcingState(state);
-      if (String(state.status || "") === "running" && !keywordEventSource) {
-        startKeywordEventStream();
-      }
     }
 
     function scheduleKeywordStatusPoll(delayMs) {
@@ -1959,7 +1936,7 @@ ADMIN_HTML = """
               ? keywordStatusText.textContent
               : ""
             ).trim();
-            nextDelay = status === "running" ? 800 : 4000;
+            nextDelay = status === "running" ? 1000 : 4000;
           } catch (error) {
             setKeywordStatusText(keywordProgressLabel, "진행 상태 재연결 중...");
             setKeywordStatusText(keywordStatusText, "연결 재시도 중");
@@ -2404,6 +2381,9 @@ ADMIN_HTML = """
         console.error(error);
       });
       startKeywordLiveUpdates();
+      if (keywordStatusText && keywordStatusText.textContent.trim() === "running") {
+        setAutoPageRefresh(true);
+      }
     } else {
       stopKeywordLiveUpdates();
     }
