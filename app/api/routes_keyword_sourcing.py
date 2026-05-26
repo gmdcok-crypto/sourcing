@@ -56,6 +56,55 @@ async def get_keyword_sourcing_status(run_id: Optional[str] = None) -> JSONRespo
     )
 
 
+@router.get("/keyword-sourcing/events")
+async def stream_keyword_sourcing_events(run_id: Optional[str] = None) -> StreamingResponse:
+    """SSE — 새로고침 없이 진행 상태·로그 실시간 전달."""
+
+    async def event_generator():
+        resolved_run_id = str(run_id or "").strip() or None
+        last_signature = ""
+        idle_ticks = 0
+
+        while idle_ticks < 6:
+            state = KeywordSourcingService.get_progress_status(run_id=resolved_run_id)
+            if state.get("run_id"):
+                resolved_run_id = str(state["run_id"])
+
+            signature = "|".join(
+                [
+                    str(state.get("updated_at") or ""),
+                    str(state.get("log_count") or len(state.get("logs") or [])),
+                    str(state.get("progress_percent") or 0),
+                    str(state.get("processed_categories") or 0),
+                    str(state.get("status") or ""),
+                    str(state.get("message") or ""),
+                ]
+            )
+            if signature != last_signature:
+                last_signature = signature
+                yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
+
+            status = str(state.get("status") or "")
+            if status in {"completed", "failed"}:
+                break
+            if status == "running":
+                idle_ticks = 0
+            else:
+                idle_ticks += 1
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/keyword-sourcing/detail")
 async def get_keyword_sourcing_detail(run_id: Optional[str] = None) -> Dict[str, Any]:
     return KeywordSourcingService.get_export_state(run_id=run_id)
