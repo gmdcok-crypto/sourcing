@@ -642,11 +642,15 @@ def _run_keyword_via_smoke_worker(crawler: Any, keyword: str) -> Dict[str, Any]:
             if smoke_payload.get("organic_count") not in (None, ""):
                 result_data["product_count"] = smoke_payload.get("organic_count")
             result_data["fetch_source"] = "smoke"
-            rank1_detail = smoke_payload.get("rank1_detail")
-            if isinstance(rank1_detail, dict):
-                result_data["detail_debug"] = [rank1_detail]
+            detail_results = smoke_payload.get("detail_results")
+            if isinstance(detail_results, list) and detail_results:
+                result_data["detail_debug"] = detail_results
             else:
-                result_data.setdefault("detail_debug", [])
+                rank1_detail = smoke_payload.get("rank1_detail")
+                if isinstance(rank1_detail, dict) and rank1_detail:
+                    result_data["detail_debug"] = [rank1_detail]
+                else:
+                    result_data.setdefault("detail_debug", [])
         if not probe_ok and str(result_data.get("reason_code") or "").strip() == "OK":
             result_data["reason_code"] = "SMOKE_PROBE_FAILED"
         if not probe_ok and not isinstance(smoke_payload, dict):

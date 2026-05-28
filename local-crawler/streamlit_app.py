@@ -700,8 +700,8 @@ def main() -> None:
             step=1,
         )
         st.caption(
-            "smoke: 키워드마다 Google→쿠팡 검색 → **1위 클릭·판매량** → 다음 키워드. "
-            "COUPANG_SMOKE_RANK1_DETAIL=1 (기본). 브라우저 창을 보세요."
+            "smoke: 키워드마다 Google→쿠팡 검색 → **1~10위 순차 클릭·판매량** → 다음 키워드. "
+            "COUPANG_SMOKE_DETAIL_LIMIT=10 (기본). 브라우저 창을 보세요."
         )
         if st.button("배치 시작", use_container_width=True, type="primary"):
             start_batch_run(limit=int(keyword_limit))
