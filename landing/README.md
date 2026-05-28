@@ -1,44 +1,42 @@
-# Modiba GoodPrice — Netlify 랜딩
+# Landing (PWA 진입 전)
 
-다크 모드 마케팅 랜딩 페이지. **방법 A**: Netlify(메인 도메인) → 로그인 → Railway PWA.
+`html_PWA.txt` 기반 **BlueOcean** 마케팅 랜딩. CTA·로그인 링크는 Railway PWA(`/user`)로 이동합니다.
 
 ## 로컬 미리보기
 
-```bash
-cd landing
-npx --yes serve .
-# http://localhost:3000
+```powershell
+cd d:\sourcing\landing
+python -m http.server 8080
 ```
+
+http://localhost:8080
 
 ## Netlify 배포
 
-1. Netlify → **Add site** → Import Git → 이 저장소
+1. Netlify → **Add site** → 이 저장소 연결
 2. **Base directory**: `landing`
-3. **Publish directory**: `landing` (또는 base가 landing이면 `.`)
-4. **Build command**: 비움 (정적 HTML)
-
-또는 Netlify CLI:
-
-```bash
-cd landing
-netlify deploy --prod
-```
+3. **Publish directory**: `.` (base가 landing이면 루트)
 
 ## PWA URL 변경
 
 `js/config.js`:
 
 ```js
-window.SOURCING_APP = {
-  pwaUrl: "https://sourcing.yourdomain.com/user",
-};
+pwaUrl: "https://sourcing-production-8102.up.railway.app/user",
 ```
 
-## 로그인 (추후)
+## 히어로 배너 이미지
 
-현재 CTA·로그인 버튼은 `config.pwaUrl`로 리다이렉트합니다.  
-카카오/네이버/이메일 OAuth 연동 시 `js/main.js`의 `goToApp` 전에 Netlify Identity / Supabase Auth 등을 붙이면 됩니다.
+배경 이미지: `images/hero-banner.png` (교체 시 동일 파일명 권장)
 
-## 관련 문서
+문구·스타일 수정: `partials/hero-banner.html`, `css/hero.css`
 
-- [PWA 커스텀 도메인](../docs/PWA_CUSTOM_DOMAIN_SETUP.md)
+## HTML 다시 생성
+
+원본 `html_PWA.txt` 수정 후:
+
+```powershell
+python d:\sourcing\landing\_build_landing.py
+```
+
+`index.html`이 재생성됩니다 (사이드바·하단 앱 탭은 제거된 상태).
