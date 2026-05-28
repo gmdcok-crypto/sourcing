@@ -1,4 +1,4 @@
-"""STEP1 통합 노이즈 필터 — vertical_keyword_extraction 학습 샘플 기준."""
+"""STEP1 통합 노이즈 필터 — vertical_keyword_extraction + 홈트 소형용품 학습 샘플."""
 from __future__ import annotations
 
 import unittest
@@ -80,6 +80,42 @@ TRAINING_NOISE_KEYWORDS = [
     "커클랜드세제",
 ]
 
+# 홈트·소형용품 브랜드 노이즈 (2026-05 추출 학습)
+HOME_TRAINING_NOISE_KEYWORDS = [
+    "룰루레몬매트",
+    "만두카요가매트",
+    "만두카요가타월",
+    "만두카프로라이트",
+    "만두카요가매트프로",
+    "만두카프로",
+    "토삭스",
+    "토삭스양말",
+    "트리거포인트폼롤러",
+    "세라밴드플렉스바",
+    "식스패드",
+    "블랙롤",
+    "이고진매트",
+    "이고진벤치",
+    "에르고바디",
+    "코어바디폼롤러",
+    "고무나라폼롤러",
+    "고무나라풀업밴드",
+    "고무나라루프밴드",
+    "뷰릿",
+    "스포틀러폼롤러",
+    "슬렌더톤",
+    "라이폼요가매트",
+    "지브라매트",
+    "코미밴드",
+    "밸런스파워",
+    "밸런스파워복근",
+    "바풀슬로스바",
+    "에카코어슈즈",
+    "퍼펙트슬라이드",
+    "에이비슬라이드",
+    "코시차임",
+]
+
 KEEP_KEYWORDS = [
     "주방세제",
     "수납함",
@@ -88,6 +124,16 @@ KEEP_KEYWORDS = [
     "가성비수납함",
     "제습기",
     "방향제",
+]
+
+HOME_KEEP_KEYWORDS = [
+    "요가매트",
+    "폼롤러",
+    "풀업밴드",
+    "홈트",
+    "필라테스",
+    "요가블럭",
+    "저항밴드",
 ]
 
 
@@ -99,6 +145,10 @@ class TestStep1NoiseFilter(unittest.TestCase):
         missed = [kw for kw in TRAINING_NOISE_KEYWORDS if not is_step1_noise(kw)]
         self.assertEqual(missed, [], f"should be noise: {missed}")
 
+    def test_home_training_samples_are_noise(self) -> None:
+        missed = [kw for kw in HOME_TRAINING_NOISE_KEYWORDS if not is_step1_noise(kw)]
+        self.assertEqual(missed, [], f"should be noise: {missed}")
+
     def test_generic_keywords_kept(self) -> None:
         blocked = [kw for kw in KEEP_KEYWORDS if is_step1_noise(kw)]
         self.assertEqual(blocked, [], f"should pass: {blocked}")
@@ -106,6 +156,10 @@ class TestStep1NoiseFilter(unittest.TestCase):
     def test_empty_is_noise(self) -> None:
         self.assertTrue(is_step1_noise(""))
         self.assertTrue(is_step1_noise("   "))
+
+    def test_home_generic_keywords_kept(self) -> None:
+        blocked = [kw for kw in HOME_KEEP_KEYWORDS if is_step1_noise(kw)]
+        self.assertEqual(blocked, [], f"should pass: {blocked}")
 
     def test_informational_suffix_is_noise(self) -> None:
         self.assertTrue(is_step1_noise("텀블러란?"))
