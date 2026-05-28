@@ -453,6 +453,7 @@ def _flatten_result_rows(keyword_row: Dict[str, Any], crawl_result: Dict[str, An
                 "option_count": item.get("option_count"),
                 "origin_country": item.get("origin_country") or "",
                 "model_name": item.get("model_name") or "",
+                "monthly_sales": item.get("monthly_sales") or "",
                 "detail_fetch_ok": item.get("detail_fetch_ok"),
                 "detail_parse_filled_count": item.get("detail_parse_filled_count"),
                 "fetch_source": result.get("fetch_source") or last_fetch_source,

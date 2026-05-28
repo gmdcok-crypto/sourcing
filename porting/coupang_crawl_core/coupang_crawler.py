@@ -1039,6 +1039,131 @@ class CoupangCrawler:
         except Exception:
             time.sleep(0.25)
 
+    @staticmethod
+    def _fill_search_field(locator: Any, query: str) -> None:
+        """IME 한자 깨짐 방지: keyboard.type 대신 fill."""
+        q = str(query or "").strip()
+        locator.click(timeout=5000)
+        try:
+            locator.fill("")
+        except Exception:
+            pass
+        if q:
+            locator.fill(q)
+
+    @staticmethod
+    def _smoke_rank1_detail_enabled() -> bool:
+        return str(os.environ.get("COUPANG_SMOKE_RANK1_DETAIL", "1")).strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+
+    def _parse_monthly_sales_from_html(self, html: str) -> str:
+        soup = BeautifulSoup(str(html or ""), "html.parser")
+        selectors = (
+            ".prod-sales-volume",
+            ".prod-sale-volume",
+            "[class*='sales-volume']",
+            "[class*='sale-volume']",
+        )
+        for selector in selectors:
+            node = soup.select_one(selector)
+            if node:
+                text = node.get_text(" ", strip=True)
+                if text:
+                    return text
+        return ""
+
+    def _smoke_fetch_rank1_sales(self, page: Page, probe: Dict[str, Any]) -> Dict[str, Any]:
+        """smoke SERP 화면에서 1위 상품 클릭 후 상세 판매량 텍스트 수집."""
+        debug: Dict[str, Any] = {
+            "method": "smoke_rank1_click",
+            "monthly_sales": "",
+            "detail_fetch_ok": False,
+        }
+        if not self._smoke_rank1_detail_enabled():
+            debug["error_code"] = "DISABLED"
+            return debug
+
+        top10 = list(probe.get("top10") or [])
+        rank1_row: Optional[Dict[str, Any]] = None
+        for row in top10:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("rank") or 0) == 1:
+                    rank1_row = row
+                    break
+            except Exception:
+                continue
+        if rank1_row is None and top10:
+            rank1_row = top10[0] if isinstance(top10[0], dict) else None
+        if not rank1_row:
+            debug["error_code"] = "NO_RANK1_ROW"
+            return debug
+
+        target_url = self._absolutize_coupang_url(str(rank1_row.get("url") or "").strip())
+        product_id = self._extract_product_id_from_url(target_url)
+        debug["product_id"] = product_id
+        debug["url"] = target_url
+        if not target_url:
+            debug["error_code"] = "EMPTY_URL"
+            return debug
+
+        self._smoke_status_update(
+            phase="smoke_rank1_detail_click",
+            hint="SERP 1위 상품 클릭 → 상세(판매량) 수집",
+        )
+        safe_print(f"[SMOKE][rank1] click start product_id={product_id} url={target_url[:80]}")
+
+        try:
+            anchor = self._find_search_result_anchor(
+                page, product_id=str(product_id or ""), target_url=target_url
+            )
+            if anchor is None:
+                self._scroll_coupang_search_results_page(page, max_wheel_batches=4)
+                anchor = self._find_search_result_anchor(
+                    page, product_id=str(product_id or ""), target_url=target_url
+                )
+            if anchor is None:
+                debug["error_code"] = "SEARCH_RESULT_LINK_NOT_FOUND"
+                safe_print("[SMOKE][rank1] SERP link not found")
+                return debug
+
+            try:
+                anchor.scroll_into_view_if_needed()
+            except Exception:
+                pass
+            page.wait_for_timeout(random.randint(400, 900))
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+                anchor.click(timeout=5000)
+            page.wait_for_timeout(random.randint(900, 1500))
+            html = page.content()
+            title = (page.title() or "")[:120]
+            debug["page_title"] = title
+            debug["body_len"] = len(str(html or ""))
+            if self._is_blocked(html, title):
+                debug["error_code"] = "BLOCKED_HTML"
+                safe_print(f"[SMOKE][rank1] blocked title={title!r}")
+                return debug
+            sales = self._parse_monthly_sales_from_html(html)
+            debug["monthly_sales"] = sales
+            debug["detail_fetch_ok"] = True
+            debug["stage"] = "html_ok"
+            safe_print(f"[SMOKE][rank1] sales={sales!r} title={title!r}")
+            return debug
+        except TimeoutError:
+            debug["error_code"] = "TIMEOUT"
+            safe_print("[SMOKE][rank1] click timeout")
+            return debug
+        except Exception as exc:
+            debug["error_code"] = type(exc).__name__
+            debug["message"] = repr(exc)
+            safe_print(f"[SMOKE][rank1] exception error={type(exc).__name__}")
+            return debug
+
     def _linger_on_results_page(self, page: Page, *, passes: int = 2) -> None:
         """
         검색 결과 화면에서 즉시 파싱하지 않고 사람이 상품 목록을 훑는 듯한 짧은 체류를 만든다.
@@ -1917,6 +2042,7 @@ class CoupangCrawler:
             review_score = self._parse_float(str(row.get("review_score") or ""))
             shipping = str(row.get("shipping") or "").strip()
             url = str(row.get("url") or "").strip()
+            detail_ok = row.get("detail_fetch_ok")
             items.append(
                 {
                     "rank": rank,
@@ -1928,6 +2054,8 @@ class CoupangCrawler:
                     "shipping_fee": shipping or None,
                     "url": url,
                     "image_url": "",
+                    "monthly_sales": str(row.get("monthly_sales") or ""),
+                    "detail_fetch_ok": detail_ok if detail_ok is not None else None,
                 }
             )
 
@@ -2553,14 +2681,13 @@ class CoupangCrawler:
                     self._accept_google_consent_if_present(page)
                     self._smoke_status_update(
                         phase="google_search_input",
-                        hint=f"구글 검색창에 입력 중: {google_query!r} (한 글자씩 표시)",
+                        hint=f"구글 검색창에 입력 중: {google_query!r}",
                     )
                     box = page.locator("textarea[name='q'], input[name='q']").first
                     box.wait_for(state="visible", timeout=15000)
                     box.click(timeout=5000)
                     page.wait_for_timeout(250)
-                    box.fill("")
-                    page.keyboard.type(google_query, delay=100)
+                    self._fill_search_field(box, google_query)
                     page.wait_for_timeout(400)
                     page.keyboard.press("Enter")
                     try:
@@ -2717,8 +2844,7 @@ class CoupangCrawler:
                                 page.wait_for_timeout(200)
                                 search_box.click(timeout=5000)
                                 page.wait_for_timeout(220)
-                                search_box.fill("")
-                                page.keyboard.type(search_kw, delay=95)
+                                self._fill_search_field(search_box, search_kw)
                                 page.wait_for_timeout(250)
 
                                 self._smoke_status_update(
@@ -3093,6 +3219,19 @@ class CoupangCrawler:
                                     }
                                     self._sync_smoke_ranked_ui_cache_from_payload(search_kw, smoke_payload)
                                     _dump_smoke_search_html(str(page.content() or ""))
+                                    rank1_detail = self._smoke_fetch_rank1_sales(page, probe)
+                                    smoke_payload["rank1_detail"] = rank1_detail
+                                    for row in smoke_payload.get("top10") or []:
+                                        if not isinstance(row, dict):
+                                            continue
+                                        try:
+                                            if int(row.get("rank") or 0) != 1:
+                                                continue
+                                        except Exception:
+                                            continue
+                                        row["monthly_sales"] = str(rank1_detail.get("monthly_sales") or "")
+                                        row["detail_fetch_ok"] = bool(rank1_detail.get("detail_fetch_ok"))
+                                        break
                                     _persist_smoke_extract_report_to_db(smoke_payload)
                                     _dump_smoke_extract_report(smoke_payload)
                                 except Exception as hp_e:

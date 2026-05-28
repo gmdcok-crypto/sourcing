@@ -261,6 +261,8 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "상품링크": item.get("product_url"),
                 "대표이미지": item.get("image_url"),
                 "쿠팡상품번호": item.get("product_id"),
+                "판매량": item.get("monthly_sales") or "",
+                "상세수집": "Y" if item.get("detail_fetch_ok") else ("N" if item.get("detail_fetch_ok") is False else ""),
                 "상태코드": item.get("reason_code"),
                 "수집방식": item.get("fetch_source"),
             }
@@ -697,7 +699,10 @@ def main() -> None:
             value=int(settings.crawler_keywords_limit),
             step=1,
         )
-        st.caption("배치 실행은 headless로 동작합니다. 브라우저 확인은 준비 모드를 사용하세요.")
+        st.caption(
+            "smoke: 키워드마다 Google→쿠팡 검색 → **1위 클릭·판매량** → 다음 키워드. "
+            "COUPANG_SMOKE_RANK1_DETAIL=1 (기본). 브라우저 창을 보세요."
+        )
         if st.button("배치 시작", use_container_width=True, type="primary"):
             start_batch_run(limit=int(keyword_limit))
             st.rerun()
