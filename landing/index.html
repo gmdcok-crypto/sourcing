@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="네이버 트렌드와 쿠팡 실매출, 1688 마진까지 한 번에 검증하는 실전형 소싱 엔진. 현직 셀러가 만든 크로스 소싱 툴." />
+  <meta name="theme-color" content="#060b14" />
+  <title>Modiba GoodPrice — 실전형 크로스 소싱 엔진</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div class="bg-mesh" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <header class="site-nav" role="banner">
+    <div class="nav-inner">
+      <a class="brand" href="/">
+        <div class="brand-mark" aria-hidden="true">M</div>
+        <div class="brand-text">
+          Modiba GoodPrice
+          <span>Cross Sourcing Engine</span>
+        </div>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-menu" aria-label="메뉴 열기">☰</button>
+      <ul class="nav-links" id="nav-menu">
+        <li><a href="#features">기능</a></li>
+        <li><a href="#process">검증 절차</a></li>
+        <li><a href="#story">메이커</a></li>
+        <li><a href="#start">시작하기</a></li>
+      </ul>
+      <div class="nav-actions">
+        <button class="btn btn-ghost" type="button" data-open-login>로그인</button>
+        <button class="btn btn-primary" type="button" data-open-login>무료 시작</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="top">
+      <div class="container hero-grid">
+        <div data-reveal>
+          <div class="eyebrow">
+            <span class="eyebrow-dot" aria-hidden="true"></span>
+            현직 네이버·쿠팡 셀러가 직접 개발
+          </div>
+          <h1>
+            조회수만 높은 <em>가짜 키워드</em>에<br />
+            사입비 날리고 계신가요?
+          </h1>
+          <p class="hero-lead">
+            네이버의 <strong>수요(트렌드)</strong>와 쿠팡의 <strong>공급(실매출)</strong>,
+            1688의 <strong>마진</strong>까지 단 한 번에 크로스 검증합니다.
+            대기업 틈바구니가 아닌, 초보 셀러도 진입 가능한 황금 블루오션만 발굴합니다.
+          </p>
+          <div class="hero-cta">
+            <button class="btn btn-primary btn-lg" type="button" data-open-login>
+              무료로 틈새 키워드 발굴하기
+            </button>
+            <a class="btn btn-ghost btn-lg" href="#process">4단계 검증 보기</a>
+          </div>
+          <p class="hero-note">카드 등록 없음 · 3초 만에 시작 · 언제든 해지 가능</p>
+          <div class="hero-stats">
+            <div class="stat">
+              <strong>4단계</strong>
+              <span>크로스 검증</span>
+            </div>
+            <div class="stat">
+              <strong>TOP10</strong>
+              <span>쿠팡 심층 분석</span>
+            </div>
+            <div class="stat">
+              <strong>1688</strong>
+              <span>마진 시뮬레이션</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="demo-panel" data-reveal aria-label="소싱 대시보드 미리보기">
+          <div class="demo-chrome">
+            <div class="demo-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+            소싱 Ai · 실시간 크로스 스코어
+          </div>
+          <div class="demo-body">
+            <div class="demo-flow">
+              <div class="flow-node">네이버<small>트렌드</small></div>
+              <span class="flow-arrow" aria-hidden="true">↔</span>
+              <div class="flow-node">쿠팡<small>TOP10</small></div>
+              <span class="flow-arrow" aria-hidden="true">↔</span>
+              <div class="flow-node">1688<small>마진</small></div>
+            </div>
+            <div class="demo-scores">
+              <div class="score-row">
+                <span>네이버점수</span>
+                <div class="score-track"><span class="demo-bar-fill" data-width="78%"></span></div>
+                <span class="score-val">78.2</span>
+              </div>
+              <div class="score-row">
+                <span>쿠팡점수</span>
+                <div class="score-track"><span class="demo-bar-fill" data-width="64%"></span></div>
+                <span class="score-val">64.5</span>
+              </div>
+              <div class="score-row">
+                <span>AI점수</span>
+                <div class="score-track"><span class="demo-bar-fill" data-width="82%"></span></div>
+                <span class="score-val">82.0</span>
+              </div>
+            </div>
+            <div class="demo-keyword">홈트 소형 · 요가매트 틈새 키워드</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="pain">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <span class="section-label">Pain Point</span>
+          <h2>매일 밤낮 엑셀과 싸우는 셀러의 현실</h2>
+          <p>키워드 툴만 믿고 소싱했다가, 쿠팡 로켓·대기업에 밀려 재고만 쌓이는 경험 — 익숙하지 않으신가요?</p>
+        </div>
+        <div class="pain-grid">
+          <article class="pain-card" data-reveal>
+            <div class="pain-icon" aria-hidden="true">📉</div>
+            <h3>데이터의 배신</h3>
+            <p>황금 키워드라고 사입했는데, 막상 쿠팡에선 로켓배송·대형 셀러 틈바구니에서 노출조차 안 됩니다.</p>
+          </article>
+          <article class="pain-card" data-reveal>
+            <div class="pain-icon" aria-hidden="true">💸</div>
+            <h3>줬다 뺏기는 마진</h3>
+            <p>매출은 나오는 것 같은데 광고비·수수료를 빼면 통장엔 0원. 역마진만 피하면 다행인 날이 많습니다.</p>
+          </article>
+          <article class="pain-card" data-reveal>
+            <div class="pain-icon" aria-hidden="true">⏳</div>
+            <h3>기획만 하다 끝나는 하루</h3>
+            <p>탭 10개 켜 놓고 키워드만 찾다가, 상세페이지·운영은 손도 못 대고 퇴근합니다.</p>
+          </article>
+        </div>
+        <p class="quote-banner" data-reveal>
+          네이버만 보거나, 쿠팡만 봐서는 돈 되는 상품을 찾기 어렵습니다. 시장은 연결되어 있기 때문입니다.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <span class="section-label">Solution</span>
+          <h2>기존 키워드 조회 툴과 무엇이 다른가요?</h2>
+          <p>탑 셀러의 소싱 알고리즘을 자동화한, 실패 확률을 낮추는 실전형 엔진입니다.</p>
+        </div>
+        <div class="bento">
+          <article class="bento-item" data-reveal>
+            <div class="bento-num">01 · 딥 키워드</div>
+            <h3>L1~L4 소비자 검색 의도 역추적</h3>
+            <p>데이터랩 순위 나열이 아닙니다. 카테고리 1:1 매칭으로 대형 셀러가 놓친 숨은 키워드를 끄집어냅니다.</p>
+          </article>
+          <article class="bento-item" data-reveal>
+            <div class="bento-num">02 · 쿠팡 실전</div>
+            <h3>TOP 10 다각도 시뮬레이션</h3>
+            <p>1위 독점 매출에 속지 마세요. 가격·리뷰·배송(로켓/윙)을 10개 상품 기준으로 비교해 진입 가능 포지션만 스코어링합니다.</p>
+          </article>
+          <article class="bento-item" data-reveal>
+            <div class="bento-num">03 · 1688 연동</div>
+            <h3>해외 소싱 · 마진 계산기</h3>
+            <p>키워드 발굴에서 끝나지 않습니다. 1688 매칭과 예상 원가로 통장에 찍힐 순수익을 최종 확인합니다.</p>
+          </article>
+          <article class="bento-item" data-reveal>
+            <div class="bento-num">04 · 트렌드 레이더</div>
+            <h3>구글 · SNS 선점 키워드</h3>
+            <p>네이버·쿠팡을 넘어 급상승 트렌드를 포착해 블루오션을 먼저 선점할 수 있습니다.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="process">
+      <div class="container">
+        <div class="section-head" data-reveal>
+          <span class="section-label">Blueprint</span>
+          <h2>실패율을 낮추는 4단계 크로스 검증</h2>
+          <p>클릭 한 번으로 1차~최종 마진 점검까지 이어지는 철벽 필터링 파이프라인입니다.</p>
+        </div>
+        <div class="timeline">
+          <article class="step-card" data-reveal>
+            <div class="step-num">1</div>
+            <h3>네이버 데이터랩</h3>
+            <p>카테고리별 초보 접근 가능 키워드 1차 추출</p>
+          </article>
+          <article class="step-card" data-reveal>
+            <div class="step-num">2</div>
+            <h3>쇼핑인사이트 · 광고</h3>
+            <p>경쟁 강도·입찰가 기반 2·3차 검증</p>
+          </article>
+          <article class="step-card" data-reveal>
+            <div class="step-num">3</div>
+            <h3>쿠팡 TOP10</h3>
+            <p>리뷰·배송·실적 집계로 판매 가능성 검증</p>
+          </article>
+          <article class="step-card" data-reveal>
+            <div class="step-num">4</div>
+            <h3>1688 · 마진</h3>
+            <p>해외 소싱 매칭 후 최종 수익성 확정</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="story">
+      <div class="container">
+        <div class="founder" data-reveal>
+          <div class="founder-visual" aria-hidden="true">🛒</div>
+          <div>
+            <span class="section-label">Founder</span>
+            <h2>현직 네이버·쿠팡 셀러가 답답해서 직접 만들었습니다</h2>
+            <p>
+              방구석 개발자의 상상이 아닙니다. 매일 주문·ROAS·마진을 계산하는
+              <strong>진짜 셀러</strong>가, 엑셀 노가다 소싱을 자동화하려고 만든 실전 비밀병기입니다.
+            </p>
+            <p>
+              네이버 트렌드와 쿠팡 판매 현황을 한눈에, 마진까지 바로 확인할 수 있는 툴이 없어
+              직접 개발했습니다. 2시간 걸리던 분석을 1분으로 줄이고, 그 결과로 마진을 극대화하고 있습니다.
+            </p>
+            <div class="founder-tags">
+              <span class="tag">실전 소싱</span>
+              <span class="tag">네이버·쿠팡 병행</span>
+              <span class="tag">셀러 제작</span>
+              <span class="tag">1688 연동</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta-section" id="start">
+      <div class="container">
+        <div class="cta-box" data-reveal>
+          <h2>대기업 셀러를 이기는 틈새 시장을 발견하세요</h2>
+          <p>오늘도 남들이 다 파는 키워드에 광고비만 쓰지 마세요. 현직 고수의 소싱 방식을 내 스토어에 이식할 시간입니다.</p>
+          <button class="btn btn-primary btn-lg" type="button" data-open-login>
+            지금 바로 무료로 시작하기
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>© <span id="year"></span> Modiba GoodPrice</span>
+      <span>Cross-validation sourcing for Naver · Coupang · 1688</span>
+    </div>
+  </footer>
+
+  <div class="modal" id="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-title" aria-hidden="true">
+    <div class="modal-backdrop" data-close-login tabindex="-1"></div>
+    <div class="modal-dialog">
+      <button class="modal-close" type="button" data-close-login aria-label="닫기">×</button>
+      <h2 id="login-title">3초 만에 시작하기</h2>
+      <p>로그인 후 소싱 대시보드(PWA)로 이동합니다. 인증 연동 전에는 바로 앱 화면으로 연결됩니다.</p>
+      <div class="auth-stack">
+        <button class="auth-btn auth-btn-kakao" type="button" data-auth="kakao">카카오로 계속하기</button>
+        <button class="auth-btn" type="button" data-auth="naver">네이버로 계속하기</button>
+        <button class="auth-btn auth-btn-primary" type="button" data-auth="email">이메일로 계속하기</button>
+      </div>
+      <p class="modal-fine">계속하면 서비스 이용약관 및 개인정보 처리에 동의한 것으로 간주됩니다.</p>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
