@@ -158,20 +158,62 @@ _DOM_PURCHASE_PROOF_JS = """() => {
 }"""
 
 
+def _smoke_detail_fast_mode() -> bool:
+    """기본 fast: HTML/ DOM 즉시 파싱 우선, networkidle·장대기 생략."""
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_FAST", "1") or "1").strip().lower()
+    return raw not in {"0", "false", "no", "off", "n"}
+
+
+def _smoke_detail_use_network_idle() -> bool:
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_NETWORK_IDLE", "0") or "0").strip().lower()
+    return raw in {"1", "true", "yes", "y", "on"}
+
+
 def _smoke_detail_parse_attempts() -> int:
-    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_PARSE_ATTEMPTS", "6") or "6").strip()
+    default = "2" if _smoke_detail_fast_mode() else "4"
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_PARSE_ATTEMPTS", default) or default).strip()
     try:
-        return max(3, min(12, int(raw)))
+        return max(1, min(8, int(raw)))
     except ValueError:
-        return 6
+        return 2 if _smoke_detail_fast_mode() else 4
 
 
 def _smoke_detail_badge_wait_ms() -> int:
-    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_BADGE_WAIT_MS", "8000") or "8000").strip()
+    default = "2800" if _smoke_detail_fast_mode() else "5000"
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_BADGE_WAIT_MS", default) or default).strip()
     try:
-        return max(2000, min(20000, int(raw)))
+        return max(600, min(15000, int(raw)))
     except ValueError:
-        return 8000
+        return 2800 if _smoke_detail_fast_mode() else 5000
+
+
+def _smoke_detail_retry_wait_ms() -> int:
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_RETRY_WAIT_MS", "350") or "350").strip()
+    try:
+        return max(150, min(2000, int(raw)))
+    except ValueError:
+        return 350
+
+
+def _smoke_detail_goto_wait_until() -> str:
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_GOTO_WAIT", "") or "").strip().lower()
+    if raw in {"load", "domcontentloaded", "commit", "networkidle"}:
+        return raw
+    return "domcontentloaded" if _smoke_detail_fast_mode() else "load"
+
+
+def _smoke_detail_goto_timeout_ms() -> int:
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_GOTO_TIMEOUT_MS", "22000") or "22000").strip()
+    try:
+        return max(12000, min(45000, int(raw)))
+    except ValueError:
+        return 22000
+
+
+def _smoke_detail_tab_pause_ms() -> Tuple[int, int]:
+    if _smoke_detail_fast_mode():
+        return (80, 160)
+    return (180, 380)
 
 
 def _smoke_detail_debug_mode() -> str:
@@ -1372,28 +1414,43 @@ class CoupangCrawler:
                 return parsed
         return ""
 
-    def _wait_smoke_detail_page_hydrated(self, page: Page) -> None:
-        """React ATF 배지가 붙을 때까지 대기 (domcontentloaded만으로는 빈 껍데기 HTML)."""
-        badge_ms = _smoke_detail_badge_wait_ms()
+    def _prepare_smoke_detail_page(self, page: Page) -> None:
+        """상세 진입 직후 최소 대기 — 파싱 실패 시에만 추가 재시도."""
         try:
-            page.wait_for_load_state("load", timeout=15000)
+            page.wait_for_load_state("domcontentloaded", timeout=8000)
         except Exception:
             pass
-        try:
-            page.wait_for_load_state("networkidle", timeout=min(badge_ms, 12000))
-        except Exception:
-            pass
-        selectors = (
-            'img[src*="social_proof_purchase"]',
-            'text=/한\\s*달간[\\s\\d,]*명.*구매했어요/',
-        )
-        for selector in selectors:
+        if _smoke_detail_use_network_idle():
             try:
-                page.locator(selector).first.wait_for(state="visible", timeout=badge_ms)
-                return
+                page.wait_for_load_state(
+                    "networkidle",
+                    timeout=min(_smoke_detail_badge_wait_ms(), 5000),
+                )
             except Exception:
-                continue
-        page.wait_for_timeout(min(2000, max(500, badge_ms // 3)))
+                pass
+        elif _smoke_detail_fast_mode():
+            try:
+                page.wait_for_load_state("load", timeout=3500)
+            except Exception:
+                pass
+            page.wait_for_timeout(150)
+        else:
+            try:
+                page.wait_for_load_state("load", timeout=8000)
+            except Exception:
+                pass
+
+    def _extract_monthly_sales_from_detail_snapshot(
+        self, page: Page, html: str
+    ) -> str:
+        """DOM + HTML 한 번에 파싱. 이미 'N개' 형식이면 normalize 통과."""
+        sales = self._try_parse_monthly_sales_on_detail_page(page, html=html)
+        if not sales:
+            sales = self._parse_monthly_sales_from_cached_html(html)
+        if not sales or sales == "0개":
+            return ""
+        parsed = normalize_monthly_sales_display(sales, default_zero=False)
+        return parsed if parsed and parsed != "0개" else ""
 
     def _try_parse_monthly_sales_on_detail_page(self, page: Page, *, html: str = "") -> str:
         """DOM 전역 스캔 + HTML 파싱."""
@@ -1410,27 +1467,45 @@ class CoupangCrawler:
         return ""
 
     def _read_monthly_sales_from_detail_page(self, page: Page) -> str:
-        """상세 1건: hydrate 대기 후 DOM/HTML 반복 파싱."""
-        self._wait_smoke_detail_page_hydrated(page)
+        """상세 1건: 즉시 HTML/DOM 파싱 → 실패 시에만 짧은 재시도."""
+        self._prepare_smoke_detail_page(page)
 
-        html = ""
-        attempts = _smoke_detail_parse_attempts()
-        for attempt in range(attempts):
-            if not html or attempt > 0:
-                html = page.content()
-            parsed = self._try_parse_monthly_sales_on_detail_page(page, html=html)
-            if parsed and parsed != "0개":
-                return parsed
-            parsed = self._parse_monthly_sales_from_cached_html(html)
-            if parsed and parsed != "0개":
-                return parsed
-            if attempt < attempts - 1:
+        html = page.content()
+        sales = self._extract_monthly_sales_from_detail_snapshot(page, html)
+        if sales:
+            return sales
+
+        badge_ms = _smoke_detail_badge_wait_ms()
+        retry_ms = _smoke_detail_retry_wait_ms()
+        attempts = max(0, _smoke_detail_parse_attempts() - 1)
+        for _ in range(attempts):
+            try:
+                page.locator('img[src*="social_proof_purchase"]').first.wait_for(
+                    state="attached",
+                    timeout=min(1200, badge_ms // 2),
+                )
+            except Exception:
+                page.wait_for_timeout(retry_ms)
+            html = page.content()
+            sales = self._extract_monthly_sales_from_detail_snapshot(page, html)
+            if sales:
+                return sales
+
+        if not _smoke_detail_fast_mode():
+            for selector in (
+                'img[src*="social_proof_purchase"]',
+                'text=/한\\s*달간[\\s\\d,]*명.*구매했어요/',
+            ):
                 try:
-                    page.locator('img[src*="social_proof_purchase"]').first.wait_for(
-                        state="visible", timeout=1200
+                    page.locator(selector).first.wait_for(
+                        state="visible", timeout=badge_ms
                     )
+                    html = page.content()
+                    sales = self._extract_monthly_sales_from_detail_snapshot(page, html)
+                    if sales:
+                        return sales
                 except Exception:
-                    page.wait_for_timeout(700)
+                    continue
         return ""
 
     def _attach_smoke_detail_network_tap(self, page: Page) -> List[Dict[str, Any]]:
@@ -1601,14 +1676,16 @@ class CoupangCrawler:
             referer = str(serp_url or serp_page.url or "https://www.coupang.com/").strip()
             detail_page.goto(
                 target_url,
-                wait_until="load",
+                wait_until=_smoke_detail_goto_wait_until(),
                 referer=referer,
-                timeout=35000,
+                timeout=_smoke_detail_goto_timeout_ms(),
             )
             sales = self._read_monthly_sales_from_detail_page(detail_page)
             html = detail_page.content()
             if not sales:
-                sales = self._parse_monthly_sales_from_cached_html(html)
+                sales = self._extract_monthly_sales_from_detail_snapshot(
+                    detail_page, html
+                )
             title = (detail_page.title() or "")[:120]
             debug["page_title"] = title
             debug["body_len"] = len(str(html or ""))
@@ -1765,7 +1842,8 @@ class CoupangCrawler:
             detail_items.append(
                 self._finalize_smoke_detail_result(result, parsed_sales=parsed)
             )
-            page.wait_for_timeout(random.randint(180, 380))
+            pause_lo, pause_hi = _smoke_detail_tab_pause_ms()
+            page.wait_for_timeout(random.randint(pause_lo, pause_hi))
 
         bundle["items"] = detail_items
         bundle["completed_ranks"] = [

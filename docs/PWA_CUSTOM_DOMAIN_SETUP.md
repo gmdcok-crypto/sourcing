@@ -174,7 +174,6 @@ WHOIS → **내 도메인** → **DNS 관리** (또는 DNS 설정)
 |--------|------|
 | PWA | `/user` |
 | 피드 API | `/api/user/feed` |
-| 1688 이미지 드래그 | `/user/1688-drag-image` |
 | Admin | `/admin` |
 
 커스텀 도메인 적용 후에도 **경로는 동일**하고, 호스트만 `sourcing.yourdomain.com` 으로 바뀝니다.
