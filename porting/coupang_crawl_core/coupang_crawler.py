@@ -1083,10 +1083,17 @@ class CoupangCrawler:
                     return text
         return ""
 
-    def _smoke_click_product_sales(self, page: Page, row: Dict[str, Any], *, rank: int) -> Dict[str, Any]:
-        """SERP에서 한 상품 클릭 후 상세 판매량 수집."""
+    def _smoke_fetch_product_sales_in_new_tab(
+        self,
+        serp_page: Page,
+        row: Dict[str, Any],
+        *,
+        rank: int,
+        serp_url: str,
+    ) -> Dict[str, Any]:
+        """SERP는 유지한 채 상세만 새 탭에서 열고·수집 후 탭 닫기."""
         debug: Dict[str, Any] = {
-            "method": "smoke_detail_click",
+            "method": "smoke_detail_new_tab",
             "rank": rank,
             "monthly_sales": "",
             "detail_fetch_ok": False,
@@ -1099,32 +1106,20 @@ class CoupangCrawler:
             debug["error_code"] = "EMPTY_URL"
             return debug
 
-        safe_print(f"[SMOKE][detail] rank={rank} click start product_id={product_id}")
-
+        safe_print(f"[SMOKE][detail] rank={rank} new tab open product_id={product_id}")
+        detail_page: Optional[Page] = None
         try:
-            anchor = self._find_search_result_anchor(
-                page, product_id=str(product_id or ""), target_url=target_url
+            detail_page = serp_page.context.new_page()
+            referer = str(serp_url or serp_page.url or "https://www.coupang.com/").strip()
+            detail_page.goto(
+                target_url,
+                wait_until="domcontentloaded",
+                referer=referer,
+                timeout=28000,
             )
-            if anchor is None:
-                self._scroll_coupang_search_results_page(page, max_wheel_batches=4)
-                anchor = self._find_search_result_anchor(
-                    page, product_id=str(product_id or ""), target_url=target_url
-                )
-            if anchor is None:
-                debug["error_code"] = "SEARCH_RESULT_LINK_NOT_FOUND"
-                safe_print(f"[SMOKE][detail] rank={rank} SERP link not found")
-                return debug
-
-            try:
-                anchor.scroll_into_view_if_needed()
-            except Exception:
-                pass
-            page.wait_for_timeout(random.randint(400, 900))
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
-                anchor.click(timeout=5000)
-            page.wait_for_timeout(random.randint(900, 1500))
-            html = page.content()
-            title = (page.title() or "")[:120]
+            detail_page.wait_for_timeout(random.randint(900, 1600))
+            html = detail_page.content()
+            title = (detail_page.title() or "")[:120]
             debug["page_title"] = title
             debug["body_len"] = len(str(html or ""))
             if self._is_blocked(html, title):
@@ -1135,20 +1130,26 @@ class CoupangCrawler:
             debug["monthly_sales"] = sales
             debug["detail_fetch_ok"] = True
             debug["stage"] = "html_ok"
-            safe_print(f"[SMOKE][detail] rank={rank} sales={sales!r}")
+            safe_print(f"[SMOKE][detail] rank={rank} tab close sales={sales!r}")
             return debug
         except TimeoutError:
             debug["error_code"] = "TIMEOUT"
-            safe_print(f"[SMOKE][detail] rank={rank} click timeout")
+            safe_print(f"[SMOKE][detail] rank={rank} new tab timeout")
             return debug
         except Exception as exc:
             debug["error_code"] = type(exc).__name__
             debug["message"] = repr(exc)
-            safe_print(f"[SMOKE][detail] rank={rank} exception error={type(exc).__name__}")
+            safe_print(f"[SMOKE][detail] rank={rank} new tab error={type(exc).__name__}")
             return debug
+        finally:
+            if detail_page is not None:
+                try:
+                    detail_page.close()
+                except Exception:
+                    pass
 
     def _smoke_fetch_topn_sales(self, page: Page, probe: Dict[str, Any]) -> Dict[str, Any]:
-        """smoke SERP에서 1~N위 순차 클릭·판매량 수집 후 SERP 복귀. 완료 후 다음 키워드로 진행."""
+        """smoke SERP 유지 + 상세는 탭 열기→수집→닫기를 N회 반복."""
         limit = self._smoke_detail_limit()
         bundle: Dict[str, Any] = {
             "detail_limit": limit,
@@ -1174,37 +1175,31 @@ class CoupangCrawler:
 
         self._smoke_status_update(
             phase="smoke_topn_detail",
-            hint=f"SERP 1~{limit}위 순차 클릭·판매량 수집",
+            hint=f"SERP 유지 · 1~{limit}위 상세 탭 열기→수집→닫기",
         )
-        safe_print(f"[SMOKE][detail] topn start limit={limit} keyword_rows={len(ranked_rows)}")
+        safe_print(
+            f"[SMOKE][detail] topn new-tab mode limit={limit} "
+            f"keyword_rows={len(ranked_rows)}"
+        )
 
         detail_items: List[Dict[str, Any]] = []
         for rank_no, row in ranked_rows:
             if rank_no > limit:
                 break
-            result = self._smoke_click_product_sales(page, row, rank=rank_no)
+            result = self._smoke_fetch_product_sales_in_new_tab(
+                page, row, rank=rank_no, serp_url=serp_url
+            )
             row["monthly_sales"] = str(result.get("monthly_sales") or "")
             row["detail_fetch_ok"] = bool(result.get("detail_fetch_ok"))
             detail_items.append(result)
-
-            if rank_no >= limit:
-                break
-            if not serp_url:
-                continue
-            try:
-                safe_print(f"[SMOKE][detail] rank={rank_no} done → SERP 복귀")
-                page.goto(serp_url, wait_until="domcontentloaded", timeout=25000)
-                page.wait_for_selector(_PRODUCT_LIST_SELECTOR, timeout=15000)
-                page.wait_for_timeout(random.randint(700, 1300))
-            except Exception as back_exc:
-                safe_print(
-                    f"[SMOKE][detail] SERP 복귀 실패 rank={rank_no} err={type(back_exc).__name__} "
-                    "— 이후 순위 스킵"
-                )
-                break
+            page.wait_for_timeout(random.randint(400, 900))
 
         bundle["items"] = detail_items
-        bundle["completed_ranks"] = [int(it.get("rank") or 0) for it in detail_items if it.get("rank")]
+        bundle["completed_ranks"] = [
+            int(it.get("rank") or 0)
+            for it in detail_items
+            if it.get("detail_fetch_ok") and int(it.get("rank") or 0) > 0
+        ]
         safe_print(f"[SMOKE][detail] topn done completed={bundle['completed_ranks']}")
         return bundle
 
