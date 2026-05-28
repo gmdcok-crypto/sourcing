@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent
 SRC = Path(r"c:\Users\gmdco\OneDrive\문서\카카오톡 받은 파일\html_PWA.txt")
 OUT = ROOT / "index.html"
 HERO = ROOT / "partials" / "hero-banner.html"
+DIFF = ROOT / "partials" / "differentiator-section.html"
 PWA_URL = "https://sourcing-production-8102.up.railway.app/user"
 
 raw = SRC.read_text(encoding="utf-8")
@@ -80,6 +81,7 @@ head = f"""<!DOCTYPE html>
     }};
   </script>
   <link rel="stylesheet" href="css/hero.css" />
+  <link rel="stylesheet" href="css/differentiator.css" />
   <style>
     html {{ scroll-behavior: smooth; }}
     body {{ font-family: Pretendard, system-ui, sans-serif; }}
@@ -90,6 +92,7 @@ head = f"""<!DOCTYPE html>
 """
 
 hero_html = HERO.read_text(encoding="utf-8") if HERO.is_file() else ""
+diff_html = DIFF.read_text(encoding="utf-8") if DIFF.is_file() else ""
 
 tail = f"""
   <script>window.SOURCING_APP = {{ pwaUrl: "{PWA_URL}" }};</script>
@@ -99,5 +102,5 @@ tail = f"""
 </html>
 """
 
-OUT.write_text(head + hero_html + body + tail, encoding="utf-8")
+OUT.write_text(head + hero_html + diff_html + body + tail, encoding="utf-8")
 print("wrote", OUT, OUT.stat().st_size, "bytes")

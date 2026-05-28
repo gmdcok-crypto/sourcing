@@ -1,0 +1,253 @@
+/* 히어로 다음 — 기존 툴 vs AI 자동화 소싱 */
+.diff-section {
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+  border-bottom: 1px solid #e2e8f0;
+  padding: clamp(48px, 8vw, 88px) clamp(20px, 6vw, 48px);
+}
+
+.diff-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.diff-head {
+  max-width: 720px;
+  margin: 0 0 40px;
+}
+
+.diff-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.diff-eyebrow-ai {
+  display: inline-grid;
+  place-items: center;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+}
+
+.diff-head h2 {
+  margin: 0 0 14px;
+  font-size: clamp(1.75rem, 4vw, 2.35rem);
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+  color: #0f172a;
+}
+
+.diff-sub {
+  margin: 0;
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: #475569;
+}
+
+.diff-sub strong {
+  color: #0f172a;
+}
+
+.diff-sub-ai {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.diff-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px 12px;
+  margin-bottom: 36px;
+}
+
+.diff-flow-step {
+  flex: 1 1 160px;
+  max-width: 220px;
+  padding: 16px 14px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  text-align: center;
+}
+
+.diff-flow-step.is-ai {
+  border-color: #93c5fd;
+  background: linear-gradient(180deg, #eff6ff 0%, #fff 100%);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.08);
+}
+
+.diff-flow-num {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #2563eb;
+}
+
+.diff-flow-step strong {
+  display: block;
+  font-size: 0.9375rem;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+
+.diff-flow-step span {
+  font-size: 0.8125rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.diff-flow-arrow {
+  align-self: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.diff-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: stretch;
+}
+
+.diff-card {
+  border-radius: 20px;
+  padding: 28px 24px;
+  border: 1px solid #e2e8f0;
+}
+
+.diff-card h3 {
+  margin: 0 0 6px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.diff-card-tag {
+  margin: 0 0 18px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.diff-card ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diff-card li {
+  position: relative;
+  padding-left: 1.5rem;
+  margin-bottom: 12px;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: #334155;
+}
+
+.diff-card li::before {
+  position: absolute;
+  left: 0;
+  top: 0.15em;
+  font-weight: 800;
+}
+
+.diff-card-old {
+  background: #f8fafc;
+}
+
+.diff-card-old li::before {
+  content: "×";
+  color: #94a3b8;
+}
+
+.diff-card-ai {
+  background: linear-gradient(145deg, #0f172a 0%, #1e3a8a 55%, #1d4ed8 100%);
+  border-color: #1e40af;
+  color: #e2e8f0;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
+}
+
+.diff-card-ai h3,
+.diff-card-ai .diff-card-tag {
+  color: #f8fafc;
+}
+
+.diff-card-ai .diff-card-tag {
+  color: #bfdbfe;
+}
+
+.diff-card-ai li {
+  color: #e2e8f0;
+}
+
+.diff-card-ai li::before {
+  content: "✓";
+  color: #93c5fd;
+}
+
+.diff-card-ai li strong {
+  color: #fff;
+}
+
+.diff-card-badge {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(59, 130, 246, 0.45);
+}
+
+.diff-cta {
+  display: inline-block;
+  margin-top: 20px;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #fff;
+  text-decoration: none;
+  background: #2563eb;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.diff-cta:hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+@media (max-width: 768px) {
+  .diff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-flow-arrow {
+    display: none;
+  }
+
+  .diff-flow-step {
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+}

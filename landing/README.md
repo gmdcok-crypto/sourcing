@@ -29,7 +29,7 @@ pwaUrl: "https://sourcing-production-8102.up.railway.app/user",
 
 배경 이미지: `images/hero-banner.png` (교체 시 동일 파일명 권장)
 
-문구·스타일 수정: `partials/hero-banner.html`, `css/hero.css`
+문구·스타일 수정: `partials/hero-banner.html`, `partials/differentiator-section.html`, `css/hero.css`, `css/differentiator.css`
 
 ## HTML 다시 생성
 
