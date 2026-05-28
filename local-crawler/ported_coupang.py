@@ -5,8 +5,10 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -51,12 +53,267 @@ def _dump_result(payload: Dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _smoke_detail_limit_from_env() -> int:
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_LIMIT", "5") or "5").strip()
+    try:
+        return max(1, min(10, int(raw)))
+    except ValueError:
+        return 5
+
+
+def _review_count_value(item: Dict[str, Any]) -> int:
+    raw = item.get("review_count")
+    if raw in (None, ""):
+        return -1
+    try:
+        return int(float(str(raw).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return -1
+
+
+def _extract_product_id_from_url(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    for pattern in (
+        r"/vp/products/(\d+)",
+        r"/products/(\d+)",
+        r"[?&]productId=(\d+)",
+    ):
+        match = re.search(pattern, raw, flags=re.I)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _coupang_item_merge_key(row: Dict[str, Any]) -> str:
+    """SERP 순위가 바뀌어도 동일 SKU에 판매량을 붙이기 위한 키 (product_id + itemId + vendorItemId)."""
+    url = str(row.get("url") or row.get("product_url") or "").strip()
+    product_id = str(row.get("product_id") or "").strip() or _extract_product_id_from_url(url)
+    if not url and not product_id:
+        return ""
+
+    parsed = urlparse(url) if url else None
+    query = parse_qs(parsed.query) if parsed else {}
+
+    def _first_param(name: str) -> str:
+        values = query.get(name) or query.get(name.lower()) or []
+        return str(values[0]).strip() if values else ""
+
+    item_id = _first_param("itemId")
+    vendor_item_id = _first_param("vendorItemId")
+    if product_id and item_id:
+        return f"{product_id}:{item_id}:{vendor_item_id}"
+    if product_id:
+        return f"pid:{product_id}"
+    path = (parsed.path or "").strip().lower() if parsed else ""
+    return f"url:{path}" if path else ""
+
+
+def _apply_detail_sales_to_row(row: Dict[str, Any], detail: Dict[str, Any]) -> Dict[str, Any]:
+    raw_sales = str(detail.get("monthly_sales") or row.get("monthly_sales") or "").strip()
+    if raw_sales.endswith("개") and raw_sales != "0개":
+        row["monthly_sales"] = raw_sales
+    else:
+        try:
+            from coupang_crawler import normalize_monthly_sales_display
+
+            row["monthly_sales"] = normalize_monthly_sales_display(
+                raw_sales, default_zero=False
+            )
+        except Exception:
+            row["monthly_sales"] = raw_sales
+    if not row.get("monthly_sales") or row.get("monthly_sales") == "0개":
+        row["monthly_sales"] = ""
+    if row.get("monthly_sales"):
+        row["detail_fetch_ok"] = True
+    else:
+        row.pop("detail_fetch_ok", None)
+    return row
+
+
+def _pick_top_items_by_reviews(
+    items: List[Dict[str, Any]], *, limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """키워드 내 1~10위 중 리뷰수 상위 N개만 남긴다."""
+    cap = int(limit if limit is not None else _smoke_detail_limit_from_env())
+    ordered = sorted(
+        [dict(x) for x in items if isinstance(x, dict)],
+        key=lambda row: (-_review_count_value(row), int(row.get("rank") or 999)),
+    )
+    picked = ordered[:cap]
+    for idx, row in enumerate(picked, start=1):
+        row["review_rank_in_keyword"] = idx
+    return picked
+
+
+def _detail_row_has_sales(row: Dict[str, Any]) -> bool:
+    sales = str(row.get("monthly_sales") or "").strip()
+    return bool(sales) and sales != "0개"
+
+
+def _index_detail_rows(
+    detail_rows: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[int, Dict[str, Any]]]:
+    by_key: Dict[str, Dict[str, Any]] = {}
+    by_rank: Dict[int, Dict[str, Any]] = {}
+    for row in detail_rows:
+        if not isinstance(row, dict):
+            continue
+        merge_key = _coupang_item_merge_key(row)
+        if merge_key:
+            prev = by_key.get(merge_key)
+            if not prev or (_detail_row_has_sales(row) and not _detail_row_has_sales(prev)):
+                by_key[merge_key] = row
+        try:
+            rank = int(row.get("rank") or 0)
+        except Exception:
+            rank = 0
+        if rank > 0:
+            prev = by_rank.get(rank)
+            if not prev or (_detail_row_has_sales(row) and not _detail_row_has_sales(prev)):
+                by_rank[rank] = row
+    return by_key, by_rank
+
+
+def _lookup_detail_for_item(
+    item: Dict[str, Any],
+    *,
+    by_key: Dict[str, Dict[str, Any]],
+    by_rank: Dict[int, Dict[str, Any]],
+) -> Dict[str, Any]:
+    merge_key = _coupang_item_merge_key(item)
+    if merge_key and merge_key in by_key:
+        return by_key[merge_key]
+    try:
+        rank = int(item.get("rank") or 0)
+    except Exception:
+        rank = 0
+    if rank > 0 and rank in by_rank:
+        return by_rank[rank]
+    product_id = str(item.get("product_id") or "").strip() or _extract_product_id_from_url(
+        str(item.get("url") or item.get("product_url") or "")
+    )
+    if product_id:
+        pid_key = f"pid:{product_id}"
+        if pid_key in by_key:
+            return by_key[pid_key]
+    return {}
+
+
+def _merge_detail_results_into_top10(
+    top10_items: List[Dict[str, Any]],
+    detail_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    by_key, by_rank = _index_detail_rows(detail_rows)
+    merged: List[Dict[str, Any]] = []
+    for item in top10_items:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        detail = _lookup_detail_for_item(row, by_key=by_key, by_rank=by_rank)
+        if detail:
+            _apply_detail_sales_to_row(row, detail)
+        merged.append(row)
+    return merged
+
+
+def _apply_smoke_payload_to_result(
+    result_data: Dict[str, Any], crawler: Any, smoke_payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    smoke_result = crawler.build_result_from_smoke_payload(smoke_payload)
+    if not smoke_result or not smoke_result.get("top10_items"):
+        return result_data
+
+    items = list(smoke_result.get("top10_items") or [])
+    detail_rows = list(smoke_payload.get("detail_results") or [])
+    if detail_rows:
+        items = _merge_detail_results_into_top10(items, detail_rows)
+
+    serp_by_rank: Dict[int, Dict[str, Any]] = {}
+    for serp in list(result_data.get("top10_items") or []):
+        if not isinstance(serp, dict):
+            continue
+        try:
+            rank = int(serp.get("rank") or 0)
+        except Exception:
+            continue
+        if rank > 0:
+            serp_by_rank[rank] = serp
+
+    enriched: List[Dict[str, Any]] = []
+    for item in items:
+        row = dict(item)
+        serp = serp_by_rank.get(int(row.get("rank") or 0)) or {}
+        for key in ("image_url", "delivery_type", "shipping_fee", "product_url"):
+            if serp.get(key) and not row.get(key):
+                row[key] = serp.get(key)
+        if serp.get("url") and not row.get("url"):
+            row["url"] = serp["url"]
+        enriched.append(row)
+
+    out = dict(result_data)
+    out.update(smoke_result)
+    out["top10_items"] = _pick_top_items_by_reviews(enriched)
+    out["detail_pick_mode"] = smoke_payload.get("detail_pick_mode") or "top_reviews"
+    out["detail_target_ranks"] = list(smoke_payload.get("detail_target_ranks") or [])
+    if detail_rows:
+        out["detail_debug"] = detail_rows
+    return out
+
+
+def _smoke_json_path_for_keyword(keyword: str) -> Path:
+    slug = re.sub(r"[^\w가-힣]+", "_", str(keyword or "").strip()).strip("_")[:80]
+    if slug:
+        per_kw = SMOKE_DIR / f"last_smoke_extract_{slug}.json"
+        if per_kw.is_file():
+            return per_kw
+    return SMOKE_JSON_PATH
+
+
+def _wait_smoke_payload_ready(
+    keyword: str, *, timeout_seconds: float = 180.0, not_before: float = 0.0
+) -> Dict[str, Any]:
+    """상세(detail_pick_mode)까지 끝난 JSON만 읽는다 — 이전 키워드/배치 잔여 파일은 무시."""
+    deadline = time.monotonic() + max(30.0, float(timeout_seconds))
+    last: Dict[str, Any] = {}
+    paths = [SMOKE_JSON_PATH, _smoke_json_path_for_keyword(keyword)]
+    while time.monotonic() < deadline:
+        for path in paths:
+            if not path.is_file():
+                continue
+            try:
+                if not_before > 0 and path.stat().st_mtime < not_before:
+                    continue
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            last = payload
+            saved_kw = str(payload.get("keyword") or "").strip()
+            if keyword and saved_kw and saved_kw != keyword:
+                continue
+            if payload.get("detail_pick_mode") and isinstance(
+                payload.get("detail_results"), list
+            ):
+                return payload
+        time.sleep(0.35)
+    return last
+
+
 def _clear_smoke_artifacts() -> None:
     for path in (SMOKE_JSON_PATH, SMOKE_HTML_PATH):
         try:
             path.unlink(missing_ok=True)
         except Exception:
             continue
+    try:
+        if SMOKE_DIR.is_dir():
+            for path in SMOKE_DIR.glob("last_smoke_extract_*.json"):
+                path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _normalize_space(value: Any) -> str:
@@ -609,15 +866,18 @@ def _run_keyword_via_smoke_worker(crawler: Any, keyword: str) -> Dict[str, Any]:
         return crawler._result_with_reason("EMPTY_KEYWORD")
 
     _clear_smoke_artifacts()
+    smoke_wait_not_before = time.time() - 0.5
     os.environ["COUPANG_SMOKE_COUPANG_QUERY"] = kw
     ok = crawler.smoke_open_playwright_chromium_window("https://www.google.com/", wait_seconds=5.0)
     if not ok:
         return crawler._result_with_reason("SMOKE_START_FAILED")
 
     try:
-        probe_ok, status = crawler.poll_smoke_until_coupang_probe_finished(timeout_seconds=120.0)
-        smoke_payload = {}
-        if SMOKE_JSON_PATH.is_file():
+        probe_ok, status = crawler.poll_smoke_until_coupang_probe_finished(timeout_seconds=180.0)
+        smoke_payload = _wait_smoke_payload_ready(
+            kw, timeout_seconds=120.0, not_before=smoke_wait_not_before
+        )
+        if not smoke_payload and SMOKE_JSON_PATH.is_file():
             try:
                 smoke_payload = json.loads(SMOKE_JSON_PATH.read_text(encoding="utf-8"))
             except Exception:
@@ -629,11 +889,9 @@ def _run_keyword_via_smoke_worker(crawler: Any, keyword: str) -> Dict[str, Any]:
         else:
             result_data = crawler._result_with_reason("SMOKE_HTML_MISSING")
 
-        reason_code = str(result_data.get("reason_code") or "").strip()
-        if reason_code not in {"OK", ""} and isinstance(smoke_payload, dict):
-            smoke_result = crawler.build_result_from_smoke_payload(smoke_payload)
-            if smoke_result and smoke_result.get("top10_items"):
-                result_data = smoke_result
+        if isinstance(smoke_payload, dict) and smoke_payload.get("top10"):
+            result_data = _apply_smoke_payload_to_result(result_data, crawler, smoke_payload)
+            result_data["reason_code"] = "OK"
 
         if isinstance(smoke_payload, dict):
             result_data["page_title"] = smoke_payload.get("title") or result_data.get("page_title") or ""
@@ -642,15 +900,16 @@ def _run_keyword_via_smoke_worker(crawler: Any, keyword: str) -> Dict[str, Any]:
             if smoke_payload.get("organic_count") not in (None, ""):
                 result_data["product_count"] = smoke_payload.get("organic_count")
             result_data["fetch_source"] = "smoke"
-            detail_results = smoke_payload.get("detail_results")
-            if isinstance(detail_results, list) and detail_results:
-                result_data["detail_debug"] = detail_results
-            else:
-                rank1_detail = smoke_payload.get("rank1_detail")
-                if isinstance(rank1_detail, dict) and rank1_detail:
-                    result_data["detail_debug"] = [rank1_detail]
+            if not result_data.get("detail_debug"):
+                detail_results = smoke_payload.get("detail_results")
+                if isinstance(detail_results, list) and detail_results:
+                    result_data["detail_debug"] = detail_results
                 else:
-                    result_data.setdefault("detail_debug", [])
+                    rank1_detail = smoke_payload.get("rank1_detail")
+                    if isinstance(rank1_detail, dict) and rank1_detail:
+                        result_data["detail_debug"] = [rank1_detail]
+                    else:
+                        result_data.setdefault("detail_debug", [])
         if not probe_ok and str(result_data.get("reason_code") or "").strip() == "OK":
             result_data["reason_code"] = "SMOKE_PROBE_FAILED"
         if not probe_ok and not isinstance(smoke_payload, dict):

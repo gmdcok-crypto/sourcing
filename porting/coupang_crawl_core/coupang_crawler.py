@@ -37,15 +37,22 @@ def safe_print(*args, **kwargs):
 
 
 def _dump_smoke_extract_report(payload: Dict[str, Any]) -> None:
-    """스모크 결과를 .smoke/last_smoke_extract.json 에 저장한다 (대시보드 파일 감시·폴백용)."""
+    """스모크 결과를 .smoke/last_smoke_extract.json (+ 키워드별) 에 저장한다."""
     if not isinstance(payload, dict):
         return
-    out_p = Path(__file__).resolve().parent / ".smoke" / "last_smoke_extract.json"
+    smoke_dir = Path(__file__).resolve().parent / ".smoke"
+    out_p = smoke_dir / "last_smoke_extract.json"
     try:
-        out_p.parent.mkdir(parents=True, exist_ok=True)
+        smoke_dir.mkdir(parents=True, exist_ok=True)
         with open(out_p, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         safe_print(f"[SMOKE] 추출 결과 JSON 저장: {out_p}")
+        kw = str(payload.get("keyword") or "").strip()
+        if kw:
+            slug = re.sub(r"[^\w가-힣]+", "_", kw).strip("_")[:80] or "keyword"
+            per_kw = smoke_dir / f"last_smoke_extract_{slug}.json"
+            with open(per_kw, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
     except Exception as ex:
         safe_print(f"[SMOKE] 추출 결과 JSON 저장 실패(무시): {ex!r}")
 
@@ -68,6 +75,252 @@ def _dump_smoke_search_html(html: str) -> None:
 def _smoke_strict_clean_enabled() -> bool:
     raw = os.environ.get("COUPANG_SMOKE_STRICT_CLEAN", "0")
     return str(raw).strip().lower() not in {"0", "false", "no", "off", "n"}
+
+
+def _is_monthly_purchase_proof_text(text: str) -> bool:
+    """ATF 배지: '한 달간 N명 이상 구매했어요' (리뷰 '…구매했어요' 제외)."""
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not t or "구매했어요" not in t or "상품평" in t:
+        return False
+    return bool(re.search(r"한\s*달", t)) and bool(re.search(r"[\d,]+\s*명", t))
+
+
+def _parse_user_atf_badge_html(html: str) -> str:
+    """
+    사용자 제공 ATF 구조:
+    social_proof_purchase img + p.twc-text-bluegray-900 > 한 달간<span> N명 이상 </span>구매했어요
+    """
+    raw = str(html or "")
+    if "social_proof_purchase" not in raw and "구매했어요" not in raw:
+        return ""
+
+    fast = _parse_monthly_sales_from_html_fast(raw)
+    if fast:
+        return fast
+
+    try:
+        soup = BeautifulSoup(raw, "html.parser")
+        for img in soup.find_all("img", src=re.compile(r"social_proof_purchase", re.I)):
+            box = img.find_parent("div", class_=re.compile(r"twc-flex"))
+            if not box:
+                box = img.parent
+            if not box:
+                continue
+            for p in box.find_all("p"):
+                text = re.sub(r"\s+", " ", p.get_text(" ", strip=True))
+                if _is_monthly_purchase_proof_text(text):
+                    parsed = normalize_monthly_sales_display(text)
+                    if parsed:
+                        return parsed
+    except Exception:
+        pass
+    return ""
+
+
+# ATF: 한 달간<span> 800명 이상 </span>구매했어요 — span 분리 HTML용 빠른 정규식
+_PURCHASE_PROOF_ATF_HTML_RE = re.compile(
+    r"한\s*달간(?:\s*<[^>]+>\s*)*([\d,]+)\s*명\s*이상(?:\s*<[^>]+>\s*)*구매했어요",
+    re.IGNORECASE | re.DOTALL,
+)
+_PURCHASE_PROOF_ATF_TEXT_RE = re.compile(
+    r"한\s*달간\s*([\d,]+)\s*명\s*이상\s*구매했어요",
+    re.IGNORECASE,
+)
+# JSON/SSR 이스케이프: 한 달간\u003cs\u003e800\u003c/s\u003e... 또는 태그 혼합
+_PURCHASE_PROOF_LOOSE_RE = re.compile(
+    r"한\s*달간(?:\\u003c[^\\]+\\u003e|<[^>]+>|\s)*([\d,]+)\s*명\s*이상",
+    re.IGNORECASE,
+)
+
+_DOM_PURCHASE_PROOF_JS = """() => {
+    const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+    const ok = (t) =>
+        t.includes('구매했어요') &&
+        t.includes('명') &&
+        !t.includes('상품평') &&
+        /한\\s*달/.test(t);
+    const img = document.querySelector('img[src*="social_proof_purchase"]');
+    if (img) {
+        const box = img.closest('div.twc-flex') || img.parentElement;
+        const p = box && box.querySelector('p');
+        if (p) {
+            const t = norm(p.textContent || p.innerText || '');
+            if (ok(t)) return t;
+        }
+    }
+    const nodes = document.querySelectorAll('p, span, div');
+    for (const el of nodes) {
+        const t = norm(el.textContent || '');
+        if (!ok(t)) continue;
+        if (/한\\s*달간\\s*[\\d,]+\\s*명/.test(t)) return t;
+    }
+    return '';
+}"""
+
+
+def _smoke_detail_parse_attempts() -> int:
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_PARSE_ATTEMPTS", "6") or "6").strip()
+    try:
+        return max(3, min(12, int(raw)))
+    except ValueError:
+        return 6
+
+
+def _smoke_detail_badge_wait_ms() -> int:
+    raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_BADGE_WAIT_MS", "8000") or "8000").strip()
+    try:
+        return max(2000, min(20000, int(raw)))
+    except ValueError:
+        return 8000
+
+
+def _smoke_detail_debug_mode() -> str:
+    """
+    COUPANG_SMOKE_DEBUG_DETAIL:
+      - miss (기본): 판매량 파싱 실패·차단·타임아웃 시만 덤프
+      - all / 1 / true: 상세 탭마다 덤프
+      - off / 0: 덤프 안 함
+    """
+    raw = str(os.environ.get("COUPANG_SMOKE_DEBUG_DETAIL", "miss") or "miss").strip().lower()
+    if raw in {"0", "off", "false", "no", "n"}:
+        return "off"
+    if raw in {"1", "true", "yes", "y", "all", "on"}:
+        return "all"
+    return "miss"
+
+
+def _smoke_detail_debug_dir() -> Path:
+    return Path(__file__).resolve().parent / ".smoke" / "detail_debug"
+
+
+def _html_purchase_signals(html: str) -> Dict[str, Any]:
+    """파싱 시점 HTML에 배지 관련 문자열이 실제로 있는지 진단."""
+    raw = str(html or "")
+    scan = raw[:500000]
+    flat = re.sub(r"<[^>]+>", " ", scan)
+    flat = re.sub(r"\\u003c[^\\]+\\u003e", " ", flat)
+    flat = re.sub(r"\s+", " ", flat)
+    text_match = bool(_PURCHASE_PROOF_ATF_TEXT_RE.search(flat))
+    return {
+        "has_badge_img": "social_proof_purchase" in raw,
+        "has_purchase_text": text_match,
+        "has_guwahaeyo": "구매했어요" in scan,
+        "has_handal": bool(re.search(r"한\s*달", scan)),
+        "fast_parse_preview": _parse_monthly_sales_from_html_fast(raw) or "",
+    }
+
+
+def _should_dump_smoke_detail_debug(*, parsed_sales: str, blocked: bool, error: bool) -> bool:
+    mode = _smoke_detail_debug_mode()
+    if mode == "off":
+        return False
+    if mode == "all":
+        return True
+    if blocked or error:
+        return True
+    return not str(parsed_sales or "").strip()
+
+
+def _digits_to_monthly_sales_display(num_text: str) -> str:
+    digits = str(num_text or "").replace(",", "").strip()
+    if not digits.isdigit():
+        return ""
+    return f"{int(digits)}개"
+
+
+def _parse_monthly_sales_from_html_fast(html: str) -> str:
+    """social_proof 배지·ATF <p> 구조만 빠르게 스캔 (전체 BeautifulSoup 생략)."""
+    raw = str(html or "")
+    if "구매했어요" not in raw or "명" not in raw:
+        return ""
+
+    anchor = raw.find("social_proof_purchase")
+    if anchor >= 0:
+        chunk = raw[anchor : anchor + 2400]
+        match = _PURCHASE_PROOF_ATF_HTML_RE.search(chunk)
+        if match:
+            out = _digits_to_monthly_sales_display(match.group(1))
+            if out:
+                return out
+        match = _PURCHASE_PROOF_LOOSE_RE.search(chunk)
+        if match:
+            out = _digits_to_monthly_sales_display(match.group(1))
+            if out:
+                return out
+
+    scan_limit = 800000 if len(raw) > 800000 else len(raw)
+    head = raw[:scan_limit]
+    for pattern in (_PURCHASE_PROOF_ATF_HTML_RE, _PURCHASE_PROOF_LOOSE_RE):
+        match = pattern.search(head)
+        if match:
+            out = _digits_to_monthly_sales_display(match.group(1))
+            if out:
+                return out
+
+    flat = re.sub(r"<[^>]+>", " ", head)
+    flat = re.sub(r"\\u003c[^\\]+\\u003e", " ", flat)
+    flat = re.sub(r"\s+", " ", flat)
+    match = _PURCHASE_PROOF_ATF_TEXT_RE.search(flat)
+    if match:
+        return _digits_to_monthly_sales_display(match.group(1))
+    return ""
+
+
+def normalize_monthly_sales_display(raw: Any, *, default_zero: bool = False) -> str:
+    """예: '한 달간 800명 이상 구매했어요' → '800개'. 이미 '800개' 형식이면 그대로 통과."""
+    text = re.sub(r"\s+", " ", str(raw or "")).strip()
+    if not text:
+        return "0개" if default_zero else ""
+
+    compact = re.sub(r"\s+", "", text)
+    if re.fullmatch(r"[\d,]+개?", compact):
+        digits = re.sub(r"[^\d]", "", compact)
+        if digits:
+            return f"{int(digits)}개"
+
+    if not _is_monthly_purchase_proof_text(text):
+        return "0개" if default_zero else ""
+
+    match = re.search(r"([\d,]+)\s*명", text)
+    if match:
+        return f"{int(match.group(1).replace(',', ''))}개"
+    match = re.search(r"한\s*달간.*?([\d,]+)\s*명", text)
+    if match:
+        return f"{int(match.group(1).replace(',', ''))}개"
+    return "0개" if default_zero else ""
+
+
+def _extract_purchase_proof_lines_from_html(html: str) -> List[str]:
+    """상세 ATF proof 후보 (빠른 정규식 우선)."""
+    raw = str(html or "")
+    lines: List[str] = []
+    fast = _parse_monthly_sales_from_html_fast(raw)
+    if fast:
+        digits = re.sub(r"[^\d]", "", fast)
+        if digits:
+            lines.append(f"한 달간 {digits}명 이상 구매했어요")
+
+    anchor = raw.find("social_proof_purchase")
+    if anchor >= 0:
+        snippet = re.sub(r"<[^>]+>", " ", raw[anchor : anchor + 1400])
+        snippet = re.sub(r"\s+", " ", snippet).strip()
+        if _is_monthly_purchase_proof_text(snippet):
+            lines.append(snippet[:200])
+
+    if not lines:
+        for match in re.finditer(r".{0,120}구매했어요", raw[:150000]):
+            snippet = re.sub(r"<[^>]+>", " ", match.group(0))
+            snippet = re.sub(r"\s+", " ", snippet).strip()
+            if snippet and _is_monthly_purchase_proof_text(snippet) and "명" in snippet:
+                lines.append(snippet)
+    uniq: List[str] = []
+    seen: set[str] = set()
+    for text in lines:
+        if text in seen:
+            continue
+        seen.add(text)
+        uniq.append(text)
+    return uniq
 
 
 def _persist_smoke_extract_report_to_db(payload: Dict[str, Any]) -> None:
@@ -1061,27 +1314,257 @@ class CoupangCrawler:
         }
 
     def _smoke_detail_limit(self) -> int:
-        raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_LIMIT", "10") or "10").strip()
+        raw = str(os.environ.get("COUPANG_SMOKE_DETAIL_LIMIT", "5") or "5").strip()
         try:
             return max(0, min(10, int(raw)))
         except ValueError:
-            return 10
+            return 5
+
+    def _smoke_review_count_from_row(self, row: Dict[str, Any]) -> int:
+        raw = str(row.get("review_count") or "").strip()
+        if not raw:
+            return 0
+        parsed = self._parse_int(self._normalize_review_count_display(raw))
+        return int(parsed) if parsed is not None else 0
+
+    def _smoke_select_detail_targets(
+        self, ranked_rows: List[Tuple[int, Dict[str, Any]]]
+    ) -> List[Tuple[int, Dict[str, Any]]]:
+        """1~10위 중 리뷰수 상위 N개만 상세 수집."""
+        limit = self._smoke_detail_limit()
+        if limit <= 0:
+            return []
+        ordered = sorted(
+            ranked_rows,
+            key=lambda pair: (-self._smoke_review_count_from_row(pair[1]), pair[0]),
+        )
+        return ordered[:limit]
 
     def _parse_monthly_sales_from_html(self, html: str) -> str:
-        soup = BeautifulSoup(str(html or ""), "html.parser")
+        fast = _parse_monthly_sales_from_html_fast(html)
+        if fast:
+            return fast
+        for text in _extract_purchase_proof_lines_from_html(html):
+            parsed = normalize_monthly_sales_display(text)
+            if parsed:
+                return parsed
+        return ""
+
+    def _parse_monthly_sales_from_cached_html(self, html: str) -> str:
+        """상품 1건당 HTML 1번 — 사용자 ATF 구조 우선."""
+        raw = str(html or "")
+        if not raw:
+            return ""
+        parsed = _parse_user_atf_badge_html(raw)
+        if parsed:
+            return parsed
+        fast = _parse_monthly_sales_from_html_fast(raw)
+        if fast:
+            return fast
+        if "social_proof_purchase" in raw:
+            anchor = raw.find("social_proof_purchase")
+            fast = _parse_monthly_sales_from_html_fast(raw[max(0, anchor - 200) : anchor + 2000])
+            if fast:
+                return fast
+        for text in _extract_purchase_proof_lines_from_html(raw):
+            parsed = normalize_monthly_sales_display(text)
+            if parsed:
+                return parsed
+        return ""
+
+    def _wait_smoke_detail_page_hydrated(self, page: Page) -> None:
+        """React ATF 배지가 붙을 때까지 대기 (domcontentloaded만으로는 빈 껍데기 HTML)."""
+        badge_ms = _smoke_detail_badge_wait_ms()
+        try:
+            page.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass
+        try:
+            page.wait_for_load_state("networkidle", timeout=min(badge_ms, 12000))
+        except Exception:
+            pass
         selectors = (
-            ".prod-sales-volume",
-            ".prod-sale-volume",
-            "[class*='sales-volume']",
-            "[class*='sale-volume']",
+            'img[src*="social_proof_purchase"]',
+            'text=/한\\s*달간[\\s\\d,]*명.*구매했어요/',
         )
         for selector in selectors:
-            node = soup.select_one(selector)
-            if node:
-                text = node.get_text(" ", strip=True)
-                if text:
-                    return text
+            try:
+                page.locator(selector).first.wait_for(state="visible", timeout=badge_ms)
+                return
+            except Exception:
+                continue
+        page.wait_for_timeout(min(2000, max(500, badge_ms // 3)))
+
+    def _try_parse_monthly_sales_on_detail_page(self, page: Page, *, html: str = "") -> str:
+        """DOM 전역 스캔 + HTML 파싱."""
+        try:
+            text = page.evaluate(_DOM_PURCHASE_PROOF_JS)
+            parsed = normalize_monthly_sales_display(str(text or ""))
+            if parsed and parsed != "0개":
+                return parsed
+        except Exception:
+            pass
+
+        if html:
+            return self._parse_monthly_sales_from_cached_html(html)
         return ""
+
+    def _read_monthly_sales_from_detail_page(self, page: Page) -> str:
+        """상세 1건: hydrate 대기 후 DOM/HTML 반복 파싱."""
+        self._wait_smoke_detail_page_hydrated(page)
+
+        html = ""
+        attempts = _smoke_detail_parse_attempts()
+        for attempt in range(attempts):
+            if not html or attempt > 0:
+                html = page.content()
+            parsed = self._try_parse_monthly_sales_on_detail_page(page, html=html)
+            if parsed and parsed != "0개":
+                return parsed
+            parsed = self._parse_monthly_sales_from_cached_html(html)
+            if parsed and parsed != "0개":
+                return parsed
+            if attempt < attempts - 1:
+                try:
+                    page.locator('img[src*="social_proof_purchase"]').first.wait_for(
+                        state="visible", timeout=1200
+                    )
+                except Exception:
+                    page.wait_for_timeout(700)
+        return ""
+
+    def _attach_smoke_detail_network_tap(self, page: Page) -> List[Dict[str, Any]]:
+        """상세 로딩 중 구매실적 관련 JSON 응답 후보를 수집 (디버그용)."""
+        hits: List[Dict[str, Any]] = []
+        keywords = (
+            "social",
+            "proof",
+            "purchase",
+            "구매",
+            "sdp",
+            "atf",
+            "monthly",
+            "sales",
+        )
+
+        def _on_response(response: Any) -> None:
+            if len(hits) >= 24:
+                return
+            try:
+                url = str(response.url or "")
+                lower = url.lower()
+                if "coupang" not in lower and "coupangcdn" not in lower:
+                    return
+                ctype = str(response.headers.get("content-type") or "").lower()
+                if "json" not in ctype and "javascript" not in ctype and "text" not in ctype:
+                    return
+                if int(response.status) >= 400:
+                    return
+                body = response.text()
+                if not body or len(body) < 40:
+                    return
+                blob = body[:12000]
+                if not any(k in blob.lower() or k in lower for k in keywords):
+                    return
+                hits.append(
+                    {
+                        "url": url[:500],
+                        "status": int(response.status),
+                        "content_type": ctype[:120],
+                        "body_preview": blob,
+                    }
+                )
+            except Exception:
+                return
+
+        try:
+            page.on("response", _on_response)
+        except Exception:
+            pass
+        return hits
+
+    def _dump_smoke_detail_debug(
+        self,
+        page: Page,
+        *,
+        rank: int,
+        product_id: str,
+        keyword: str,
+        html: str,
+        parsed_sales: str,
+        signals: Dict[str, Any],
+        network_hits: Optional[List[Dict[str, Any]]] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Path]:
+        """판매량 미수집·디버그 모드 시 HTML/스크린샷/메타 저장."""
+        try:
+            out_dir = _smoke_detail_debug_dir()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            kw_slug = re.sub(r"[^\w가-힣]+", "_", str(keyword or "").strip()).strip("_")[:40]
+            stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+            base = f"rank{rank}_pid{product_id or 'na'}"
+            if kw_slug:
+                base = f"{kw_slug}_{base}"
+            base = f"{base}_{stamp}"
+
+            html_path = out_dir / f"{base}.html"
+            png_path = out_dir / f"{base}.png"
+            meta_path = out_dir / f"{base}.json"
+
+            html_path.write_text(str(html or ""), encoding="utf-8")
+            try:
+                page.screenshot(path=str(png_path), full_page=False)
+            except Exception as ss_ex:
+                png_path = None
+                ss_err = repr(ss_ex)
+            else:
+                ss_err = ""
+
+            meta = {
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+                "rank": rank,
+                "product_id": product_id,
+                "keyword": keyword,
+                "parsed_sales": parsed_sales,
+                "body_len": len(str(html or "")),
+                "signals": signals,
+                "network_hit_count": len(network_hits or []),
+                "network_hits": list(network_hits or [])[:12],
+                "html_path": str(html_path),
+                "png_path": str(png_path) if png_path else "",
+                "screenshot_error": ss_err,
+            }
+            if extra:
+                meta.update(extra)
+            meta_path.write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            safe_print(
+                f"[SMOKE][detail][debug] rank={rank} saved html={html_path.name} "
+                f"meta={meta_path.name}"
+                + (f" png={png_path.name}" if png_path else " png=skip")
+            )
+            return out_dir
+        except Exception as ex:
+            safe_print(f"[SMOKE][detail][debug] dump failed rank={rank}: {ex!r}")
+            return None
+
+    @staticmethod
+    def _finalize_smoke_detail_result(debug: Dict[str, Any], *, parsed_sales: str) -> Dict[str, Any]:
+        """파싱 실패 시 실패 사인(error_code·False·0개) 없이 빈 값만 둔다."""
+        out = dict(debug)
+        sales = str(parsed_sales or "").strip()
+        if sales == "0개":
+            sales = ""
+        out["monthly_sales"] = sales
+        if sales:
+            out["detail_fetch_ok"] = True
+        else:
+            out.pop("detail_fetch_ok", None)
+        for key in ("error_code", "message", "sales_proof_candidates", "stage"):
+            out.pop(key, None)
+        return out
 
     def _smoke_fetch_product_sales_in_new_tab(
         self,
@@ -1090,57 +1573,129 @@ class CoupangCrawler:
         *,
         rank: int,
         serp_url: str,
+        keyword: str = "",
     ) -> Dict[str, Any]:
         """SERP는 유지한 채 상세만 새 탭에서 열고·수집 후 탭 닫기."""
         debug: Dict[str, Any] = {
             "method": "smoke_detail_new_tab",
             "rank": rank,
             "monthly_sales": "",
-            "detail_fetch_ok": False,
         }
         target_url = self._absolutize_coupang_url(str(row.get("url") or "").strip())
         product_id = self._extract_product_id_from_url(target_url)
         debug["product_id"] = product_id
         debug["url"] = target_url
+        kw = str(keyword or os.environ.get("COUPANG_SMOKE_COUPANG_QUERY") or "").strip()
         if not target_url:
-            debug["error_code"] = "EMPTY_URL"
-            return debug
+            return self._finalize_smoke_detail_result(debug, parsed_sales="")
 
         safe_print(f"[SMOKE][detail] rank={rank} new tab open product_id={product_id}")
         detail_page: Optional[Page] = None
+        network_hits: List[Dict[str, Any]] = []
+        blocked = False
+        html = ""
         try:
             detail_page = serp_page.context.new_page()
+            if _smoke_detail_debug_mode() != "off":
+                network_hits = self._attach_smoke_detail_network_tap(detail_page)
             referer = str(serp_url or serp_page.url or "https://www.coupang.com/").strip()
             detail_page.goto(
                 target_url,
-                wait_until="domcontentloaded",
+                wait_until="load",
                 referer=referer,
-                timeout=28000,
+                timeout=35000,
             )
-            detail_page.wait_for_timeout(random.randint(900, 1600))
+            sales = self._read_monthly_sales_from_detail_page(detail_page)
             html = detail_page.content()
+            if not sales:
+                sales = self._parse_monthly_sales_from_cached_html(html)
             title = (detail_page.title() or "")[:120]
             debug["page_title"] = title
             debug["body_len"] = len(str(html or ""))
             if self._is_blocked(html, title):
-                debug["error_code"] = "BLOCKED_HTML"
+                blocked = True
                 safe_print(f"[SMOKE][detail] rank={rank} blocked title={title!r}")
-                return debug
-            sales = self._parse_monthly_sales_from_html(html)
-            debug["monthly_sales"] = sales
-            debug["detail_fetch_ok"] = True
-            debug["stage"] = "html_ok"
-            safe_print(f"[SMOKE][detail] rank={rank} tab close sales={sales!r}")
-            return debug
+                parsed = ""
+            else:
+                parsed = normalize_monthly_sales_display(sales, default_zero=False)
+                if not parsed and html:
+                    fallback = _parse_monthly_sales_from_html_fast(html)
+                    if fallback:
+                        parsed = normalize_monthly_sales_display(
+                            fallback, default_zero=False
+                        )
+            signals = _html_purchase_signals(html)
+            if not parsed and not blocked:
+                safe_print(
+                    f"[SMOKE][detail] rank={rank} parse_miss "
+                    f"body_len={debug.get('body_len')} "
+                    f"has_badge_img={signals.get('has_badge_img')} "
+                    f"has_purchase_text={signals.get('has_purchase_text')} "
+                    f"has_handal={signals.get('has_handal')} "
+                    f"fast_preview={signals.get('fast_parse_preview')!r}"
+                )
+            if _should_dump_smoke_detail_debug(
+                parsed_sales=parsed, blocked=blocked, error=False
+            ):
+                self._dump_smoke_detail_debug(
+                    detail_page,
+                    rank=rank,
+                    product_id=product_id,
+                    keyword=kw,
+                    html=html,
+                    parsed_sales=parsed,
+                    signals=signals,
+                    network_hits=network_hits,
+                    extra={"url": target_url, "blocked": blocked},
+                )
+            safe_print(
+                f"[SMOKE][detail] rank={rank} tab close sales={parsed!r}"
+            )
+            return self._finalize_smoke_detail_result(debug, parsed_sales=parsed)
         except TimeoutError:
-            debug["error_code"] = "TIMEOUT"
+            had_error = True
             safe_print(f"[SMOKE][detail] rank={rank} new tab timeout")
-            return debug
+            if detail_page is not None and _should_dump_smoke_detail_debug(
+                parsed_sales="", blocked=False, error=True
+            ):
+                try:
+                    html = detail_page.content()
+                except Exception:
+                    html = ""
+                self._dump_smoke_detail_debug(
+                    detail_page,
+                    rank=rank,
+                    product_id=product_id,
+                    keyword=kw,
+                    html=html,
+                    parsed_sales="",
+                    signals=_html_purchase_signals(html),
+                    network_hits=network_hits,
+                    extra={"url": target_url, "error": "timeout"},
+                )
+            return self._finalize_smoke_detail_result(debug, parsed_sales="")
         except Exception as exc:
-            debug["error_code"] = type(exc).__name__
-            debug["message"] = repr(exc)
+            had_error = True
             safe_print(f"[SMOKE][detail] rank={rank} new tab error={type(exc).__name__}")
-            return debug
+            if detail_page is not None and _should_dump_smoke_detail_debug(
+                parsed_sales="", blocked=False, error=True
+            ):
+                try:
+                    html = detail_page.content()
+                except Exception:
+                    html = ""
+                self._dump_smoke_detail_debug(
+                    detail_page,
+                    rank=rank,
+                    product_id=product_id,
+                    keyword=kw,
+                    html=html,
+                    parsed_sales="",
+                    signals=_html_purchase_signals(html),
+                    network_hits=network_hits,
+                    extra={"url": target_url, "error": type(exc).__name__},
+                )
+            return self._finalize_smoke_detail_result(debug, parsed_sales="")
         finally:
             if detail_page is not None:
                 try:
@@ -1148,11 +1703,14 @@ class CoupangCrawler:
                 except Exception:
                     pass
 
-    def _smoke_fetch_topn_sales(self, page: Page, probe: Dict[str, Any]) -> Dict[str, Any]:
-        """smoke SERP 유지 + 상세는 탭 열기→수집→닫기를 N회 반복."""
+    def _smoke_fetch_topn_sales(
+        self, page: Page, probe: Dict[str, Any], *, keyword: str = ""
+    ) -> Dict[str, Any]:
+        """smoke SERP 유지 · 1~10위 중 리뷰 상위 N개만 상세 탭 수집."""
         limit = self._smoke_detail_limit()
         bundle: Dict[str, Any] = {
             "detail_limit": limit,
+            "detail_pick_mode": "top_reviews",
             "items": [],
             "serp_url": str(probe.get("url") or "").strip(),
         }
@@ -1171,36 +1729,52 @@ class CoupangCrawler:
                 continue
             if 1 <= rank_no <= 10:
                 ranked_rows.append((rank_no, row))
-        ranked_rows.sort(key=lambda pair: pair[0])
+
+        targets = self._smoke_select_detail_targets(ranked_rows)
+        target_ranks = [rank for rank, _ in targets]
+        bundle["target_ranks"] = target_ranks
 
         self._smoke_status_update(
             phase="smoke_topn_detail",
-            hint=f"SERP 유지 · 1~{limit}위 상세 탭 열기→수집→닫기",
+            hint=f"SERP 유지 · 리뷰 상위 {len(targets)}개 상세 탭 수집",
         )
         safe_print(
-            f"[SMOKE][detail] topn new-tab mode limit={limit} "
-            f"keyword_rows={len(ranked_rows)}"
+            f"[SMOKE][detail] top-reviews limit={limit} targets={target_ranks}"
         )
 
+        detail_kw = str(
+            keyword or probe.get("keyword") or os.environ.get("COUPANG_SMOKE_COUPANG_QUERY") or ""
+        ).strip()
         detail_items: List[Dict[str, Any]] = []
-        for rank_no, row in ranked_rows:
-            if rank_no > limit:
-                break
+        for rank_no, row in targets:
             result = self._smoke_fetch_product_sales_in_new_tab(
-                page, row, rank=rank_no, serp_url=serp_url
+                page, row, rank=rank_no, serp_url=serp_url, keyword=detail_kw
             )
-            row["monthly_sales"] = str(result.get("monthly_sales") or "")
-            row["detail_fetch_ok"] = bool(result.get("detail_fetch_ok"))
-            detail_items.append(result)
-            page.wait_for_timeout(random.randint(400, 900))
+            parsed = normalize_monthly_sales_display(
+                str(result.get("monthly_sales") or ""),
+                default_zero=False,
+            )
+            row["monthly_sales"] = (
+                parsed if parsed and parsed != "0개" else ""
+            )
+            if row["monthly_sales"]:
+                row["detail_fetch_ok"] = True
+            else:
+                row.pop("detail_fetch_ok", None)
+            row["detail_target"] = True
+            detail_items.append(
+                self._finalize_smoke_detail_result(result, parsed_sales=parsed)
+            )
+            page.wait_for_timeout(random.randint(180, 380))
 
         bundle["items"] = detail_items
         bundle["completed_ranks"] = [
             int(it.get("rank") or 0)
             for it in detail_items
-            if it.get("detail_fetch_ok") and int(it.get("rank") or 0) > 0
+            if str(it.get("monthly_sales") or "").strip()
+            and int(it.get("rank") or 0) > 0
         ]
-        safe_print(f"[SMOKE][detail] topn done completed={bundle['completed_ranks']}")
+        safe_print(f"[SMOKE][detail] top-reviews done completed={bundle['completed_ranks']}")
         return bundle
 
     def _linger_on_results_page(self, page: Page, *, passes: int = 2) -> None:
@@ -3258,9 +3832,17 @@ class CoupangCrawler:
                                     }
                                     self._sync_smoke_ranked_ui_cache_from_payload(search_kw, smoke_payload)
                                     _dump_smoke_search_html(str(page.content() or ""))
-                                    detail_bundle = self._smoke_fetch_topn_sales(page, probe)
+                                    detail_bundle = self._smoke_fetch_topn_sales(
+                                        page, probe, keyword=search_kw
+                                    )
                                     smoke_payload["detail_results"] = detail_bundle.get("items") or []
                                     smoke_payload["detail_limit"] = detail_bundle.get("detail_limit")
+                                    smoke_payload["detail_pick_mode"] = detail_bundle.get(
+                                        "detail_pick_mode"
+                                    )
+                                    smoke_payload["detail_target_ranks"] = (
+                                        detail_bundle.get("target_ranks") or []
+                                    )
                                     items = list(detail_bundle.get("items") or [])
                                     smoke_payload["rank1_detail"] = items[0] if items else {}
                                     _persist_smoke_extract_report_to_db(smoke_payload)

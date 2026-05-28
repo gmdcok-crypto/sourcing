@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -23,6 +24,8 @@ from services.naver_keyword_scoring import compute_naver_final_score
 LOCAL_ROOT = Path(__file__).resolve().parent
 PORTING_DB_PATH = LOCAL_ROOT.parent / "porting" / "coupang_crawl_core" / "db.py"
 OUTPUT_DIR = LOCAL_ROOT / "output"
+CRAWL_LOG_DIR = OUTPUT_DIR / "crawl_logs"
+SMOKE_DIR = LOCAL_ROOT.parent / "porting" / "coupang_crawl_core" / ".smoke"
 STATE_PATH = OUTPUT_DIR / "ui_state.json"
 RESULTS_PATH = OUTPUT_DIR / "ui_results.json"
 STOP_PATH = OUTPUT_DIR / "ui_stop_requested.flag"
@@ -403,6 +406,69 @@ def _build_process_env(keyword: str) -> Dict[str, str]:
     return env
 
 
+def _smoke_json_path_for_keyword(keyword: str) -> Path:
+    slug = re.sub(r"[^\w가-힣]+", "_", str(keyword or "").strip()).strip("_")[:80]
+    if slug:
+        per_kw = SMOKE_DIR / f"last_smoke_extract_{slug}.json"
+        if per_kw.is_file():
+            return per_kw
+    return SMOKE_DIR / "last_smoke_extract.json"
+
+
+def _summarize_smoke_sales_from_artifacts(keyword: str) -> str:
+    """smoke JSON(detail_results) 기준 판매량 수집 요약 — UI 로그용."""
+    for path in (_smoke_json_path_for_keyword(keyword), SMOKE_DIR / "last_smoke_extract.json"):
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        saved_kw = str(payload.get("keyword") or "").strip()
+        if keyword and saved_kw and saved_kw != keyword:
+            continue
+        rows = list(payload.get("detail_results") or [])
+        if not rows:
+            return "판매량: detail_results 없음(JSON 초안만 읽었을 수 있음)"
+        filled = [
+            r for r in rows if str(r.get("monthly_sales") or "").strip() not in {"", "0개"}
+        ]
+        samples = [
+            f"rank{r.get('rank')}={r.get('monthly_sales')}"
+            for r in filled[:3]
+            if isinstance(r, dict)
+        ]
+        tail = f" ({', '.join(samples)})" if samples else ""
+        return f"판매량 수집 {len(filled)}/{len(rows)}{tail}"
+    return "판매량: smoke JSON 없음"
+
+
+def _write_crawl_log(keyword: str, crawl_result: Dict[str, Any]) -> Path:
+    """ported_coupang stdout/stderr → output/crawl_logs/ (Streamlit 로그는 요약만)."""
+    CRAWL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    slug = re.sub(r"[^\w가-힣]+", "_", str(keyword or "").strip()).strip("_")[:80] or "keyword"
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    path = CRAWL_LOG_DIR / f"{slug}_{stamp}.log"
+    stdout = str(crawl_result.get("stdout") or "")
+    stderr = str(crawl_result.get("stderr") or "")
+    smoke_summary = _summarize_smoke_sales_from_artifacts(keyword)
+    lines = [
+        f"# keyword={keyword}",
+        f"# returncode={crawl_result.get('returncode')}",
+        f"# {smoke_summary}",
+        "",
+        "=== stdout ===",
+        stdout,
+        "",
+        "=== stderr ===",
+        stderr,
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def _run_single_keyword(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
     keyword = str(keyword_row.get("keyword") or "").strip()
     command = [sys.executable, str(LOCAL_ROOT / "ported_coupang.py"), "--keyword", keyword]
@@ -416,19 +482,52 @@ def _run_single_keyword(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
         errors="replace",
     )
     payload = _read_json(LOCAL_ROOT / "output" / "ported_last_result.json", {})
-    return {
+    result = {
         "returncode": process.returncode,
         "stdout": process.stdout,
         "stderr": process.stderr,
         "payload": payload if isinstance(payload, dict) else {},
     }
+    try:
+        log_path = _write_crawl_log(keyword, result)
+        result["log_path"] = str(log_path)
+    except Exception:
+        pass
+    return result
+
+
+def _monthly_sales_for_storage(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text == "0개":
+        return ""
+    return text
+
+
+def _review_count_for_sort(value: Any) -> int:
+    if value in (None, ""):
+        return -1
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return -1
+
+
+def _top_items_by_reviews(items: List[Dict[str, Any]], *, limit: int = 5) -> List[Dict[str, Any]]:
+    ordered = sorted(
+        [dict(x) for x in items if isinstance(x, dict)],
+        key=lambda row: (-_review_count_for_sort(row.get("review_count")), int(row.get("rank") or 999)),
+    )
+    picked = ordered[: max(1, limit)]
+    for idx, row in enumerate(picked, start=1):
+        row["review_rank_in_keyword"] = idx
+    return picked
 
 
 def _flatten_result_rows(keyword_row: Dict[str, Any], crawl_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     result = crawl_result.get("payload", {}).get("result") or {}
     stats = crawl_result.get("payload", {}).get("stats") or {}
     last_fetch_source = crawl_result.get("payload", {}).get("last_fetch_source") or ""
-    top10_items = list(result.get("top10_items") or [])
+    top10_items = _top_items_by_reviews(list(result.get("top10_items") or []), limit=5)
     rows: List[Dict[str, Any]] = []
     for item in top10_items:
         rows.append(
@@ -453,7 +552,7 @@ def _flatten_result_rows(keyword_row: Dict[str, Any], crawl_result: Dict[str, An
                 "option_count": item.get("option_count"),
                 "origin_country": item.get("origin_country") or "",
                 "model_name": item.get("model_name") or "",
-                "monthly_sales": item.get("monthly_sales") or "",
+                "monthly_sales": _monthly_sales_for_storage(item.get("monthly_sales")),
                 "detail_fetch_ok": item.get("detail_fetch_ok"),
                 "detail_parse_filled_count": item.get("detail_parse_filled_count"),
                 "fetch_source": result.get("fetch_source") or last_fetch_source,
@@ -583,7 +682,7 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
                         "option_count": None,
                         "origin_country": "",
                         "model_name": "",
-                        "detail_fetch_ok": False,
+                        "detail_fetch_ok": None,
                         "detail_parse_filled_count": 0,
                         "fetch_source": payload.get("last_fetch_source") or "",
                         "reason_code": result.get("reason_code") or f"EXIT_{crawl_result.get('returncode')}",
@@ -620,6 +719,13 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
                     completion_parts.append(
                         f"AI 실패: {score_payload.get('ai_scoring_error') or '-'}"
                     )
+                sales_note = _summarize_smoke_sales_from_artifacts(keyword)
+                log_path = str(crawl_result.get("log_path") or "")
+                if log_path:
+                    completion_parts.append(sales_note)
+                    completion_parts.append(f"로그 {log_path}")
+                else:
+                    completion_parts.append(sales_note)
                 _append_log(state, " — ".join(completion_parts), level="success")
                 synced = _sync_keyword_result_to_db(
                     settings=settings,

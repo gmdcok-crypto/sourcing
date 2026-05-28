@@ -244,13 +244,52 @@ def _normalize_shipping_fee_display(value: Any) -> Any:
     return text
 
 
+def _display_monthly_sales(value: Any) -> str:
+    """파싱 실패·미수집은 테이블에 공백."""
+    text = str(value or "").strip()
+    if not text or text == "0개":
+        return ""
+    return text
+
+
+def _review_count_for_display(value: Any) -> int:
+    if value in (None, ""):
+        return -1
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return -1
+
+
+def _filter_table_items(items: List[Dict[str, Any]], *, per_keyword: int = 5) -> List[Dict[str, Any]]:
+    """키워드별 리뷰 상위 N개만 테이블에 표시."""
+    by_keyword: Dict[str, List[Dict[str, Any]]] = {}
+    for item in items:
+        keyword = str(item.get("keyword") or "").strip() or "_"
+        by_keyword.setdefault(keyword, []).append(dict(item))
+    filtered: List[Dict[str, Any]] = []
+    for group in by_keyword.values():
+        ordered = sorted(
+            group,
+            key=lambda row: (
+                -_review_count_for_display(row.get("review_count")),
+                int(row.get("rank") or 999),
+            ),
+        )
+        for idx, row in enumerate(ordered[:per_keyword], start=1):
+            row["review_rank_in_keyword"] = idx
+            filtered.append(row)
+    return filtered
+
+
 def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
     rows = []
-    for item in items:
+    for item in _filter_table_items(items, per_keyword=5):
         rows.append(
             {
                 "키워드": item.get("keyword"),
-                "순위": item.get("rank"),
+                "리뷰순": item.get("review_rank_in_keyword"),
+                "검색순위": item.get("rank"),
                 "상품명": item.get("title"),
                 "판매가격": _to_display_int(item.get("price")),
                 "쿠폰적용": "Y" if item.get("coupon_applied") else "N",
@@ -261,14 +300,14 @@ def _result_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
                 "상품링크": item.get("product_url"),
                 "대표이미지": item.get("image_url"),
                 "쿠팡상품번호": item.get("product_id"),
-                "판매량": item.get("monthly_sales") or "",
-                "상세수집": "Y" if item.get("detail_fetch_ok") else ("N" if item.get("detail_fetch_ok") is False else ""),
+                "판매량": _display_monthly_sales(item.get("monthly_sales")),
+                "상세수집": "Y" if item.get("detail_fetch_ok") is True else "",
                 "상태코드": item.get("reason_code"),
                 "수집방식": item.get("fetch_source"),
             }
         )
     df = pd.DataFrame(rows)
-    for column in ("판매가격", "배송비", "리뷰수", "리뷰별점"):
+    for column in ("판매가격", "배송비", "리뷰수", "리뷰별점", "리뷰순", "검색순위"):
         if column in df.columns:
             df[column] = pd.array(df[column], dtype="Int64")
     return df
@@ -700,8 +739,8 @@ def main() -> None:
             step=1,
         )
         st.caption(
-            "smoke: 검색(SERP) 유지 · **상세는 탭 열기→판매량 수집→탭 닫기** (1~10위). "
-            "COUPANG_SMOKE_DETAIL_LIMIT=10. 브라우저에서 탭이 열렸다 닫히는지 확인."
+            "smoke: SERP 1~10위 수집 후 **리뷰 상위 5개만** 상세 탭(판매량) · 테이블도 키워드당 5행. "
+            "COUPANG_SMOKE_DETAIL_LIMIT=5"
         )
         if st.button("배치 시작", use_container_width=True, type="primary"):
             start_batch_run(limit=int(keyword_limit))
