@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import FastAPI
@@ -9,13 +10,22 @@ from app.api.routes_keywords import router as keyword_router
 from app.api.routes_user_pwa import router as user_pwa_router
 from app.core.config import get_settings
 from app.services.brightdata import BrightDataService
+from app.services.china_1688_url import China1688UrlService
 
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await China1688UrlService.shutdown()
+
 
 app = FastAPI(
     title=settings.app_name,
     debug=settings.app_debug,
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.include_router(admin_router)

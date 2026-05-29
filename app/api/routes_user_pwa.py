@@ -4,9 +4,11 @@ import json
 from html import escape
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 
+from app.services.china_1688_url import China1688UrlService
 from app.services.user_pwa import UserPwaFeedService
 
 router = APIRouter(tags=["user-pwa"])
@@ -206,6 +208,27 @@ USER_PWA_HTML = """
       opacity: 0.35;
       cursor: not-allowed;
     }
+    .btn-1688.is-loading {
+      opacity: 0.72;
+      cursor: wait;
+      min-width: 132px;
+    }
+    .toast-1688 {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      z-index: 1100;
+      max-width: min(92vw, 420px);
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: rgba(18, 26, 47, 0.96);
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.45;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    }
     .image-modal {
       position: fixed;
       inset: 0;
@@ -332,6 +355,7 @@ USER_PWA_HTML = """
     const payload = JSON.parse(document.getElementById("product-data").textContent || "{}");
     const allProducts = Array.isArray(payload.products) ? payload.products : [];
     const themes = Array.isArray(payload.themes) ? payload.themes : [];
+    const china1688Configured = payload.china_1688_configured === true;
     const select = document.getElementById("theme-select");
     const tbody = document.getElementById("product-rows");
     const emptyState = document.getElementById("empty-state");
@@ -365,6 +389,62 @@ USER_PWA_HTML = """
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    }
+
+    function isMobileClient() {
+      if (window.matchMedia("(pointer: coarse)").matches) return true;
+      if (navigator.maxTouchPoints > 0 && window.matchMedia("(max-width: 900px)").matches) {
+        return true;
+      }
+      return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+    }
+
+    function show1688Hint() {
+      const existing = document.getElementById("toast-1688");
+      if (existing) existing.remove();
+      const toast = document.createElement("div");
+      toast.id = "toast-1688";
+      toast.className = "toast-1688";
+      toast.textContent =
+        "1688 링크를 열었습니다. 슬라이더(滑动验证) 인증이 나오면 직접 밀어주세요. 화면이 비어 있으면 새로고침 후 같은 상품에서 다시 눌러 주세요.";
+      document.body.appendChild(toast);
+      window.setTimeout(() => toast.remove(), 8000);
+    }
+
+    async function open1688Search(btn, imageUrl, title) {
+      if (!imageUrl) return;
+      if (!china1688Configured) {
+        alert("1688 이미지 검색이 서버에 설정되지 않았습니다. (Bright Data 브라우저 WS)");
+        return;
+      }
+      btn.disabled = true;
+      btn.classList.add("is-loading");
+      const prevLabel = btn.textContent;
+      btn.textContent = "1688 생성 중…";
+
+      try {
+        const response = await fetch("/api/user/1688/search-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_url: imageUrl }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.detail || data.error || "1688 URL 생성 실패");
+        }
+        if (data.search_url) {
+          window.open(data.search_url, "_blank", "noopener,noreferrer");
+          show1688Hint();
+        } else {
+          alert(data.error || "1688 URL을 만들지 못했습니다.");
+        }
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "1688 URL 생성 중 오류");
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("is-loading");
+        btn.textContent = prevLabel;
+      }
     }
 
     function openImagePopup(imageUrl, title) {
@@ -483,7 +563,11 @@ USER_PWA_HTML = """
         if (imageUrl) {
           imgBtn.addEventListener("click", (event) => {
             event.stopPropagation();
-            openImagePopup(imageUrl, row.title || "");
+            if (isMobileClient()) {
+              open1688Search(imgBtn, imageUrl, row.title || "");
+            } else {
+              openImagePopup(imageUrl, row.title || "");
+            }
           });
         } else {
           imgBtn.disabled = true;
@@ -519,6 +603,37 @@ USER_PWA_HTML = """
 """
 
 
+class China1688SearchRequest(BaseModel):
+    image_url: str = Field(min_length=1)
+
+
+@router.post("/api/user/1688/search-url")
+async def create_1688_search_url(body: China1688SearchRequest) -> Dict[str, Any]:
+    if not China1688UrlService.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Bright Data browser WS is not configured "
+                "(BRIGHTDATA_BROWSER_WS or BRIGHTDATA_BROWSER_WS_1688)"
+            ),
+        )
+
+    result = await China1688UrlService.generate_url(body.image_url)
+    if result.status != "URL_OK" or not result.search_url:
+        raise HTTPException(
+            status_code=502,
+            detail=result.error or f"1688 URL generation failed ({result.status})",
+        )
+
+    return {
+        "status": result.status,
+        "search_url": result.search_url,
+        "image_id": result.image_id,
+        "fetch_source": result.fetch_source,
+        "browser_country": result.browser_country,
+    }
+
+
 def _format_score_value(value: Any) -> str:
     if value in (None, ""):
         return "-"
@@ -541,6 +656,7 @@ async def get_user_products(theme: Optional[str] = Query(default=None)) -> Dict[
 @router.get("/user", response_class=HTMLResponse)
 async def user_console() -> HTMLResponse:
     payload = UserPwaFeedService.build_product_browser()
+    payload["china_1688_configured"] = China1688UrlService.is_configured()
     data_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     html = USER_PWA_HTML.replace("__PRODUCT_DATA_JSON__", data_json)
     return HTMLResponse(content=html)
