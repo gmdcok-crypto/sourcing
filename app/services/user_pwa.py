@@ -13,36 +13,182 @@ from app.services.r2_storage import R2StorageService
 
 class UserPwaFeedService:
     THEME_KEYWORD_LIMIT = 5
+    PER_KEYWORD_PRODUCT_LIMIT = 5
     LOCAL_UI_RESULTS_PATH = (
         Path(__file__).resolve().parents[2] / "local-crawler" / "output" / "ui_results.json"
     )
 
     @classmethod
-    def build_feed(cls) -> Dict[str, Any]:
+    def _item_has_monthly_sales(cls, item: Dict[str, Any]) -> bool:
+        text = str(item.get("monthly_sales") or "").strip()
+        return bool(text) and text != "0개"
+
+    @classmethod
+    def _load_all_crawl_items(cls) -> List[Dict[str, Any]]:
+        rows = cls._load_r2_crawled_rows()
+        if rows:
+            return rows
+        return cls._load_local_ui_items()
+
+    @staticmethod
+    def _format_shipping_fee(value: Any) -> Any:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if "무료배송" in text:
+            return 0
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if digits:
+            try:
+                return int(digits)
+            except ValueError:
+                return text
+        return text
+
+    @staticmethod
+    def _format_monthly_sales(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text or text == "0개":
+            return ""
+        return text
+
+    @classmethod
+    def _build_product_table_rows(
+        cls,
+        items: List[Dict[str, Any]],
+        *,
+        score_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """로컬 Streamlit 상품결과 테이블과 동일 규칙: 판매량 있는 행만, 키워드당 리뷰 상위 5."""
+        score_map = score_map or {}
+        sales_items = [
+            dict(item)
+            for item in items
+            if isinstance(item, dict) and cls._item_has_monthly_sales(item)
+        ]
+        by_keyword: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for item in sales_items:
+            keyword = str(item.get("keyword") or "").strip()
+            if keyword:
+                by_keyword[keyword].append(item)
+
+        table_rows: List[Dict[str, Any]] = []
+        for keyword, group in by_keyword.items():
+            ordered = sorted(
+                group,
+                key=lambda row: (
+                    -(cls._parse_int(row.get("review_count")) or -1),
+                    cls._parse_int(row.get("rank")) or 999,
+                ),
+            )
+            scores = score_map.get(keyword) or {}
+            for review_rank, item in enumerate(ordered[: cls.PER_KEYWORD_PRODUCT_LIMIT], start=1):
+                product_ai = (
+                    cls._parse_score(item.get("ai_score"))
+                    if item.get("ai_scoring_ready")
+                    else None
+                )
+                table_rows.append(
+                    {
+                        "theme_name": str(item.get("theme_name") or "").strip() or "기타",
+                        "theme_detail": str(item.get("theme_detail") or "").strip(),
+                        "keyword": keyword,
+                        "review_rank": review_rank,
+                        "search_rank": cls._parse_int(item.get("rank")),
+                        "title": str(item.get("title") or "").strip(),
+                        "price": cls._parse_int(item.get("price")),
+                        "coupon_applied": "Y" if item.get("coupon_applied") else "N",
+                        "delivery_type": str(item.get("delivery_type") or "").strip(),
+                        "shipping_fee": cls._format_shipping_fee(item.get("shipping_fee")),
+                        "review_count": cls._parse_int(item.get("review_count")),
+                        "review_score": cls._parse_int(item.get("review_score")),
+                        "product_url": str(item.get("product_url") or "").strip(),
+                        "image_url": str(item.get("image_url") or "").strip(),
+                        "product_id": str(item.get("product_id") or "").strip(),
+                        "monthly_sales": cls._format_monthly_sales(item.get("monthly_sales")),
+                        "detail_fetch_ok": item.get("detail_fetch_ok") is True,
+                        "reason_code": str(item.get("reason_code") or "").strip(),
+                        "fetch_source": str(item.get("fetch_source") or "").strip(),
+                        "coupang_score": scores.get("coupang_score"),
+                        "naver_score": scores.get("naver_score"),
+                        "ai_score": product_ai if product_ai is not None else scores.get("ai_score"),
+                        "ai_tier": str(item.get("ai_tier") or scores.get("ai_tier") or "").strip(),
+                    }
+                )
+
+        table_rows.sort(
+            key=lambda row: (
+                str(row.get("theme_name") or ""),
+                str(row.get("keyword") or ""),
+                int(row.get("review_rank") or 999),
+            )
+        )
+        return table_rows
+
+    @classmethod
+    def build_product_browser(cls, *, theme_name: Optional[str] = None) -> Dict[str, Any]:
+        items = cls._load_all_crawl_items()
         score_map = cls._build_keyword_score_map()
-        try:
-            crawled_rows = cls._load_latest_crawled_rows()
-        except Exception:
-            fallback_themes = cls._build_local_only_themes(score_map=score_map)
-            return {
-                "status": "ok",
-                "run_id": None,
-                "themes": fallback_themes,
+        products = cls._build_product_table_rows(items, score_map=score_map)
+        themes = sorted(
+            {
+                str(row.get("theme_name") or "").strip() or "기타"
+                for row in products
             }
-
-        if not crawled_rows:
-            fallback_themes = cls._build_local_only_themes(score_map=score_map)
-            return {
-                "status": "ok",
-                "run_id": None,
-                "themes": fallback_themes,
-            }
-
+        )
+        if theme_name:
+            selected = str(theme_name).strip()
+            products = [
+                row for row in products if str(row.get("theme_name") or "").strip() == selected
+            ]
+        generated_at = None
+        for source in (cls._load_r2_payload_meta(), cls._load_local_payload_meta()):
+            if source.get("generated_at"):
+                generated_at = source["generated_at"]
+                break
         return {
             "status": "ok",
-            "run_id": None,
-            "themes": cls._group_crawled_rows_by_theme(crawled_rows, score_map=score_map),
+            "generated_at": generated_at,
+            "themes": themes,
+            "selected_theme": str(theme_name).strip() if theme_name else (themes[0] if themes else ""),
+            "products": products,
+            "product_count": len(products),
+            "keyword_count": len({str(row.get("keyword") or "").strip() for row in products}),
         }
+
+    @classmethod
+    def _load_r2_payload_meta(cls) -> Dict[str, Any]:
+        settings = get_settings()
+        service = R2StorageService(settings)
+        key = service.find_latest_local_crawler_result_key()
+        if not key:
+            return {}
+        payload = service.read_json(key=key) or {}
+        return {
+            "generated_at": payload.get("generated_at"),
+            "job_id": payload.get("job_id"),
+        }
+
+    @classmethod
+    def _load_local_payload_meta(cls) -> Dict[str, Any]:
+        path = cls.LOCAL_UI_RESULTS_PATH
+        if not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if isinstance(payload, dict):
+            return {
+                "generated_at": payload.get("generated_at"),
+                "job_id": payload.get("job_id"),
+            }
+        return {}
+
+    @classmethod
+    def build_feed(cls) -> Dict[str, Any]:
+        """API 호환 — 상품 브라우저 페이로드."""
+        return cls.build_product_browser()
 
     @classmethod
     def _build_keyword_score_map(cls) -> Dict[str, Dict[str, Any]]:
