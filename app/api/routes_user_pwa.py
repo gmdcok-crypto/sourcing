@@ -49,14 +49,55 @@ USER_PWA_HTML = """
     .toolbar {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px 20px;
-      align-items: end;
+      gap: 12px 16px;
+      align-items: flex-end;
       margin-bottom: 16px;
       padding: 16px 18px;
       border: 1px solid var(--line);
       border-radius: 14px;
       background: var(--panel);
     }
+    .score-cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      flex: 1;
+      min-width: 280px;
+      justify-content: flex-start;
+    }
+    .score-card {
+      min-width: 100px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(30, 41, 72, 0.95), rgba(15, 21, 40, 0.98));
+    }
+    .score-card.is-empty { opacity: 0.55; }
+    .score-card-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 6px;
+      letter-spacing: 0.02em;
+    }
+    .score-card-value {
+      display: block;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+    .score-card-value.sub {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .score-card.naver .score-card-value { color: #4ade80; }
+    .score-card.coupang .score-card-value { color: #60a5fa; }
+    .score-card.ai .score-card-value { color: #f472b6; }
+    .score-card.reviews .score-card-value { color: #fbbf24; }
     .field label {
       display: block;
       margin-bottom: 6px;
@@ -102,7 +143,15 @@ USER_PWA_HTML = """
       border-bottom: 1px solid rgba(255,255,255,0.06);
       vertical-align: top;
     }
+    tbody tr {
+      cursor: pointer;
+    }
     tbody tr:hover { background: rgba(110, 168, 255, 0.08); }
+    tbody tr.is-selected {
+      background: rgba(110, 168, 255, 0.18);
+      outline: 1px solid rgba(110, 168, 255, 0.45);
+      outline-offset: -1px;
+    }
     .title-cell {
       max-width: 280px;
       line-height: 1.35;
@@ -224,6 +273,25 @@ USER_PWA_HTML = """
         <label for="theme-select">테마 (카테고리)</label>
         <select id="theme-select" aria-label="테마 선택"></select>
       </div>
+      <div class="score-cards" id="score-cards">
+        <div class="score-card naver is-empty">
+          <span class="score-card-label">네이버</span>
+          <span class="score-card-value" id="card-naver">-</span>
+        </div>
+        <div class="score-card coupang is-empty">
+          <span class="score-card-label">쿠팡</span>
+          <span class="score-card-value" id="card-coupang">-</span>
+        </div>
+        <div class="score-card ai is-empty">
+          <span class="score-card-label">AI</span>
+          <span class="score-card-value" id="card-ai">-</span>
+          <span class="score-card-value sub" id="card-ai-tier"></span>
+        </div>
+        <div class="score-card reviews is-empty">
+          <span class="score-card-label">리뷰수</span>
+          <span class="score-card-value" id="card-reviews">-</span>
+        </div>
+      </div>
     </div>
     <div class="table-wrap">
       <table>
@@ -270,6 +338,13 @@ USER_PWA_HTML = """
     const imageModal = document.getElementById("image-modal");
     const modalImage = document.getElementById("modal-image");
     const modalTitle = document.getElementById("modal-title");
+    const cardNaver = document.getElementById("card-naver");
+    const cardCoupang = document.getElementById("card-coupang");
+    const cardAi = document.getElementById("card-ai");
+    const cardAiTier = document.getElementById("card-ai-tier");
+    const cardReviews = document.getElementById("card-reviews");
+    const scoreCardEls = document.querySelectorAll(".score-card");
+    let selectedTr = null;
 
     function fmtNum(value) {
       if (value === null || value === undefined || value === "") return "-";
@@ -314,7 +389,47 @@ USER_PWA_HTML = """
       if (event.key === "Escape" && !imageModal.hidden) closeImagePopup();
     });
 
+    function clearScoreCards() {
+      cardNaver.textContent = "-";
+      cardCoupang.textContent = "-";
+      cardAi.textContent = "-";
+      cardAiTier.textContent = "";
+      cardReviews.textContent = "-";
+      scoreCardEls.forEach((el) => el.classList.add("is-empty"));
+      if (selectedTr) {
+        selectedTr.classList.remove("is-selected");
+        selectedTr = null;
+      }
+    }
+
+    function updateScoreCards(row) {
+      if (!row) {
+        clearScoreCards();
+        return;
+      }
+      cardNaver.textContent = fmtScore(row.naver_score);
+      cardCoupang.textContent = fmtScore(row.coupang_score);
+      const aiScore = row.ai_score;
+      if (aiScore != null && aiScore !== "") {
+        cardAi.textContent = fmtScore(aiScore);
+        cardAiTier.textContent = row.ai_tier ? String(row.ai_tier) : "";
+      } else {
+        cardAi.textContent = "-";
+        cardAiTier.textContent = "";
+      }
+      cardReviews.textContent = fmtNum(row.review_count);
+      scoreCardEls.forEach((el) => el.classList.remove("is-empty"));
+    }
+
+    function selectTableRow(tr, row) {
+      if (selectedTr) selectedTr.classList.remove("is-selected");
+      selectedTr = tr;
+      tr.classList.add("is-selected");
+      updateScoreCards(row);
+    }
+
     function renderRows(themeName) {
+      clearScoreCards();
       const rows = allProducts.filter((row) => row.theme_name === themeName);
       tbody.innerHTML = "";
       if (!rows.length) {
@@ -366,11 +481,19 @@ USER_PWA_HTML = """
         imgBtn.textContent = "1688";
         const imageUrl = String(row.image_url || "").trim();
         if (imageUrl) {
-          imgBtn.addEventListener("click", () => openImagePopup(imageUrl, row.title || ""));
+          imgBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            openImagePopup(imageUrl, row.title || "");
+          });
         } else {
           imgBtn.disabled = true;
         }
         imageCell.appendChild(imgBtn);
+
+        tr.addEventListener("click", (event) => {
+          if (event.target.closest("a, button")) return;
+          selectTableRow(tr, row);
+        });
 
         tbody.appendChild(tr);
       }
