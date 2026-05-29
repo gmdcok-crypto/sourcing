@@ -46,11 +46,6 @@ USER_PWA_HTML = """
       font-weight: 800;
       letter-spacing: -0.03em;
     }
-    .sub {
-      margin: 0 0 20px;
-      color: var(--muted);
-      font-size: 14px;
-    }
     .toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -78,11 +73,6 @@ USER_PWA_HTML = """
       color: var(--text);
       font-size: 14px;
     }
-    .stats {
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .stats strong { color: var(--text); }
     .table-wrap {
       overflow: auto;
       border: 1px solid var(--line);
@@ -152,18 +142,88 @@ USER_PWA_HTML = """
       font-size: 11px;
       font-weight: 700;
     }
+    .btn-1688 {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #ff7a18, #e65100);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-1688:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .image-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .image-modal[hidden] { display: none !important; }
+    .image-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+    }
+    .image-modal-panel {
+      position: relative;
+      z-index: 1;
+      max-width: min(92vw, 720px);
+      max-height: 90vh;
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #121a2f;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+    }
+    .image-modal-panel img {
+      display: block;
+      max-width: 100%;
+      max-height: calc(90vh - 80px);
+      margin: 0 auto;
+      border-radius: 12px;
+      object-fit: contain;
+      background: #0b1020;
+    }
+    .image-modal-title {
+      margin: 0 0 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted);
+      line-height: 1.4;
+      max-height: 3em;
+      overflow: hidden;
+    }
+    .image-modal-close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <div class="shell">
     <h1>소싱 상품 결과</h1>
-    <p class="sub">로컬 크롤링 R2/결과 파일 기준 · Streamlit 「상품 결과」 테이블과 동일 규칙</p>
     <div class="toolbar">
       <div class="field">
         <label for="theme-select">테마 (카테고리)</label>
         <select id="theme-select" aria-label="테마 선택"></select>
       </div>
-      <div class="stats" id="stats"></div>
     </div>
     <div class="table-wrap">
       <table>
@@ -183,11 +243,20 @@ USER_PWA_HTML = """
             <th>네이버</th>
             <th>AI</th>
             <th>링크</th>
+            <th>이미지</th>
           </tr>
         </thead>
         <tbody id="product-rows"></tbody>
       </table>
       <div class="empty" id="empty-state" hidden>선택한 테마에 표시할 상품이 없습니다.</div>
+    </div>
+  </div>
+  <div id="image-modal" class="image-modal" hidden>
+    <div class="image-modal-backdrop" data-close-modal></div>
+    <div class="image-modal-panel" role="dialog" aria-modal="true" aria-label="상품 이미지">
+      <button type="button" class="image-modal-close" data-close-modal aria-label="닫기">×</button>
+      <p class="image-modal-title" id="modal-title"></p>
+      <img id="modal-image" alt="" />
     </div>
   </div>
   <script id="product-data" type="application/json">__PRODUCT_DATA_JSON__</script>
@@ -197,8 +266,10 @@ USER_PWA_HTML = """
     const themes = Array.isArray(payload.themes) ? payload.themes : [];
     const select = document.getElementById("theme-select");
     const tbody = document.getElementById("product-rows");
-    const stats = document.getElementById("stats");
     const emptyState = document.getElementById("empty-state");
+    const imageModal = document.getElementById("image-modal");
+    const modalImage = document.getElementById("modal-image");
+    const modalTitle = document.getElementById("modal-title");
 
     function fmtNum(value) {
       if (value === null || value === undefined || value === "") return "-";
@@ -221,13 +292,30 @@ USER_PWA_HTML = """
         .replace(/"/g, "&quot;");
     }
 
+    function openImagePopup(imageUrl, title) {
+      if (!imageUrl) return;
+      modalImage.src = imageUrl;
+      modalImage.alt = title || "상품 이미지";
+      modalTitle.textContent = title || "";
+      imageModal.hidden = false;
+      document.body.style.overflow = "hidden";
+    }
+
+    function closeImagePopup() {
+      imageModal.hidden = true;
+      modalImage.removeAttribute("src");
+      document.body.style.overflow = "";
+    }
+
+    imageModal.addEventListener("click", (event) => {
+      if (event.target.closest("[data-close-modal]")) closeImagePopup();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !imageModal.hidden) closeImagePopup();
+    });
+
     function renderRows(themeName) {
       const rows = allProducts.filter((row) => row.theme_name === themeName);
-      const keywords = new Set(rows.map((row) => row.keyword).filter(Boolean));
-      stats.innerHTML =
-        `테마 <strong>${themeName || "-"}</strong> · 상품 <strong>${rows.length}</strong>행 · 키워드 <strong>${keywords.size}</strong>개` +
-        (payload.generated_at ? ` · 갱신 ${payload.generated_at}` : "");
-
       tbody.innerHTML = "";
       if (!rows.length) {
         emptyState.hidden = false;
@@ -237,9 +325,6 @@ USER_PWA_HTML = """
 
       for (const row of rows) {
         const tr = document.createElement("tr");
-        const link = row.product_url
-          ? `<a class="link-btn" href="${row.product_url}" target="_blank" rel="noreferrer">열기</a>`
-          : "-";
         const aiText = row.ai_score != null
           ? `${fmtScore(row.ai_score)}${row.ai_tier ? " (" + row.ai_tier + ")" : ""}`
           : "-";
@@ -257,15 +342,42 @@ USER_PWA_HTML = """
           <td class="num">${fmtScore(row.coupang_score)}</td>
           <td class="num">${fmtScore(row.naver_score)}</td>
           <td class="num">${esc(aiText)}</td>
-          <td>${link}</td>
+          <td class="link-cell"></td>
+          <td class="image-cell"></td>
         `;
+
+        const linkCell = tr.querySelector(".link-cell");
+        if (row.product_url) {
+          const linkBtn = document.createElement("a");
+          linkBtn.className = "link-btn";
+          linkBtn.href = row.product_url;
+          linkBtn.target = "_blank";
+          linkBtn.rel = "noreferrer";
+          linkBtn.textContent = "열기";
+          linkCell.appendChild(linkBtn);
+        } else {
+          linkCell.textContent = "-";
+        }
+
+        const imageCell = tr.querySelector(".image-cell");
+        const imgBtn = document.createElement("button");
+        imgBtn.type = "button";
+        imgBtn.className = "btn-1688";
+        imgBtn.textContent = "1688";
+        const imageUrl = String(row.image_url || "").trim();
+        if (imageUrl) {
+          imgBtn.addEventListener("click", () => openImagePopup(imageUrl, row.title || ""));
+        } else {
+          imgBtn.disabled = true;
+        }
+        imageCell.appendChild(imgBtn);
+
         tbody.appendChild(tr);
       }
     }
 
     if (!themes.length) {
       select.innerHTML = '<option value="">데이터 없음</option>';
-      stats.textContent = "로컬 크롤 결과가 없습니다. 배치 실행 후 R2 업로드를 확인하세요.";
       emptyState.hidden = false;
     } else {
       select.innerHTML = themes
