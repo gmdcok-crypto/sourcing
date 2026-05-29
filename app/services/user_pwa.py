@@ -191,22 +191,54 @@ class UserPwaFeedService:
         return card
 
     @classmethod
+    def _pick_keyword_preview_rows(cls, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """키워드당 카드 1개 — 로컬 크롤(리뷰 상위)은 rank=1이 없을 수 있음."""
+        by_keyword: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            keyword = str(row.get("keyword") or "").strip()
+            if keyword:
+                by_keyword[keyword].append(row)
+
+        previews: List[Dict[str, Any]] = []
+        for group in by_keyword.values():
+            with_sales = [
+                row
+                for row in group
+                if str(row.get("monthly_sales") or "").strip() not in {"", "0개"}
+            ]
+            pool = with_sales or group
+
+            rank_one = [row for row in pool if cls._parse_int(row.get("rank")) == 1]
+            if rank_one:
+                previews.append(rank_one[0])
+                continue
+            if len(pool) == 1 and cls._parse_int(pool[0].get("rank")) is None:
+                previews.append(pool[0])
+                continue
+
+            def _preview_sort_key(row: Dict[str, Any]) -> tuple[int, int]:
+                rank = cls._parse_int(row.get("rank")) or 999
+                reviews = cls._parse_int(row.get("review_count")) or 0
+                return (rank, -reviews)
+
+            previews.append(sorted(pool, key=_preview_sort_key)[0])
+        return previews
+
+    @classmethod
     def _build_local_only_themes(cls, *, score_map: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         score_map = score_map or cls._build_keyword_score_map()
-        items = cls._load_local_ui_items()
+        preview_items = cls._pick_keyword_preview_rows(cls._load_local_ui_items())
         preview_keywords = [
             str(item.get("keyword") or "").strip()
-            for item in items
-            if isinstance(item, dict) and cls._parse_int(item.get("rank")) == 1
+            for item in preview_items
+            if str(item.get("keyword") or "").strip()
         ]
         cls._enrich_score_map_with_db_naver(score_map, preview_keywords)
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         seen_keywords: Dict[str, set[str]] = defaultdict(set)
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if cls._parse_int(item.get("rank")) != 1:
-                continue
+        for item in preview_items:
             theme_name = str(item.get("theme_name") or "").strip() or "기타"
             keyword = str(item.get("keyword") or "").strip()
             if not keyword or keyword in seen_keywords[theme_name]:
@@ -316,17 +348,16 @@ class UserPwaFeedService:
         score_map: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         score_map = score_map or cls._build_keyword_score_map()
+        preview_rows = cls._pick_keyword_preview_rows(rows)
         preview_keywords = [
             str(row.get("keyword") or "").strip()
-            for row in rows
-            if cls._parse_int(row.get("rank")) in (None, 1) and str(row.get("keyword") or "").strip()
+            for row in preview_rows
+            if str(row.get("keyword") or "").strip()
         ]
         cls._enrich_score_map_with_db_naver(score_map, preview_keywords)
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         seen_keywords: Dict[str, set[str]] = defaultdict(set)
-        for row in rows:
-            if cls._parse_int(row.get("rank")) not in (None, 1):
-                continue
+        for row in preview_rows:
             theme_name = str(row.get("theme_name") or "").strip()
             keyword = str(row.get("keyword") or "").strip()
             if not keyword:
@@ -450,17 +481,11 @@ class UserPwaFeedService:
 
     @classmethod
     def _load_local_image_map(cls) -> Dict[str, str]:
-        items = cls._load_local_ui_items()
         image_map: Dict[str, str] = {}
-        for item in items:
-            if not isinstance(item, dict):
-                continue
+        for item in cls._pick_keyword_preview_rows(cls._load_local_ui_items()):
             keyword = str(item.get("keyword") or "").strip()
             image_url = str(item.get("image_url") or "").strip()
-            rank = cls._parse_int(item.get("rank"))
-            if not keyword or not image_url:
-                continue
-            if rank == 1 and keyword not in image_map:
+            if keyword and image_url and keyword not in image_map:
                 image_map[keyword] = image_url
         return image_map
 

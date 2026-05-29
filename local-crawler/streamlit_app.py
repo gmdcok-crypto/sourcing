@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from html import escape
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -14,11 +14,14 @@ from config import get_settings
 from services.gemini_trend_scoring import shorten_ai_error_message
 from services.naver_keyword_scoring import compute_naver_final_score
 from ui_runner import (
+    fetch_all_admin_keywords_cached,
     fetch_batch_keywords,
+    filter_items_with_monthly_sales,
     get_ui_results,
     get_ui_state,
     request_stop,
     start_batch_run,
+    ui_results_mtime,
 )
 
 
@@ -261,8 +264,31 @@ def _review_count_for_display(value: Any) -> int:
         return -1
 
 
+def _fetch_admin_keyword_rows(
+    *, force_refresh: bool = False
+) -> tuple[List[Dict[str, Any]], str, Optional[str]]:
+    try:
+        payload = fetch_all_admin_keywords_cached(force_refresh=force_refresh)
+        rows = list(payload.get("keywords") or [])
+        run_id = str(payload.get("run_id") or "").strip() or None
+        return rows, "", run_id
+    except Exception as exc:
+        return [], str(exc), None
+
+
+@st.cache_data(ttl=2, show_spinner=False)
+def _load_crawl_items_cached(results_mtime: float) -> List[Dict[str, Any]]:
+    _ = results_mtime
+    return filter_items_with_monthly_sales(list(get_ui_results().get("items") or []))
+
+
 def _filter_table_items(items: List[Dict[str, Any]], *, per_keyword: int = 5) -> List[Dict[str, Any]]:
-    """키워드별 리뷰 상위 N개만 테이블에 표시."""
+    """키워드별 리뷰 상위 N개만 테이블에 표시 (판매량 있는 행만)."""
+    items = [
+        item
+        for item in items
+        if _display_monthly_sales(item.get("monthly_sales"))
+    ]
     by_keyword: Dict[str, List[Dict[str, Any]]] = {}
     for item in items:
         keyword = str(item.get("keyword") or "").strip() or "_"
@@ -588,7 +614,7 @@ def _format_score_cell(value: Any) -> str:
 def _enrich_keyword_scores(scores: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     keyword_lookup: Dict[str, Dict[str, Any]] = {}
     try:
-        payload = fetch_batch_keywords(limit=200)
+        payload = fetch_all_admin_keywords_cached()
         for row in payload.get("keywords") or []:
             keyword = str(row.get("keyword") or "").strip()
             if keyword:
@@ -654,18 +680,20 @@ def _render_live_runtime() -> None:
         st.caption("로그 수집 중…")
 
 
-@st.fragment(run_every=timedelta(seconds=1.5))
+@st.fragment(run_every=timedelta(seconds=4))
 def _render_product_results() -> None:
     state = get_ui_state()
-    results = get_ui_results()
+    job_id = str(state.get("job_id") or get_ui_results().get("job_id") or "idle")
     st.markdown("### 상품 결과 테이블")
-    result_items = list(results.get("items") or [])
+    result_items = _load_crawl_items_cached(ui_results_mtime())
+
     if result_items:
         df = _result_dataframe(result_items)
         st.dataframe(
-            _style_dark_dataframe(df),
+            df,
             use_container_width=True,
             hide_index=True,
+            height=520,
         )
         csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
@@ -673,13 +701,13 @@ def _render_product_results() -> None:
             data=csv_bytes,
             file_name="local-crawler-results.csv",
             mime="text/csv",
-            key=f"csv-download-{state.get('job_id') or 'idle'}",
+            key=f"csv-download-{job_id}",
         )
     else:
-        st.info("아직 표시할 상품 결과가 없습니다.")
+        st.info("아직 크롤된 상품이 없습니다. 「1. 배치 실행」에서 배치를 시작하세요.")
 
 
-@st.fragment(run_every=timedelta(seconds=1.5))
+@st.fragment(run_every=timedelta(seconds=5))
 def _render_entry_scoring_tab() -> None:
     results = get_ui_results()
     scores = _enrich_keyword_scores(list(results.get("keyword_scores") or []))
@@ -708,9 +736,10 @@ def _render_entry_scoring_tab() -> None:
         return
 
     st.dataframe(
-        _style_dark_dataframe(score_df),
+        score_df,
         use_container_width=True,
         hide_index=True,
+        height=360,
     )
     csv_bytes = score_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
@@ -755,35 +784,39 @@ def main() -> None:
         st.divider()
         _render_environment_panel(settings, get_ui_state())
 
-        st.caption("실행 중 진행·로그·상품 결과는 약 1.5초마다 자동 갱신됩니다.")
-
-    tab_batch, tab_products, tab_scoring = st.tabs(
-        ["1. 배치 실행", "2. 상품 결과", "3. 시장 진입 점수"]
+    section = st.radio(
+        "메뉴",
+        ["1. 배치 실행", "2. 상품 결과", "3. 시장 진입 점수"],
+        horizontal=True,
+        label_visibility="collapsed",
     )
 
-    with tab_batch:
-        st.markdown("### 배치 대상 미리보기")
-        try:
-            keyword_payload = fetch_batch_keywords(limit=int(keyword_limit))
-            preview_rows = keyword_payload.get("keywords") or []
-            if preview_rows:
-                preview_df = _preview_dataframe(preview_rows)
-                st.dataframe(
-                    _style_dark_dataframe(preview_df),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-            else:
-                st.info("불러올 final keywords가 없습니다.")
-        except Exception as exc:
-            st.warning(f"키워드 조회 실패: {exc}")
+    if section == "1. 배치 실행":
+        st.markdown("### 배치 대상 미리보기 (Admin 소싱 전체)")
+        preview_rows, preview_error, _run_id = _fetch_admin_keyword_rows()
+        if preview_error:
+            st.warning(f"키워드 조회 실패: {preview_error}")
+        elif preview_rows:
+            st.caption(
+                f"Admin final keywords **{len(preview_rows)}개** 전체 · "
+                f"「배치 시작」은 사이드바 **가져올 키워드 수({int(keyword_limit)}개)** 만 순서대로 크롤"
+            )
+            preview_df = _preview_dataframe(preview_rows)
+            st.dataframe(
+                preview_df,
+                use_container_width=True,
+                hide_index=True,
+                height=400,
+            )
+        else:
+            st.info("불러올 final keywords가 없습니다.")
 
         _render_live_runtime()
 
-    with tab_products:
+    elif section == "2. 상품 결과":
         _render_product_results()
 
-    with tab_scoring:
+    else:
         st.caption(
             "배치 크롤 시 쿠팡·네이버·AI 점수 자동 산출 (AI=Gemini+Google Search, 100점 만점)"
         )

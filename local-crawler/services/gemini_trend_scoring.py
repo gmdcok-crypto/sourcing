@@ -162,6 +162,46 @@ def _model_candidates(config: Dict[str, Any]) -> List[str]:
     return candidates or ["gemini-2.5-flash"]
 
 
+def _build_product_prompt(
+    keyword: str,
+    product_title: str,
+    monthly_sales: str,
+    config: Dict[str, Any],
+) -> str:
+    now = datetime.now(timezone.utc).astimezone()
+    reference = str(config.get("reference_month") or now.strftime("%Y년 %m월"))
+    title = str(product_title or "").strip()[:500]
+    sales = str(monthly_sales or "").strip()
+    return f"""
+현재 시점은 {reference} (조사 기준일: {now.strftime("%Y-%m-%d")})입니다.
+키워드 '{keyword}' 검색 결과 중 아래 **단일 상품**의 시장성만 평가하세요. 판매량 데이터가 없는 상품은 분석 대상이 아닙니다.
+
+상품명: {title}
+쿠팡 월간 판매량(수집값): {sales}
+
+실시간 Google 검색 및 대한민국 SNS(릴스/틱톡/쇼츠) 트렌드를 조사하세요.
+아래 4개 지표를 각각 0~100점으로 채점하세요.
+1. velocity (검색량 가속도)
+2. viral (숏폼 바이럴)
+3. conversion (상업 전환) — 위 판매량·리뷰 신호 반영
+4. seasonality (시즌 부합)
+
+반드시 순수 JSON만 출력하세요. 마크다운 코드블록 금지.
+{{
+  "keyword": "{keyword}",
+  "total_score": 0,
+  "breakdown": {{
+    "velocity": 0,
+    "viral": 0,
+    "conversion": 0,
+    "seasonality": 0
+  }},
+  "tier": "WATCH",
+  "brief_reason": "한 줄 요약"
+}}
+""".strip()
+
+
 def _build_prompt(keyword: str, config: Dict[str, Any]) -> str:
     now = datetime.now(timezone.utc).astimezone()
     reference = str(config.get("reference_month") or now.strftime("%Y년 %m월"))
@@ -204,7 +244,7 @@ class GeminiTrendScoringService:
     def is_configured(self) -> bool:
         return bool(self.api_key)
 
-    def verify_keyword_trend_score(self, keyword: str) -> Dict[str, Any]:
+    def _generate_trend_score(self, *, keyword: str, prompt: str) -> Dict[str, Any]:
         keyword_text = str(keyword or "").strip()
         if not keyword_text:
             return build_error_payload("", "empty_keyword")
@@ -217,14 +257,13 @@ class GeminiTrendScoringService:
         try:
             from google import genai
             from google.genai import types
-        except ImportError as exc:
+        except ImportError:
             return build_error_payload(
                 keyword_text,
                 "google-genai 패키지가 필요합니다. pip install google-genai",
             )
 
         client = genai.Client(api_key=self.api_key)
-        prompt = _build_prompt(keyword_text, self.config)
         max_attempts = max(1, int(self.config.get("retry_max_attempts") or 3))
         base_delay = max(1.0, float(self.config.get("retry_base_delay_sec") or 2))
         last_error: Optional[Exception] = None
@@ -262,6 +301,34 @@ class GeminiTrendScoringService:
         if last_error is not None:
             return build_error_payload(keyword_text, str(last_error))
         return build_error_payload(keyword_text, "gemini_request_failed")
+
+    def verify_keyword_trend_score(self, keyword: str) -> Dict[str, Any]:
+        keyword_text = str(keyword or "").strip()
+        prompt = _build_prompt(keyword_text, self.config)
+        return self._generate_trend_score(keyword=keyword_text, prompt=prompt)
+
+    def verify_product_trend_score(
+        self,
+        keyword: str,
+        *,
+        product_title: str,
+        monthly_sales: str,
+    ) -> Dict[str, Any]:
+        keyword_text = str(keyword or "").strip()
+        title = str(product_title or "").strip()
+        sales = str(monthly_sales or "").strip()
+        if not keyword_text:
+            return build_error_payload("", "empty_keyword")
+        if not title:
+            return build_error_payload(keyword_text, "empty_product_title")
+        if not sales or sales == "0개":
+            return build_error_payload(keyword_text, "no_monthly_sales")
+        prompt = _build_product_prompt(keyword_text, title, sales, self.config)
+        result = self._generate_trend_score(keyword=keyword_text, prompt=prompt)
+        if result.get("ai_scoring_ready"):
+            result["ai_product_title"] = title[:200]
+            result["ai_monthly_sales"] = sales
+        return result
 
 
 def verify_keyword_trend_score(

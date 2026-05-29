@@ -18,7 +18,12 @@ from botocore.exceptions import BotoCoreError, ClientError
 from config import LocalCrawlerSettings, get_settings
 from railway_client import RailwayKeywordClient
 from services.coupang_entry_scoring import CoupangEntryScoringEngine
-from services.gemini_trend_scoring import GeminiTrendScoringService, load_trend_config
+from services.gemini_trend_scoring import (
+    GeminiTrendScoringService,
+    build_error_payload,
+    load_trend_config,
+    score_to_tier,
+)
 from services.naver_keyword_scoring import compute_naver_final_score
 
 LOCAL_ROOT = Path(__file__).resolve().parent
@@ -32,6 +37,8 @@ STOP_PATH = OUTPUT_DIR / "ui_stop_requested.flag"
 
 _STATE_LOCK = threading.Lock()
 _RUNNER_THREAD: Optional[threading.Thread] = None
+_ADMIN_KEYWORDS_CACHE: Dict[str, Any] = {"fetched_at": 0.0, "payload": {}}
+_ADMIN_KEYWORDS_CACHE_TTL_SEC = 45.0
 
 
 def _now_iso() -> str:
@@ -156,7 +163,9 @@ def _sync_keyword_result_to_db(
     os.environ["MARIADB_PUBLIC_URL"] = db_url
     try:
         payload = crawl_result.get("payload") or {}
-        result = payload.get("result") or {}
+        result = _filter_crawl_result_with_sales(payload.get("result") or {})
+        if not result.get("top10_items"):
+            return False
         snapshot_payload = build_payload(keyword=keyword, crawl_data=result)
         if not snapshot_payload:
             return False
@@ -270,6 +279,103 @@ def score_keyword_ai_trend(keyword: str) -> Dict[str, Any]:
     return _gemini_trend_service().verify_keyword_trend_score(keyword)
 
 
+def _aggregate_product_ai_for_keyword(
+    keyword: str,
+    product_payloads: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """판매량 있는 상품별 Gemini 결과 → PWA용 키워드 카드 AI 점수."""
+    ready = [row for row in product_payloads if row.get("ai_scoring_ready")]
+    if not ready:
+        if product_payloads:
+            first = product_payloads[0]
+            return build_error_payload(
+                keyword,
+                str(first.get("ai_scoring_error") or "product_ai_failed"),
+            )
+        return build_error_payload(keyword, "no_products_with_sales_for_ai")
+
+    scores = [float(row["ai_score"]) for row in ready if row.get("ai_score") is not None]
+    avg_score = round(sum(scores) / len(scores), 1) if scores else None
+    best = max(ready, key=lambda row: float(row.get("ai_score") or 0))
+    config = load_trend_config()
+    tier = str(best.get("ai_tier") or "").strip() or score_to_tier(float(avg_score or 0), config)
+    return {
+        "keyword": keyword,
+        "ai_score": avg_score,
+        "ai_tier": tier,
+        "ai_breakdown": best.get("ai_breakdown") or {},
+        "ai_brief_reason": str(best.get("ai_brief_reason") or "").strip(),
+        "ai_model_total": best.get("ai_model_total"),
+        "ai_scoring_ready": True,
+        "ai_scoring_error": "",
+        "ai_scored_products": len(ready),
+    }
+
+
+def _apply_gemini_to_products_with_sales(keyword: str) -> Dict[str, Any]:
+    """판매량 있는 상품만 Gemini 호출. 판매량 없는 상품은 AI 필드 비움."""
+    keyword_text = str(keyword or "").strip()
+    if not keyword_text or not _gemini_trend_enabled(get_settings()):
+        return {}
+
+    service = _gemini_trend_service()
+    payload = get_ui_results()
+    items = list(payload.get("items") or [])
+    delay_sec = max(0.0, float((service.config or {}).get("keyword_delay_sec") or 1.5))
+    product_results: List[Dict[str, Any]] = []
+    scored_calls = 0
+
+    for row in items:
+        if str(row.get("keyword") or "").strip() != keyword_text:
+            continue
+        for key in (
+            "ai_score",
+            "ai_tier",
+            "ai_breakdown",
+            "ai_brief_reason",
+            "ai_scoring_ready",
+            "ai_scoring_error",
+            "ai_scored_at",
+            "ai_product_title",
+            "ai_monthly_sales",
+        ):
+            row.pop(key, None)
+
+        if not _item_has_monthly_sales(row):
+            continue
+
+        if scored_calls > 0 and delay_sec > 0:
+            time.sleep(delay_sec)
+        scored_calls += 1
+
+        sales = _monthly_sales_for_storage(row.get("monthly_sales"))
+        ai_payload = service.verify_product_trend_score(
+            keyword_text,
+            product_title=str(row.get("title") or ""),
+            monthly_sales=sales,
+        )
+        row["ai_scored_at"] = _now_iso()
+        if ai_payload.get("ai_scoring_ready"):
+            row["ai_score"] = ai_payload.get("ai_score")
+            row["ai_tier"] = ai_payload.get("ai_tier")
+            row["ai_breakdown"] = ai_payload.get("ai_breakdown")
+            row["ai_brief_reason"] = ai_payload.get("ai_brief_reason")
+            row["ai_scoring_ready"] = True
+            row["ai_scoring_error"] = ""
+            row["ai_product_title"] = ai_payload.get("ai_product_title") or str(row.get("title") or "")[:200]
+            row["ai_monthly_sales"] = sales
+            product_results.append(ai_payload)
+        else:
+            row["ai_scoring_ready"] = False
+            row["ai_scoring_error"] = ai_payload.get("ai_scoring_error") or "ai_failed"
+            product_results.append(ai_payload)
+
+    payload["items"] = items
+    payload["generated_at"] = _now_iso()
+    _write_json(RESULTS_PATH, payload)
+    return _aggregate_product_ai_for_keyword(keyword_text, product_results)
+
+
 def refresh_gemini_trend_scores(*, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
     service = _gemini_trend_service()
     if not service.is_configured():
@@ -287,11 +393,11 @@ def refresh_gemini_trend_scores(*, keywords: Optional[List[str]] = None) -> Dict
     updated = 0
     score_map = {str(row.get("keyword") or "").strip(): dict(row) for row in existing}
 
-    delay_sec = max(0.0, float((service.config or {}).get("keyword_delay_sec") or 1.5))
     for index, keyword in enumerate(target_keywords):
-        if index > 0 and delay_sec > 0:
-            time.sleep(delay_sec)
-        ai_payload = service.verify_keyword_trend_score(keyword)
+        ai_payload = _apply_gemini_to_products_with_sales(keyword)
+        if not ai_payload:
+            errors.append(f"{keyword}: 판매량 있는 상품 없음")
+            continue
         row = score_map.get(keyword) or {"keyword": keyword}
         row.update(ai_payload)
         row["ai_scored_at"] = _now_iso()
@@ -319,6 +425,8 @@ def _collect_keyword_top10_items(keyword: str) -> List[Dict[str, Any]]:
     for row in rows:
         if row.get("rank") is None:
             continue
+        if not _item_has_monthly_sales(row):
+            continue
         top10.append(
             {
                 "rank": row.get("rank"),
@@ -334,7 +442,7 @@ def _collect_keyword_top10_items(keyword: str) -> List[Dict[str, Any]]:
     return top10
 
 
-def _upsert_keyword_score(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
+def _upsert_keyword_score(keyword_row: Dict[str, Any], *, run_gemini: bool = True) -> Dict[str, Any]:
     keyword = str(keyword_row.get("keyword") or "").strip()
     if not keyword:
         return {}
@@ -352,9 +460,11 @@ def _upsert_keyword_score(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
     score_payload["coupang_score"] = score_payload.get("final_score")
     score_payload["naver_score"] = compute_naver_final_score(keyword_row)
     settings = get_settings()
-    if _gemini_trend_enabled(settings):
-        score_payload.update(score_keyword_ai_trend(keyword))
-        score_payload["ai_scored_at"] = _now_iso()
+    if run_gemini and _gemini_trend_enabled(settings):
+        ai_payload = _apply_gemini_to_products_with_sales(keyword)
+        if ai_payload:
+            score_payload.update(ai_payload)
+            score_payload["ai_scored_at"] = _now_iso()
     score_payload["scored_at"] = _now_iso()
 
     payload = get_ui_results()
@@ -371,6 +481,8 @@ def _upsert_keyword_score(keyword_row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _append_result_row(row: Dict[str, Any]) -> None:
+    if not _monthly_sales_for_storage(row.get("monthly_sales")):
+        return
     payload = get_ui_results()
     items = list(payload.get("items") or [])
     items.append(row)
@@ -383,6 +495,40 @@ def fetch_batch_keywords(*, limit: Optional[int] = None) -> Dict[str, Any]:
     settings = get_settings()
     client = RailwayKeywordClient(settings)
     return client.fetch_keywords(limit=limit)
+
+
+def fetch_all_admin_keywords(*, force_refresh: bool = False) -> Dict[str, Any]:
+    """Admin final keywords 전체 — UI 테이블·미리보기용 (배치 실행 limit 과 별도)."""
+    settings = get_settings()
+    return fetch_batch_keywords(limit=int(settings.crawler_keywords_display_limit))
+
+
+def invalidate_admin_keywords_cache() -> None:
+    _ADMIN_KEYWORDS_CACHE["fetched_at"] = 0.0
+    _ADMIN_KEYWORDS_CACHE["payload"] = {}
+
+
+def fetch_all_admin_keywords_cached(*, force_refresh: bool = False) -> Dict[str, Any]:
+    """Railway 조회 결과를 메모리에 캐시 — Streamlit 주기 갱신 시 API 폭주 방지."""
+    now = time.time()
+    if (
+        not force_refresh
+        and _ADMIN_KEYWORDS_CACHE["payload"]
+        and (now - float(_ADMIN_KEYWORDS_CACHE["fetched_at"])) < _ADMIN_KEYWORDS_CACHE_TTL_SEC
+    ):
+        return dict(_ADMIN_KEYWORDS_CACHE["payload"])
+
+    payload = fetch_all_admin_keywords()
+    _ADMIN_KEYWORDS_CACHE["fetched_at"] = now
+    _ADMIN_KEYWORDS_CACHE["payload"] = payload
+    return payload
+
+
+def ui_results_mtime() -> float:
+    try:
+        return RESULTS_PATH.stat().st_mtime if RESULTS_PATH.is_file() else 0.0
+    except OSError:
+        return 0.0
 
 
 def request_stop() -> Dict[str, Any]:
@@ -404,6 +550,25 @@ def _build_process_env(keyword: str) -> Dict[str, str]:
     # Keep the local crawler focused on the Google-entry Playwright path instead of Bright-first shortcuts.
     env["COUPANG_BRIGHT_REQUEST"] = "off"
     return env
+
+
+def _filter_crawl_result_with_sales(result: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(result)
+    out["top10_items"] = [
+        dict(item)
+        for item in (result.get("top10_items") or [])
+        if isinstance(item, dict) and _item_has_monthly_sales(item)
+    ]
+    return out
+
+
+def filter_items_with_monthly_sales(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """UI 결과 테이블·JSON — 판매량 없는 행 제외."""
+    return [
+        dict(item)
+        for item in items
+        if isinstance(item, dict) and _monthly_sales_for_storage(item.get("monthly_sales"))
+    ]
 
 
 def _smoke_json_path_for_keyword(keyword: str) -> Path:
@@ -503,6 +668,10 @@ def _monthly_sales_for_storage(value: Any) -> str:
     return text
 
 
+def _item_has_monthly_sales(item: Dict[str, Any]) -> bool:
+    return bool(_monthly_sales_for_storage(item.get("monthly_sales")))
+
+
 def _review_count_for_sort(value: Any) -> int:
     if value in (None, ""):
         return -1
@@ -527,7 +696,12 @@ def _flatten_result_rows(keyword_row: Dict[str, Any], crawl_result: Dict[str, An
     result = crawl_result.get("payload", {}).get("result") or {}
     stats = crawl_result.get("payload", {}).get("stats") or {}
     last_fetch_source = crawl_result.get("payload", {}).get("last_fetch_source") or ""
-    top10_items = _top_items_by_reviews(list(result.get("top10_items") or []), limit=5)
+    items_with_sales = [
+        dict(item)
+        for item in (result.get("top10_items") or [])
+        if isinstance(item, dict) and _item_has_monthly_sales(item)
+    ]
+    top10_items = _top_items_by_reviews(items_with_sales, limit=5)
     rows: List[Dict[str, Any]] = []
     for item in top10_items:
         rows.append(
@@ -651,53 +825,19 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
             crawl_result = _run_single_keyword(keyword_row)
             payload = crawl_result.get("payload") or {}
             result = payload.get("result") or {}
-            success = (
+            crawl_ok = (
                 crawl_result.get("returncode") == 0
                 and str(result.get("reason_code") or "") == "OK"
             )
             rows = _flatten_result_rows(keyword_row, crawl_result)
-            if rows:
-                for row in rows:
-                    _append_result_row(row)
-            else:
-                _append_result_row(
-                    {
-                        "keyword": keyword,
-                        "group_name": keyword_row.get("group_name") or "",
-                        "theme_name": keyword_row.get("theme_name") or "",
-                        "theme_detail": keyword_row.get("theme_detail") or "",
-                        "rank": None,
-                        "title": "",
-                        "image_url": "",
-                        "price": None,
-                        "review_count": None,
-                        "review_score": None,
-                        "delivery_type": "",
-                        "shipping_fee": None,
-                        "product_url": "",
-                        "category": "",
-                        "coupon_applied": False,
-                        "seller_info": "",
-                        "product_id": "",
-                        "option_count": None,
-                        "origin_country": "",
-                        "model_name": "",
-                        "detail_fetch_ok": None,
-                        "detail_parse_filled_count": 0,
-                        "fetch_source": payload.get("last_fetch_source") or "",
-                        "reason_code": result.get("reason_code") or f"EXIT_{crawl_result.get('returncode')}",
-                        "product_count": result.get("product_count"),
-                        "avg_price": result.get("avg_price"),
-                        "avg_reviews": result.get("avg_reviews"),
-                        "bright_ok": (payload.get("stats") or {}).get("bright_ok"),
-                        "bright_error": (payload.get("stats") or {}).get("bright_error"),
-                        "playwright_ok": (payload.get("stats") or {}).get("playwright_ok"),
-                        "requests_ok": (payload.get("stats") or {}).get("requests_ok"),
-                    }
-                )
+            sales_note = _summarize_smoke_sales_from_artifacts(keyword)
+            log_path = str(crawl_result.get("log_path") or "")
+
+            for row in rows:
+                _append_result_row(row)
 
             state = get_ui_state()
-            if success:
+            if crawl_ok:
                 settings = get_settings()
                 if _gemini_trend_enabled(settings):
                     state["message"] = f"{keyword} Gemini 트렌드 검증 중"
@@ -712,30 +852,38 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
                     f"{keyword} 완료",
                     f"쿠팡 {coupang_score}",
                     f"네이버 {naver_score}",
+                    f"저장 상품 {len(rows)}건",
+                    sales_note,
                 ]
                 if ai_score is not None:
-                    completion_parts.append(f"AI {ai_score} ({ai_tier or '-'})")
-                elif _gemini_trend_enabled(get_settings()):
+                    ai_products = score_payload.get("ai_scored_products")
+                    ai_note = f"AI {ai_score} ({ai_tier or '-'})"
+                    if ai_products not in (None, ""):
+                        ai_note += f" · 상품 {ai_products}건"
+                    completion_parts.append(ai_note)
+                elif _gemini_trend_enabled(settings):
                     completion_parts.append(
                         f"AI 실패: {score_payload.get('ai_scoring_error') or '-'}"
                     )
-                sales_note = _summarize_smoke_sales_from_artifacts(keyword)
-                log_path = str(crawl_result.get("log_path") or "")
                 if log_path:
-                    completion_parts.append(sales_note)
                     completion_parts.append(f"로그 {log_path}")
-                else:
-                    completion_parts.append(sales_note)
                 _append_log(state, " — ".join(completion_parts), level="success")
-                synced = _sync_keyword_result_to_db(
-                    settings=settings,
-                    keyword=keyword,
-                    crawl_result=crawl_result,
-                )
-                if synced:
-                    _append_log(state, f"{keyword} Railway DB 반영 완료", level="success")
+                if rows:
+                    synced = _sync_keyword_result_to_db(
+                        settings=settings,
+                        keyword=keyword,
+                        crawl_result=crawl_result,
+                    )
+                    if synced:
+                        _append_log(state, f"{keyword} Railway DB 반영 완료", level="success")
+                    else:
+                        _append_log(state, f"{keyword} Railway DB 반영 스킵", level="warning")
                 else:
-                    _append_log(state, f"{keyword} Railway DB 반영 스킵", level="warning")
+                    _append_log(
+                        state,
+                        f"{keyword} 판매량 있는 상품 0건 — 다음 키워드로 진행 (상품 단위 스킵만 적용됨)",
+                        level="warning",
+                    )
             else:
                 state["failure_count"] = int(state.get("failure_count") or 0) + 1
                 stderr = str(crawl_result.get("stderr") or "").strip()
@@ -784,6 +932,7 @@ def _runner_main(*, retry_failed_only: bool = False, limit: Optional[int] = None
 
 def start_batch_run(*, retry_failed_only: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
     global _RUNNER_THREAD
+    invalidate_admin_keywords_cache()
     state = get_ui_state()
     if _RUNNER_THREAD is not None and _RUNNER_THREAD.is_alive():
         return state

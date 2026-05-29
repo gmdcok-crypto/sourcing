@@ -15,6 +15,10 @@ class LocalCrawlerSettings(BaseSettings):
         alias="CRAWLER_KEYWORDS_ENDPOINT",
     )
     crawler_keywords_limit: int = Field(default=10, alias="CRAWLER_KEYWORDS_LIMIT")
+    crawler_keywords_display_limit: int = Field(
+        default=10000,
+        alias="CRAWLER_KEYWORDS_DISPLAY_LIMIT",
+    )
     crawler_run_id: Optional[str] = Field(default=None, alias="CRAWLER_RUN_ID")
     crawler_date_value: Optional[str] = Field(default=None, alias="CRAWLER_DATE_VALUE")
     mysql_url: Optional[str] = Field(default=None, alias="MYSQL_URL")

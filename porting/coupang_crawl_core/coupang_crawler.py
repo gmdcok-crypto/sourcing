@@ -1807,23 +1807,29 @@ class CoupangCrawler:
             if 1 <= rank_no <= 10:
                 ranked_rows.append((rank_no, row))
 
-        targets = self._smoke_select_detail_targets(ranked_rows)
-        target_ranks = [rank for rank, _ in targets]
+        ordered_targets = sorted(
+            ranked_rows,
+            key=lambda pair: (-self._smoke_review_count_from_row(pair[1]), pair[0]),
+        )
+        target_ranks = [rank for rank, _ in ordered_targets[:limit]]
         bundle["target_ranks"] = target_ranks
 
         self._smoke_status_update(
             phase="smoke_topn_detail",
-            hint=f"SERP 유지 · 리뷰 상위 {len(targets)}개 상세 탭 수집",
+            hint=f"SERP 유지 · 리뷰순 상세 탭 (판매량 없으면 다음 상품)",
         )
         safe_print(
-            f"[SMOKE][detail] top-reviews limit={limit} targets={target_ranks}"
+            f"[SMOKE][detail] top-reviews goal={limit} serp_candidates={len(ordered_targets)}"
         )
 
         detail_kw = str(
             keyword or probe.get("keyword") or os.environ.get("COUPANG_SMOKE_COUPANG_QUERY") or ""
         ).strip()
         detail_items: List[Dict[str, Any]] = []
-        for rank_no, row in targets:
+        saved_with_sales = 0
+        for rank_no, row in ordered_targets:
+            if saved_with_sales >= limit:
+                break
             result = self._smoke_fetch_product_sales_in_new_tab(
                 page, row, rank=rank_no, serp_url=serp_url, keyword=detail_kw
             )
@@ -1836,8 +1842,12 @@ class CoupangCrawler:
             )
             if row["monthly_sales"]:
                 row["detail_fetch_ok"] = True
+                saved_with_sales += 1
             else:
                 row.pop("detail_fetch_ok", None)
+                safe_print(
+                    f"[SMOKE][detail] rank={rank_no} 판매량 없음 — 다음 상품 시도"
+                )
             row["detail_target"] = True
             detail_items.append(
                 self._finalize_smoke_detail_result(result, parsed_sales=parsed)

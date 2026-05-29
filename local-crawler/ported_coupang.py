@@ -1014,8 +1014,15 @@ def main() -> None:
             "last_error": crawler.get_last_error(),
         }
     )
-    if result_data:
-        save_to_excel(result_data)
+    if result_data and isinstance(result_data, dict):
+        top_items = list(result_data.get("top10_items") or [])
+        has_sales = any(
+            str(row.get("monthly_sales") or "").strip() not in {"", "0개"}
+            for row in top_items
+            if isinstance(row, dict)
+        )
+        if has_sales:
+            save_to_excel(result_data)
 
 
 if __name__ == "__main__":
